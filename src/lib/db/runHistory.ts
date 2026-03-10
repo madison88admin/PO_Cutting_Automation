@@ -35,63 +35,95 @@ const MOCK_RUNS: RunHistory[] = [
 export async function createRun(run: Partial<RunHistory>): Promise<string> {
     if (isMock) return "mock-run-" + Date.now();
 
-    const { data, error } = await supabaseAdmin
-        .from('run_history')
-        .insert(run)
-        .select('id')
-        .single();
+    try {
+        const { data, error } = await supabaseAdmin
+            .from('run_history')
+            .insert(run)
+            .select('id')
+            .single();
 
-    if (error) throw error;
-    return data.id;
+        if (error) throw error;
+        return data.id;
+    } catch (error) {
+        if (process.env.NODE_ENV !== 'production') {
+            console.warn('createRun failed, falling back to mock run id:', error);
+            return "mock-run-" + Date.now();
+        }
+        throw error;
+    }
 }
 
 export async function updateRun(id: string, updates: Partial<RunHistory>): Promise<void> {
     if (isMock) return;
-    const { error } = await supabaseAdmin
-        .from('run_history')
-        .update(updates)
-        .eq('id', id);
+    try {
+        const { error } = await supabaseAdmin
+            .from('run_history')
+            .update(updates)
+            .eq('id', id);
 
-    if (error) throw error;
+        if (error) throw error;
+    } catch (error) {
+        if (process.env.NODE_ENV !== 'production') {
+            console.warn('updateRun failed in dev, continuing without DB update:', error);
+            return;
+        }
+        throw error;
+    }
 }
 
 export async function getRunHistory(userId: string, role: string): Promise<any[]> {
     if (isMock) return MOCK_RUNS;
-    let query = supabaseAdmin
-        .from('run_history')
-        .select('*, users!user_id(name, email), reviewer:users!reviewed_by(name)')
-        .order('created_at', { ascending: false });
+    try {
+        let query = supabaseAdmin
+            .from('run_history')
+            .select('*, users!user_id(name, email), reviewer:users!reviewed_by(name)')
+            .order('created_at', { ascending: false });
 
-    // Visibility Rules
-    if (role === 'PBD Planner') {
-        query = query.eq('user_id', userId);
-    } else if (role === 'Read-Only') {
-        // Read-Only sees summary stats only (this might be handled in the UI or a specific aggregate query)
-        // For now, return empty or limit data if specific "summary" requirement is strict
+        // Visibility Rules
+        if (role === 'PBD Planner') {
+            query = query.eq('user_id', userId);
+        } else if (role === 'Read-Only') {
+            // Read-Only sees summary stats only (this might be handled in the UI or a specific aggregate query)
+            // For now, return empty or limit data if specific "summary" requirement is strict
+        }
+        // Admin, IT Manager, Reviewer see ALL (no filter)
+
+        const { data, error } = await query;
+        if (error) throw error;
+        return data || [];
+    } catch (error) {
+        if (process.env.NODE_ENV !== 'production') {
+            console.warn('getRunHistory failed in dev, returning mock data:', error);
+            return MOCK_RUNS;
+        }
+        throw error;
     }
-    // Admin, IT Manager, Reviewer see ALL (no filter)
-
-    const { data, error } = await query;
-    if (error) throw error;
-    return data || [];
 }
 
 export async function getRunSummaryStats() {
     if (isMock) {
         return { totalRuns: 1, totalErrors: 0, totalWarnings: 2, Approved: 1 };
     }
-    const { data, error } = await supabaseAdmin
-        .from('run_history')
-        .select('status, error_count, warning_count');
+    try {
+        const { data, error } = await supabaseAdmin
+            .from('run_history')
+            .select('status, error_count, warning_count');
 
-    if (error) throw error;
+        if (error) throw error;
 
-    // Aggregate stats
-    return data.reduce((acc: any, run: any) => {
-        acc.totalRuns++;
-        acc.totalErrors += run.error_count;
-        acc.totalWarnings += run.warning_count;
-        acc[run.status] = (acc[run.status] || 0) + 1;
-        return acc;
-    }, { totalRuns: 0, totalErrors: 0, totalWarnings: 0 });
+        // Aggregate stats
+        return data.reduce((acc: any, run: any) => {
+            acc.totalRuns++;
+            acc.totalErrors += run.error_count;
+            acc.totalWarnings += run.warning_count;
+            acc[run.status] = (acc[run.status] || 0) + 1;
+            return acc;
+        }, { totalRuns: 0, totalErrors: 0, totalWarnings: 0 });
+    } catch (error) {
+        if (process.env.NODE_ENV !== 'production') {
+            console.warn('getRunSummaryStats failed in dev, returning mock summary:', error);
+            return { totalRuns: 1, totalErrors: 0, totalWarnings: 0 };
+        }
+        throw error;
+    }
 }

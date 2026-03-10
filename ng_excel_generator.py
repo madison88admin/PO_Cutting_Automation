@@ -77,6 +77,10 @@ DEFAULT_COL_MAP = {
 # HEADER_ALIASES  –  extended to cover Arcteryx/Madison88, COL/INFOR, TNF
 # ─────────────────────────────────────────────────────────────────────────────
 HEADER_ALIASES: dict[str, list[str]] = {
+        "transport_location": [
+            "transportlocation", "transport location",
+            "destination", "dest country",
+        ],
     "po": [
         "po #", "po#", "po", "pono",
         "purchase order", "purchaseorder",
@@ -288,9 +292,17 @@ def _build_comments(brand: str, season: str, buy_date: Any, template: str, buy_r
         mon_short = parsed.strftime("%b")
         day = parsed.strftime("%d")
         mon_upper = mon_short.upper()
-        return f"[{b}] {s} {mon_short} Buy {day}-{mon_upper} {template}"
+        suffix = f" {template}" if template else ""
+        return f"[{b}] {s} {mon_short} Buy {day}-{mon_upper}{suffix}"
     return f"[{b}] {s}"
 
+
+# Fix #4: parse_int for UDF-buyer_po_number, keep 0 as 0
+def parse_int(value):
+    try:
+        return int(value)
+    except Exception:
+        return ""
 
 def _to_int_quantity(value: Any) -> int:
     if value in (None, ""):
@@ -543,7 +555,14 @@ def generate_templates(
         orig_ex_fac  = _cell(row_idx, "orig_ex_fac")
         buy_date     = _cell(row_idx, "buy_date")
         trans_cond   = _cell(row_idx, "trans_cond")
-        season_raw   = _as_text(_cell(row_idx, "season"))
+        # Fix #1: Use actual season/range value, raise error if missing
+        season_raw = (
+            _as_text(_cell(row_idx, "season"))
+            or _as_text(_cell(row_idx, "ProductRange"))
+            or _as_text(_cell(row_idx, "Range"))
+        )
+        if not season_raw:
+            raise ValueError(f"Row {row_idx} PO {po}: No season/range/ProductRange value found.")
         template_raw = _as_text(_cell(row_idx, "template"))
         brand_value  = _as_text(_cell(row_idx, "brand"))
         customer_raw = _as_text(_cell(row_idx, "customer"))
@@ -587,10 +606,12 @@ def generate_templates(
         # ── ORDERS row (one per unique PO) ───────────────────────────────────
         if po not in seen_orders:
             seen_orders.add(po)
+            # Fix #2: Map TransportLocation from source
+            transport_location = _as_text(_cell(row_idx, "transport_location"))
             _append_row(orders_ws, [
                 po, supplier_value, "Confirmed", customer_value,
-                trans_method, "", "", template_value,
-                key_date_obj if key_date_obj else "",
+                trans_method, transport_location, "", template_value,
+                _format_date(key_date_obj, "%m/%d/%Y") if key_date_obj else "",
                 "", "", comments_value, CURRENCY,
                 "", "", "", "", "", "", "", "", "", "", "", "", "",
             ])
@@ -599,10 +620,14 @@ def generate_templates(
         line_item_counter[po] += 1
         line_item = line_item_counter[po]
 
+        # Fix #2: Map TransportLocation from source for LINES
+        transport_location = _as_text(_cell(row_idx, "transport_location"))
+        # Fix #3: KeyDate per line from DeliveryDate
+        key_date_line = delivery_date
         _append_row(lines_ws, [
             po, line_item, product_range, product, customer_value,
-            delivery_date, trans_method, "", "", "", "",
-            template_value, key_date_lines, SUPPLIER_PROFILE,
+            delivery_date, trans_method, transport_location, "", "", "",
+            template_value, key_date_line, SUPPLIER_PROFILE,
             "", "", CURRENCY, "", "", "", "", "",
             raw_po_val if raw_po_val is not None else po,
             delivery_date, cancel_date,
