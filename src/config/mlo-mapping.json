@@ -1,0 +1,16 @@
+[
+    {
+        "brand": "BrandA",
+        "keyUser1": "Alice",
+        "keyUser2": "Bob",
+        "keyUser4": "Charlie",
+        "keyUser5": "Diana"
+    },
+    {
+        "brand": "BrandB",
+        "keyUser1": "Edward",
+        "keyUser2": "Fiona",
+        "keyUser4": "George",
+        "keyUser5": "Hannah"
+    }
+]

@@ -1,0 +1,13 @@
+{
+    "default": {
+        "PurchaseOrder": "PO #",
+        "ProductSupplier": "Supplier",
+        "Status": "PO Status",
+        "Customer": "Customer Name",
+        "TransportMethod": "Ship Via",
+        "KeyDate": "Issuance Date",
+        "Quantity": "Qty",
+        "Colour": "Color/Style",
+        "SizeName": "Size"
+    }
+}

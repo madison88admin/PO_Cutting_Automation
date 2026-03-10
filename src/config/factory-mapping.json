@@ -1,0 +1,14 @@
+[
+    {
+        "id": "mapping-1",
+        "brand": "BrandA",
+        "category": "Footwear",
+        "supplier": "Factory Alpha"
+    },
+    {
+        "id": "mapping-2",
+        "brand": "BrandB",
+        "category": "Apparel",
+        "supplier": "Factory Beta"
+    }
+]

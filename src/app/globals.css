@@ -1,0 +1,112 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-blue: #3b82f6;
+  --color-brand-slate: #020617;
+  --font-inter: var(--font-inter);
+  --font-outfit: var(--font-outfit);
+}
+
+:root {
+  --background: 222 47% 2%;
+  --foreground: 210 40% 98%;
+  --primary: 217 91% 60%;
+  --card: 222 47% 4%;
+  --border: 217 32% 17%;
+}
+
+@layer base {
+  body {
+    @apply bg-slate-950 text-slate-50 antialiased selection:bg-blue-500/30;
+    font-family: var(--font-inter), ui-sans-serif, system-ui;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-outfit), ui-sans-serif, system-ui;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    @apply bg-slate-900/40 border border-white/10;
+    backdrop-filter: blur(40px);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+  }
+
+  .primary-button {
+    @apply relative overflow-hidden px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-[0.3em] bg-blue-600 text-white transition-all duration-300 active:scale-95;
+  }
+
+  .primary-button:hover {
+    @apply bg-blue-500;
+    box-shadow: 0 0 30px rgba(37, 99, 235, 0.4);
+  }
+
+  .secondary-button {
+    @apply px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-[0.3em] bg-white/5 border border-white/10 text-slate-300 hover:text-white hover:bg-white/10 transition-all;
+  }
+
+  .glass-card {
+    @apply bg-white/[0.02] border border-white/[0.05] transition-all duration-500;
+    backdrop-filter: blur(16px);
+  }
+
+  .scanline {
+    @apply absolute inset-0 pointer-events-none opacity-5 overflow-hidden;
+    background: linear-gradient(to bottom,
+        transparent 50%,
+        rgba(0, 0, 0, 0.5) 51%,
+        transparent 100%);
+    background-size: 100% 4px;
+    animation: scanline 10s linear infinite;
+  }
+}
+
+@keyframes scanline {
+  0% {
+    background-position: 0 0;
+  }
+
+  100% {
+    background-position: 0 100%;
+  }
+}
+
+@keyframes pulse-glow {
+
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.8;
+    transform: scale(1.05);
+  }
+}
+
+@keyframes float {
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-20px);
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 8s ease-in-out infinite;
+}
+
+.animate-float {
+  animation: float 12s ease-in-out infinite;
+}
