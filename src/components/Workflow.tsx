@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Upload, FileCheck, AlertCircle, Download, ChevronRight, ChevronLeft, Settings, History, Loader2, Info, CheckCircle2, CloudUpload, ArrowRight, ShieldCheck, FileText } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -17,6 +17,18 @@ export default function Workflow() {
     const [isProcessing, setIsProcessing] = useState(false);
     const [errors, setErrors] = useState<any[]>([]);
     const [uploadData, setUploadData] = useState<any>(null);
+    const applyTheme = (nextTheme: "dark" | "light") => {
+      document.documentElement.classList.remove("light", "dark");
+      document.documentElement.classList.add(nextTheme);
+      window.localStorage.setItem("theme", nextTheme);
+    };
+
+    useEffect(() => {
+      const saved = window.localStorage.getItem("theme");
+      const systemPreferred = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      const initial = saved === "light" || saved === "dark" ? saved : (systemPreferred ? "dark" : "light");
+      applyTheme(initial as "dark" | "light");
+    }, []);
 
     const steps: { key: Step; label: string; icon: any }[] = [
         { key: "UPLOAD", label: "Acquisition", icon: CloudUpload },
@@ -29,14 +41,16 @@ export default function Workflow() {
     const currentStepIndex = steps.findIndex(s => s.key === currentStep);
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
+        const fileList = e.target.files;
+        if (!fileList || fileList.length === 0) return;
 
         setIsProcessing(true);
         setCurrentStep("RUN");
 
         const formData = new FormData();
-        formData.append("file", file);
+        for (let i = 0; i < fileList.length; i++) {
+            formData.append("file", fileList[i]);
+        }
 
         try {
             const res = await fetch("/api/upload", {
@@ -103,11 +117,50 @@ export default function Workflow() {
         }
     };
 
+    const handleFileDownload = async (filename: string, fileType: "orders" | "lines" | "sizes") => {
+        try {
+            if (!uploadData?.fileOutputs?.[filename]?.[fileType]) {
+                console.error("No per-file output data found", filename, fileType);
+                return;
+            }
+            const base64 = uploadData.fileOutputs[filename][fileType];
+            const dataUrl = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${base64}`;
+            const res = await fetch(dataUrl);
+            const blob = await res.blob();
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            const safeName = filename.replace(/[^a-zA-Z0-9_-]/g, "_");
+            link.download = `${safeName}_${fileType.toUpperCase()}.xlsx`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error("Per-file download failed:", err);
+            alert("Failed to generate per-file export. Please try again.");
+        }
+    };
+
+    const blockerConditions = {
+        statusConflict: errors.some((err) => /status.*(unconfirmed|confirmed)/i.test(err.message)),
+        customerMappingGap: errors.some((err) => /9999996|customer.*mapping|customer.*code/i.test(err.message)),
+        blankCriticalFields: errors.some((err) => /(blank|missing).*(price|delivery|payment)/i.test(err.message)),
+        validationFailed: uploadData?.canProceed === false || errors.some((err) => err.severity === "CRITICAL"),
+    };
+
+    const blockerMessages = [
+        blockerConditions.statusConflict && "Status conflict detected (Unconfirmed vs Confirmed).",
+        blockerConditions.customerMappingGap && "Customer mapping gap detected (9999996 / Arcteryx mismatch).",
+        blockerConditions.blankCriticalFields && "Blank pricing/delivery/payment fields found in export files.",
+        blockerConditions.validationFailed && "Validation failure blocking progression. Resolve all critical errors first.",
+    ].filter(Boolean);
+
     return (
-        <div className="w-full max-w-7xl mx-auto space-y-20 px-4">
+        <div className="w-full max-w-7xl mx-auto space-y-20 px-4 transition-colors duration-300 bg-[hsl(var(--background))] text-[hsl(var(--foreground))]">
             {/* Progress Stepper - Redesigned */}
             <div className="relative pt-12">
-                <div className="absolute top-[calc(3rem+28px)] left-[10%] w-[80%] h-px bg-white/5" />
+                <div className="absolute top-[calc(3rem+28px)] left-[10%] w-[80%] h-px bg-white/10" />
                 <div
                     className="absolute top-[calc(3rem+28px)] left-[10%] h-0.5 bg-gradient-to-r from-blue-600 to-indigo-500 shadow-[0_0_20px_rgba(37,99,235,0.4)] transition-all duration-1000 ease-in-out"
                     style={{ width: `${(currentStepIndex / (steps.length - 1)) * 80}%` }}
@@ -192,33 +245,33 @@ export default function Workflow() {
                             className="text-center max-w-3xl mx-auto space-y-12"
                         >
                             <label className="relative inline-block cursor-pointer group">
-                                <input type="file" className="hidden" accept=".xlsx" onChange={handleFileUpload} />
+                                <input type="file" className="hidden" accept=".xlsx" multiple onChange={handleFileUpload} />
                                 <div className="absolute inset-0 bg-blue-500/20 blur-[80px] rounded-full group-hover:bg-blue-500/30 transition-all duration-500" />
-                                <div className="relative w-40 h-40 bg-slate-900/80 border border-white/10 rounded-[38%] flex items-center justify-center mx-auto transition-all duration-500 group-hover:scale-105 group-hover:border-blue-500/50 group-hover:shadow-[0_0_50px_rgba(59,130,246,0.3)] shadow-2xl">
-                                    <CloudUpload className="w-16 h-16 text-blue-400 group-hover:text-blue-300 group-hover:-translate-y-1 transition-all" />
+                                <div className="relative w-40 h-40 bg-[hsl(var(--panel))] border border-[hsl(var(--border))] rounded-[38%] flex items-center justify-center mx-auto transition-all duration-500 group-hover:scale-105 group-hover:border-blue-500/50 group-hover:shadow-[0_0_50px_rgba(59,130,246,0.3)] shadow-2xl">
+                                    <CloudUpload className="w-16 h-16 text-blue-500 group-hover:text-blue-400 group-hover:-translate-y-1 transition-all" />
                                 </div>
                             </label>
 
                             <div className="space-y-6">
-                                <h2 className="text-5xl font-black tracking-tight text-white leading-tight">
-                                    INITIALIZE <br /> <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-500">SYSTEM ACQUISITION</span>
+                                <h2 className="text-5xl font-black tracking-tight text-[hsl(var(--foreground))] leading-tight">
+                                    INITIALIZE <br /> <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-500 via-sky-400 to-indigo-500">SYSTEM ACQUISITION</span>
                                 </h2>
-                                <p className="text-slate-400 text-xl font-medium max-w-xl mx-auto">
+                                <p className="text-[hsl(var(--muted))] text-xl font-medium max-w-xl mx-auto">
                                     Proprietary alignment engine for NextGen mass uploads. Drop buy-files (.xlsx) to begin.
                                 </p>
                             </div>
 
                             <div className="flex flex-col items-center gap-6">
-                                <label className="primary-button inline-flex items-center gap-4 cursor-pointer">
+                                <label className="primary-button inline-flex items-center gap-4 cursor-pointer bg-blue-600 text-white" style={{ background: "linear-gradient(90deg, #2563eb, #1d4ed8)" }}>
                                     <span>SELECT LOCAL SOURCE</span>
                                     <ArrowRight className="w-4 h-4" />
-                                    <input type="file" className="hidden" accept=".xlsx" onChange={handleFileUpload} />
+                                    <input type="file" className="hidden" accept=".xlsx" multiple onChange={handleFileUpload} />
                                 </label>
 
-                                <div className="flex items-center gap-10 opacity-30 group">
-                                    {['exceljs', 'validation', 'supabase'].map(tech => (
-                                        <div key={tech} className="flex items-center gap-2.5 text-[10px] font-black tracking-[0.3em] uppercase group-hover:opacity-100 transition-opacity">
-                                            <div className="w-2 h-2 rounded-full bg-slate-700" /> {tech}
+                                <div className="flex items-center gap-10 opacity-70">
+                                    {['exceljs', 'validation', 'supabase'].map((tech, i) => (
+                                        <div key={tech} className="flex items-center gap-2.5 text-[10px] font-black tracking-[0.3em] uppercase text-[hsl(var(--muted))]" style={{ opacity: i === 0 ? 1 : 0.85 }}>
+                                            <div className="w-2 h-2 rounded-full bg-blue-500" /> {tech}
                                         </div>
                                     ))}
                                 </div>
@@ -382,18 +435,54 @@ export default function Workflow() {
                                 </div>
                             </div>
 
-                            <div className="space-y-8">
+                            <div className="space-y-6">
                                 <h2 className="text-5xl font-black tracking-tighter uppercase text-white">Transformation <br /> <span className="text-emerald-500">Confirmed</span></h2>
                                 <div className="flex items-center justify-center gap-6">
                                     <div className="bg-white/5 border border-white/10 rounded-2xl px-6 py-4 backdrop-blur-md">
                                         <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500 mb-1">Entity Count</p>
-                                        <p className="text-2xl font-black text-blue-400">{uploadData?.dataCount || '---'} <span className="text-[10px] text-slate-600">HEADERS</span></p>
+                                        <p className="text-2xl font-black text-blue-400">{uploadData?.mergedSummary?.orders || uploadData?.dataCount || '---'} <span className="text-[10px] text-slate-600">HEADERS</span></p>
                                     </div>
                                     <div className="bg-white/5 border border-white/10 rounded-2xl px-6 py-4 backdrop-blur-md">
                                         <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500 mb-1">Standard</p>
                                         <p className="text-2xl font-black text-emerald-500">NG <span className="text-[10px] text-slate-600">COMPLIANT</span></p>
                                     </div>
                                 </div>
+
+                                {uploadData?.fileSummary?.length > 0 && (
+                                    <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-4 text-left text-xs text-slate-300">
+                                        <div className="font-black text-white uppercase tracking-[0.2em] text-[10px] mb-2">File-level Summary</div>
+                                        <div className="grid grid-cols-2 md:grid-cols-6 gap-2 text-[10px]">
+                                            <div className="font-semibold text-slate-200">File</div>
+                                            <div className="font-semibold text-slate-200">Orders</div>
+                                            <div className="font-semibold text-slate-200">Lines</div>
+                                            <div className="font-semibold text-slate-200">Sizes</div>
+                                            <div className="font-semibold text-slate-200">Errors</div>
+                                            <div className="font-semibold text-slate-200">Warnings</div>
+                                                {uploadData.fileSummary.map((f:any, idx:number) => (
+                                                <div key={`file-summary-${idx}`} className="contents">
+                                                    <div className="truncate">{f.filename}</div>
+                                                    <div className="font-black text-emerald-300">{f.orders}</div>
+                                                    <div>{f.lines}</div>
+                                                    <div>{f.sizes}</div>
+                                                    <div className="text-red-400">{f.errors}</div>
+                                                    <div className="text-amber-300">{f.warnings}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {blockerMessages.length > 0 && (
+                                    <div className="bg-rose-950/70 border border-rose-400/30 rounded-2xl p-4 text-left text-xs text-rose-200">
+                                        <div className="font-black text-rose-200 uppercase tracking-[0.2em] text-[10px] mb-2">Critical Blockers (resolve before cutting)</div>
+                                        <ul className="list-disc list-inside space-y-1">
+                                            {blockerMessages.map((msg, i) => (
+                                                <li key={`blocker-${i}`} className="text-[11px]">{msg}</li>
+                                            ))}
+                                        </ul>
+                                        <p className="mt-2 text-[10px] text-rose-300">Confirm authoritative status source and customer code mappings before exporting.</p>
+                                    </div>
+                                )}
                             </div>
 
                             <div className="flex flex-col items-center gap-8">
@@ -455,6 +544,27 @@ export default function Workflow() {
                                 ))}
                             </div>
 
+                            {uploadData?.fileOutputs && (
+                                <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-4 text-left text-xs text-slate-300">
+                                    <div className="font-black text-white uppercase tracking-[0.2em] text-[10px] mb-2">Per-file Template Export</div>
+                                    <div className="space-y-3">
+                                        {Object.entries(uploadData.fileOutputs).map(([fname, payload]: any) => (
+                                            <div key={fname} className="flex flex-wrap items-center gap-3 bg-slate-800/40 border border-white/10 rounded-lg px-3 py-2">
+                                                <div className="text-[11px] font-black text-emerald-300 truncate max-w-[240px]">{fname}</div>
+                                                {['orders','lines','sizes'].map((type) => (
+                                                    <button
+                                                        key={`${fname}-${type}`}
+                                                        onClick={() => handleFileDownload(fname, type as any)}
+                                                        className="px-2 py-1 text-[10px] uppercase tracking-[0.2em] font-black border border-slate-500 rounded-md bg-blue-500/15 hover:bg-blue-500/35"
+                                                    >
+                                                        {type.toUpperCase()}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                             <div className="flex flex-col items-center gap-6">
                                 <div className="flex justify-center gap-10">
                                     <button

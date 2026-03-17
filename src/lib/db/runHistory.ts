@@ -83,8 +83,8 @@ export async function getRunHistory(userId: string, role: string): Promise<any[]
         if (role === 'PBD Planner') {
             query = query.eq('user_id', userId);
         } else if (role === 'Read-Only') {
-            // Read-Only sees summary stats only (this might be handled in the UI or a specific aggregate query)
-            // For now, return empty or limit data if specific "summary" requirement is strict
+            // Read-Only sees summary stats only
+            return [];
         }
         // Admin, IT Manager, Reviewer see ALL (no filter)
 

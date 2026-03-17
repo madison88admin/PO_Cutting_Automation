@@ -145,6 +145,8 @@ export class ExcelEngine {
             'transportlocation': 'transportLocation',
             'transport location': 'transportLocation',
             'destination': 'transportLocation',
+            'dest country': 'transportLocation',
+            'ult. destination': 'transportLocation',
             // ── PO / Order identifier ────────────────────────────────────────
             'purchaseorder': 'purchaseOrder',
             'po #': 'purchaseOrder',
@@ -365,10 +367,55 @@ export class ExcelEngine {
         return TRANSPORT_MAP[key] || (raw ? raw.trim() : 'Sea');
     }
 
+    private parseDate(raw: string | Date | undefined): Date | null {
+        if (!raw) return null;
+        if (raw instanceof Date) return isNaN(raw.getTime()) ? null : raw;
+        const text = String(raw).trim();
+        if (!text) return null;
+
+        // YYYY-MM-DD (optionally with time)
+        const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (isoMatch) {
+            const year = Number(isoMatch[1]);
+            const month = Number(isoMatch[2]);
+            const day = Number(isoMatch[3]);
+            const date = new Date(year, month - 1, day);
+            return isNaN(date.getTime()) ? null : date;
+        }
+
+        // MM/DD/YYYY or MM-DD-YYYY (aligns with Python formats)
+        const usMatch = text.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+        if (usMatch) {
+            const month = Number(usMatch[1]);
+            const day = Number(usMatch[2]);
+            const year = Number(usMatch[3]);
+            const date = new Date(year, month - 1, day);
+            return isNaN(date.getTime()) ? null : date;
+        }
+
+        // DD-Mon-YYYY or DD-Month-YYYY
+        const monMatch = text.match(/^(\d{1,2})-([A-Za-z]+)-(\d{4})$/);
+        if (monMatch) {
+            const day = Number(monMatch[1]);
+            const monText = monMatch[2].toLowerCase();
+            const year = Number(monMatch[3]);
+            const months = [
+                'jan', 'feb', 'mar', 'apr', 'may', 'jun',
+                'jul', 'aug', 'sep', 'oct', 'nov', 'dec',
+            ];
+            const monthIndex = months.findIndex(m => monText.startsWith(m));
+            if (monthIndex >= 0) {
+                const date = new Date(year, monthIndex, day);
+                return isNaN(date.getTime()) ? null : date;
+            }
+        }
+
+        return null;
+    }
+
     private formatDateString(raw: string | Date | undefined): string {
-        if (!raw) return '';
-        const date = raw instanceof Date ? raw : new Date(raw);
-        if (isNaN(date.getTime())) return raw instanceof Date ? '' : String(raw);
+        const date = this.parseDate(raw);
+        if (!date) return '';
         const mm = String(date.getMonth() + 1).padStart(2, '0');
         const dd = String(date.getDate()).padStart(2, '0');
         const yyyy = date.getFullYear();
@@ -376,10 +423,8 @@ export class ExcelEngine {
     }
 
     private toExcelDate(raw: string | Date | undefined): Date | '' {
-        if (!raw) return '';
-        if (raw instanceof Date && !isNaN(raw.getTime())) return raw;
-        const parsed = new Date(raw);
-        return isNaN(parsed.getTime()) ? '' : parsed;
+        const date = this.parseDate(raw);
+        return date || '';
     }
 
     private buildComments(brand: string | undefined, season: string, buyRound: string, buyDateRaw: string | undefined, template: string): string {
@@ -389,14 +434,13 @@ export class ExcelEngine {
         // If the file has an explicit buy round label (e.g. "Buy 2"), use it directly
         if (buyRound) return `[${b}] ${s} ${buyRound} ${template}`;
 
-        if (buyDateRaw) {
-            const d = new Date(buyDateRaw);
-            if (!isNaN(d.getTime())) {
-                const monShort = d.toLocaleString('en-US', { month: 'short' });
-                const day = String(d.getDate()).padStart(2, '0');
-                const suffix = template ? ` ${template}` : '';
-                return `[${b}] ${s} ${monShort} Buy ${day}-${monShort.toUpperCase()}${suffix}`;
-            }
+        const parsed = this.parseDate(buyDateRaw);
+        if (parsed) {
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            const monShort = months[parsed.getMonth()];
+            const day = String(parsed.getDate()).padStart(2, '0');
+            const suffix = template ? ` ${template}` : '';
+            return `[${b}] ${s} ${monShort} Buy ${day}-${monShort.toUpperCase()}${suffix}`;
         }
 
         return `[${b}] ${s}`;
@@ -632,18 +676,47 @@ export class ExcelEngine {
             }
 
             const po = results.get(poNumber)!;
-            const lineItemNum = po.lines.length + 1;
+            // Determine line item index, allowing explicit line item values for ORDER_SIZES format.
+            let lineItemNum = 0;
+            const rawLineItem = getRawVal('lineItem');
+            if (rawLineItem !== undefined && rawLineItem !== null) {
+                const maybe = Number(rawLineItem);
+                if (Number.isFinite(maybe) && maybe > 0) {
+                    lineItemNum = Math.round(maybe);
+                }
+            }
+            if (lineItemNum <= 0) {
+                // fallback sequential line numbering
+                lineItemNum = po.lines.length > 0 ? Math.max(...po.lines.map(line => line.lineItem)) + 1 : 1;
+            }
 
-            po.lines.push({
-                lineItem: lineItemNum,
-                productRange: this.formatProductRange(season),
-                styleNumber: styleNumber || '',
-                supplierProfile: 'DEFAULT_PROFILE',
-                buyerPoNumber: buyerPoNumber,
-                startDate: exFtyDate || '',
-                cancelDate: cancelDate || '',
-                colour: colour || '',
-            });
+            let existingLine = po.lines.find(line => line.lineItem === lineItemNum);
+            if (!existingLine) {
+                existingLine = {
+                    lineItem: lineItemNum,
+                    productRange: this.formatProductRange(season),
+                    styleNumber: styleNumber || '',
+                    supplierProfile: 'DEFAULT_PROFILE',
+                    buyerPoNumber: buyerPoNumber,
+                    startDate: exFtyDate || '',
+                    cancelDate: cancelDate || '',
+                    colour: colour || '',
+                };
+                po.lines.push(existingLine);
+            } else {
+                if (styleNumber && existingLine.styleNumber && styleNumber !== existingLine.styleNumber) {
+                    this.errors.push({
+                        field: 'LineItem', row: rowNumber,
+                        message: `PO ${poNumber} line ${lineItemNum} product mismatch: existing ${existingLine.styleNumber}, row ${styleNumber}.`,
+                        severity: 'CRITICAL',
+                    });
+                }
+
+                // Keep line style aligned to the first non-empty style seen for the line.
+                if (!existingLine.styleNumber && styleNumber) {
+                    existingLine.styleNumber = styleNumber;
+                }
+            }
 
             if (qty > 0) {
                 if (!po.sizes[lineItemNum]) po.sizes[lineItemNum] = [];
@@ -652,6 +725,61 @@ export class ExcelEngine {
                 this.errors.push({ field: 'Quantity', row: rowNumber, message: `Qty for ${styleNumber} size ${size} is ${qty} (excluded).`, severity: 'WARNING' });
             }
         });
+
+        // Post-process per-PO consistency checks (line gaps, size totals, product mismatches)
+        for (const [poNumber, po] of results.entries()) {
+            po.lines.sort((a, b) => a.lineItem - b.lineItem);
+            const lineIds = po.lines.map(line => line.lineItem);
+            if (lineIds.length > 0) {
+                const minLine = Math.min(...lineIds);
+                const maxLine = Math.max(...lineIds);
+                if (minLine !== 1) {
+                    this.errors.push({ field: 'LineItem', row: 1, message: `PO ${poNumber} starts at LineItem ${minLine} (should start at 1).`, severity: 'WARNING' });
+                }
+                for (let expected = minLine; expected <= maxLine; expected++) {
+                    if (!lineIds.includes(expected)) {
+                        this.errors.push({ field: 'LineItem', row: 1, message: `PO ${poNumber} missing LineItem ${expected}; possible row offset in sizes ordering.`, severity: 'WARNING' });
+                    }
+                }
+            }
+
+            const lineStyleToRows: Record<number, Set<string>> = {};
+            for (const line of po.lines) {
+                if (!lineStyleToRows[line.lineItem]) lineStyleToRows[line.lineItem] = new Set();
+                if (line.styleNumber) lineStyleToRows[line.lineItem].add(line.styleNumber);
+            }
+
+            for (const [lineItem, styleSet] of Object.entries(lineStyleToRows)) {
+                if (styleSet.size > 1) {
+                    const styleList = Array.from(styleSet).join(', ');
+                    this.errors.push({ field: 'LineItem', row: 1, message: `PO ${poNumber} line ${lineItem} has conflicting products across line records: ${styleList}.`, severity: 'CRITICAL' });
+                }
+            }
+
+            for (const line of po.lines) {
+                const sizesForLine = po.sizes[line.lineItem] || [];
+                const totalSizeQty = sizesForLine.reduce((acc, s) => acc + (Number.isFinite(s.quantity) ? s.quantity : 0), 0);
+                if (sizesForLine.length === 0) {
+                    this.errors.push({ field: 'LineItem', row: 1, message: `PO ${poNumber} line ${line.lineItem} (${line.styleNumber}) has no sizes attached.`, severity: 'WARNING' });
+                }
+                if (totalSizeQty <= 0) {
+                    this.errors.push({ field: 'LineItem', row: 1, message: `PO ${poNumber} line ${line.lineItem} (${line.styleNumber}) has zero total size quantity.`, severity: 'WARNING' });
+                }
+
+                // Heuristic detection for possible 1-line offset in size ordering.
+                const nextLine = po.lines.find(l => l.lineItem === line.lineItem + 1);
+                if (nextLine && nextLine.styleNumber && line.styleNumber && line.styleNumber !== nextLine.styleNumber) {
+                    const currentHasSizes = (po.sizes[line.lineItem] || []).length > 0;
+                    const nextHasSizes = (po.sizes[nextLine.lineItem] || []).length > 0;
+                    if (!currentHasSizes && nextHasSizes) {
+                        this.errors.push({ field: 'LineItem', row: 1, message: `PO ${poNumber} missing sizes for line ${line.lineItem} while line ${nextLine.lineItem} has sizes: possible row-offset in order of SIZES lines.`, severity: 'WARNING' });
+                    }
+                    if (currentHasSizes && !nextHasSizes) {
+                        this.errors.push({ field: 'LineItem', row: 1, message: `PO ${poNumber} line ${line.lineItem} has sizes but next line ${nextLine.lineItem} has none: possible SIZES ordering issue.`, severity: 'WARNING' });
+                    }
+                }
+            }
+        }
 
         const processedData = Array.from(results.values());
         const errorCount = this.errors.filter(e => e.severity === 'CRITICAL').length;
@@ -833,7 +961,7 @@ export class ExcelEngine {
                         deliveryDate: this.formatDateString(line.startDate),
                         transportMethod: po.header.transportMethod,
                         transportLocation: po.header.transportLocation,
-                        status: '',
+                        status: po.header.status,
                         purchasePrice: '',
                         sellingPrice: '',
                         template: po.header.template,

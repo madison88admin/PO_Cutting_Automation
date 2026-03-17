@@ -442,7 +442,7 @@ def _detect_layout(ws) -> tuple[int, dict[str, int], str, int, int, set[str]]:
         return best_row + 1, merged_map, mode, best_score, best_nonempty_po_rows, set(best_map.keys())
 
     # Legacy fallback: headers row 14, data row 15
-    return 15, DEFAULT_COL_MAP.copy(), "fallback fixed-column layout", 0, 0, set()
+    return 15, DEFAULT_COL_MAP.copy(), "fallback fixed-column layout", 0, 0, set(DEFAULT_COL_MAP.keys())
 
 
 def _pick_source_sheet(wb, requested_sheet: str | None):
@@ -556,11 +556,7 @@ def generate_templates(
         buy_date     = _cell(row_idx, "buy_date")
         trans_cond   = _cell(row_idx, "trans_cond")
         # Fix #1: Use actual season/range value, raise error if missing
-        season_raw = (
-            _as_text(_cell(row_idx, "season"))
-            or _as_text(_cell(row_idx, "ProductRange"))
-            or _as_text(_cell(row_idx, "Range"))
-        )
+        season_raw = _as_text(_cell(row_idx, "season"))
         if not season_raw:
             raise ValueError(f"Row {row_idx} PO {po}: No season/range/ProductRange value found.")
         template_raw = _as_text(_cell(row_idx, "template"))
@@ -609,7 +605,7 @@ def generate_templates(
             # Fix #2: Map TransportLocation from source
             transport_location = _as_text(_cell(row_idx, "transport_location"))
             _append_row(orders_ws, [
-                po, supplier_value, "Confirmed", customer_value,
+                po, supplier_value, status_value, customer_value,
                 trans_method, transport_location, "", template_value,
                 _format_date(key_date_obj, "%m/%d/%Y") if key_date_obj else "",
                 "", "", comments_value, CURRENCY,
@@ -626,7 +622,7 @@ def generate_templates(
         key_date_line = delivery_date
         _append_row(lines_ws, [
             po, line_item, product_range, product, customer_value,
-            delivery_date, trans_method, transport_location, "", "", "",
+            delivery_date, trans_method, transport_location, status_value, "", "",
             template_value, key_date_line, SUPPLIER_PROFILE,
             "", "", CURRENCY, "", "", "", "", "",
             raw_po_val if raw_po_val is not None else po,

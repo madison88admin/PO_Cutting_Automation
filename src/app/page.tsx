@@ -129,16 +129,16 @@ export default function Home() {
     }[healthState];
 
     return (
-        <main className="min-h-screen relative flex flex-col items-center px-6 py-12 md:py-20 overflow-x-hidden selection:bg-blue-500/30">
+        <main className="min-h-screen relative flex flex-col items-center px-6 py-12 md:py-20 overflow-x-hidden selection:bg-blue-500/30 bg-[hsl(var(--background))] text-[hsl(var(--foreground))]">
             {/* Ultra-Premium Ambient Background */}
-            <div className="fixed inset-0 pointer-events-none -z-10 overflow-hidden bg-slate-950">
+            <div className="fixed inset-0 pointer-events-none -z-10 overflow-hidden bg-[hsl(var(--background))]">
                 <div className="absolute top-[-10%] left-[-10%] w-[60vw] h-[60vw] bg-blue-600/10 rounded-full blur-[180px] animate-pulse-glow" />
                 <div className="absolute bottom-[10%] right-[-5%] w-[50vw] h-[50vw] bg-indigo-600/10 rounded-full blur-[150px] animate-float" />
                 <div className="absolute top-[40%] left-[70%] w-[30vw] h-[30vw] bg-sky-500/5 rounded-full blur-[120px]" />
 
                 {/* Noise and Texture */}
                 <div className="absolute inset-0 opacity-[0.1] mix-blend-overlay pointer-events-none bg-[url('https://grainy-gradients.vercel.app/noise.svg')]" />
-                <div className="absolute inset-0 bg-gradient-to-b from-transparent via-slate-950/50 to-slate-950 pointer-events-none" />
+                <div className="absolute inset-0 bg-gradient-to-b from-transparent via-black/20 to-[rgba(0,0,0,0.4)] pointer-events-none" />
             </div>
 
             {/* Top Navigation Bar */}
@@ -149,19 +149,19 @@ export default function Home() {
                     transition={{ duration: 0.8, ease: "easeOut" }}
                     className="space-y-6 text-center md:text-left"
                 >
-                    <div className="inline-flex items-center gap-4 px-5 py-2.5 rounded-2xl bg-white/5 border border-white/10 backdrop-blur-xl shadow-2xl group">
+                    <div className="inline-flex items-center gap-4 px-5 py-2.5 rounded-2xl bg-[hsl(var(--card)/0.6)] border border-[hsl(var(--border)/0.2)] backdrop-blur-xl shadow-2xl group">
                         <div className="flex h-2.5 w-2.5 relative">
                             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
                             <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.8)]"></span>
                         </div>
                         <div className="flex items-center gap-3 text-[10px] tracking-[0.4em] font-black uppercase">
-                            <span className="text-slate-200">Madison 88 Solutions</span>
-                            <span className="w-px h-3 bg-white/10" />
+                            <span className="text-[hsl(var(--foreground)/0.9)]">Madison 88 Solutions</span>
+                            <span className="w-px h-3 bg-[hsl(var(--foreground)/0.15)]" />
                             <span className="text-blue-400">System v2.0</span>
                         </div>
                     </div>
 
-                    <h1 className="text-7xl md:text-9xl font-black tracking-tighter leading-[0.8] text-white">
+                    <h1 className="text-7xl md:text-9xl font-black tracking-tighter leading-[0.8] text-[hsl(var(--foreground))]">
                         PO CUTTING<br />
                         <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-500 via-sky-400 to-indigo-500">
                             AUTOMATION
@@ -187,7 +187,7 @@ export default function Home() {
                             }}
                             className={`group relative flex items-center gap-4 px-6 py-5 border rounded-2xl text-[10px] font-black uppercase tracking-[0.3em] transition-all shadow-2xl overflow-hidden ${isAdminAuthenticated
                                     ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-200"
-                                    : "bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/10"
+                                    : "bg-[hsl(var(--card))] border-[hsl(var(--border))] text-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))] hover:bg-[rgba(255,255,255,0.08)]"
                                 }`}
                         >
                             <Shield className="w-4 h-4" />
@@ -197,8 +197,8 @@ export default function Home() {
                         <button
                             onClick={() => setView("REFERENCE")}
                             className={`group relative flex items-center gap-4 px-6 py-5 border rounded-2xl text-[10px] font-black uppercase tracking-[0.3em] transition-all shadow-2xl overflow-hidden ${view === "REFERENCE"
-                                    ? "bg-blue-500/10 border-blue-500/50 text-white"
-                                    : "bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/10"
+                                    ? "bg-blue-500/10 border-blue-500/50 text-[hsl(var(--foreground))]"
+                                    : "bg-[hsl(var(--card))] border-[hsl(var(--border))] text-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))] hover:bg-[rgba(255,255,255,0.08)]"
                                 }`}
                         >
                             <BookOpen className={`w-4 h-4 transition-transform ${view === "REFERENCE" ? "scale-110" : "group-hover:scale-110"}`} />
@@ -220,8 +220,8 @@ export default function Home() {
                                 setShowAdminLogin(true);
                             }}
                             className={`group relative flex items-center gap-4 px-10 py-5 border rounded-2xl text-[10px] font-black uppercase tracking-[0.4em] transition-all shadow-2xl overflow-hidden ${view === "ADMIN"
-                                    ? "bg-blue-500/10 border-blue-500/50 text-white"
-                                    : "bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/10"
+                                    ? "bg-blue-500/10 border-blue-500/50 text-[hsl(var(--foreground))]"
+                                    : "bg-[hsl(var(--card))] border-[hsl(var(--border))] text-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))] hover:bg-[rgba(255,255,255,0.12)]"
                                 }`}
                         >
                             <div className="absolute inset-0 bg-gradient-to-r from-blue-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -245,9 +245,9 @@ export default function Home() {
                             { icon: Zap, label: "Turbo" },
                             { icon: Database, label: "NG-Sync" }
                         ].map((item, i) => (
-                            <div key={i} className="flex items-center gap-2.5 text-[10px] font-black tracking-[0.2em] uppercase text-slate-500 group cursor-default">
-                                <item.icon className="w-4 h-4 text-slate-700 group-hover:text-blue-500 transition-colors" />
-                                <span className="group-hover:text-slate-300 transition-colors">{item.label}</span>
+                            <div key={i} className="flex items-center gap-2.5 text-[10px] font-black tracking-[0.2em] uppercase text-[hsl(var(--muted))] group cursor-default">
+                                <item.icon className="w-4 h-4 text-[hsl(var(--muted))] group-hover:text-blue-500 transition-colors" />
+                                <span className="group-hover:text-[hsl(var(--foreground))] transition-colors">{item.label}</span>
                             </div>
                         ))}
                     </div>
@@ -269,9 +269,9 @@ export default function Home() {
             </AnimatePresence>
 
             {/* Premium Footer */}
-            <footer className="mt-40 w-full max-w-7xl pt-16 border-t border-white/5 flex flex-col md:flex-row justify-between items-center gap-12 group">
+            <footer className="mt-40 w-full max-w-7xl pt-16 border-t border-[hsl(var(--border))] flex flex-col md:flex-row justify-between items-center gap-12 group">
                 <div className="flex flex-col md:flex-row items-center gap-6">
-                    <div className="text-[10px] font-black uppercase tracking-[0.5em] text-slate-600 group-hover:text-slate-400 transition-colors">
+                    <div className="text-[10px] font-black uppercase tracking-[0.5em] text-[hsl(var(--muted))] group-hover:text-[hsl(var(--foreground))] transition-colors">
                         Proprietary Automation Framework &bull; M88 Solutions
                     </div>
                 </div>
@@ -282,7 +282,7 @@ export default function Home() {
                             key={link.label}
                             type="button"
                             onClick={link.onClick}
-                            className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-600 hover:text-white transition-all relative group/link"
+                            className="text-[10px] font-black uppercase tracking-[0.3em] text-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))] transition-all relative group/link"
                         >
                             {link.label}
                             <span className="absolute -bottom-2 left-0 w-0 h-px bg-blue-500 transition-all group-hover/link:w-full" />
@@ -292,11 +292,11 @@ export default function Home() {
                     <button
                         type="button"
                         onClick={checkSystemHealth}
-                        className="inline-flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.25em] text-slate-500 hover:text-white transition-colors"
+                        className="inline-flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.25em] text-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))] transition-colors"
                         title="Refresh system health"
                     >
                         <span className={`inline-flex h-2 w-2 rounded-full ${healthStyle.dot}`} />
-                        <span className={healthStyle.textClass}>{healthStyle.text}</span>
+                        <span className={`${healthStyle.textClass} text-[hsl(var(--foreground))]`}>{healthStyle.text}</span>
                     </button>
                 </div>
             </footer>
@@ -307,16 +307,16 @@ export default function Home() {
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
-                        className="fixed inset-0 z-[120] bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-6"
+                        className="fixed inset-0 z-[120] bg-[rgba(0,0,0,0.55)] backdrop-blur-sm flex items-center justify-center p-6"
                     >
                         <motion.div
                             initial={{ opacity: 0, y: 20, scale: 0.98 }}
                             animate={{ opacity: 1, y: 0, scale: 1 }}
                             exit={{ opacity: 0, y: 14, scale: 0.98 }}
-                            className="w-full max-w-md rounded-3xl border border-white/10 bg-slate-950 p-7 shadow-2xl"
+                            className="w-full max-w-md rounded-3xl border border-[hsl(var(--border))] bg-[hsl(var(--panel))] p-7 shadow-2xl"
                         >
-                            <h3 className="text-xl font-black uppercase tracking-tight text-white">Admin Login</h3>
-                            <p className="mt-2 text-[11px] text-slate-500 uppercase tracking-[0.16em] font-black">Dashboard and mapping tables require authentication.</p>
+                            <h3 className="text-xl font-black uppercase tracking-tight text-[hsl(var(--foreground))]">Admin Login</h3>
+                            <p className="mt-2 text-[11px] text-[hsl(var(--muted))] uppercase tracking-[0.16em] font-black">Dashboard and mapping tables require authentication.</p>
 
                             <input
                                 type="password"
@@ -326,7 +326,7 @@ export default function Home() {
                                     if (e.key === "Enter") attemptAdminLogin();
                                 }}
                                 placeholder="Enter admin password"
-                                className="mt-6 w-full h-12 rounded-xl bg-slate-900/70 border border-white/10 px-4 text-sm text-white placeholder:text-slate-500 outline-none focus:border-blue-500/50"
+                                className="mt-6 w-full h-12 rounded-xl bg-[hsl(var(--background)/0.45)] border border-[hsl(var(--border))] px-4 text-sm text-[hsl(var(--foreground))] placeholder:text-[hsl(var(--muted))] outline-none focus:border-blue-500/50"
                             />
 
                             {adminLoginError && <p className="mt-3 text-xs text-rose-400">{adminLoginError}</p>}
@@ -339,7 +339,7 @@ export default function Home() {
                                         setAdminLoginError("");
                                         setAdminPassword("");
                                     }}
-                                    className="h-11 px-5 rounded-xl border border-white/10 text-slate-300 hover:text-white hover:border-white/30 text-xs font-black uppercase tracking-[0.15em]"
+                                    className="h-11 px-5 rounded-xl border border-[hsl(var(--border))] text-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))] hover:border-[hsl(var(--foreground)/0.24)] text-xs font-black uppercase tracking-[0.15em]"
                                 >
                                     Cancel
                                 </button>
@@ -347,7 +347,7 @@ export default function Home() {
                                     type="button"
                                     onClick={attemptAdminLogin}
                                     disabled={isAdminLoginLoading}
-                                    className="h-11 px-5 rounded-xl bg-blue-600 text-white disabled:opacity-60 text-xs font-black uppercase tracking-[0.15em]"
+                                    className="h-11 px-5 rounded-xl bg-blue-600 text-[hsl(var(--foreground))] disabled:opacity-60 text-xs font-black uppercase tracking-[0.15em]"
                                 >
                                     {isAdminLoginLoading ? "Signing in..." : "Sign In"}
                                 </button>

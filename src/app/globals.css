@@ -8,17 +8,52 @@
 }
 
 :root {
-  --background: 222 47% 2%;
-  --foreground: 210 40% 98%;
-  --primary: 217 91% 60%;
-  --card: 222 47% 4%;
-  --border: 217 32% 17%;
+  --background: 224 45% 8%;
+  --foreground: 212 40% 97%;
+  --panel: 224 44% 10%;
+  --border: 224 38% 22%;
+  --card: 224 40% 12%;
+  --muted: 220 30% 74%;
+  --shadow-color: 0 0% 0% / 0.28;
+  color-scheme: dark;
+}
+
+html.light {
+  --background: 210 16% 98%;
+  --foreground: 222 14% 12%;
+  --panel: 210 20% 98%;
+  --border: 210 16% 86%;
+  --card: 210 20% 96%;
+  --muted: 220 10% 54%;
+  --shadow-color: 0 0% 0% / 0.08;
+  color-scheme: light;
+}
+
+html.dark {
+  --background: 224 45% 8%;
+  --foreground: 212 40% 97%;
+  --panel: 224 44% 10%;
+  --border: 224 38% 22%;
+  --card: 224 40% 12%;
+  --muted: 220 30% 74%;
+  --shadow-color: 0 0% 0% / 0.28;
+  color-scheme: dark;
 }
 
 @layer base {
+  * {
+    transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+  }
+
   body {
-    @apply bg-slate-950 text-slate-50 antialiased selection:bg-blue-500/30;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    min-height: 100vh;
     font-family: var(--font-inter), ui-sans-serif, system-ui;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    margin: 0;
   }
 
   h1,

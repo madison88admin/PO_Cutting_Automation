@@ -118,7 +118,7 @@ const MOCK_COLUMNS: ColumnMapping[] = [
     { id: '100', customer: 'DEFAULT', buy_file_column: 'SLO', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
     { id: '101', customer: 'DEFAULT', buy_file_column: 'PLO', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
     { id: '102', customer: 'DEFAULT', buy_file_column: 'Plant', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
-    { id: '103', customer: 'DEFAULT', buy_file_column: 'Dest Country', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '103', customer: 'DEFAULT', buy_file_column: 'Dest Country', internal_field: 'transportLocation', updated_by: 'mock', updated_at: '' },
     { id: '104', customer: 'DEFAULT', buy_file_column: 'Line #s', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
     { id: '105', customer: 'DEFAULT', buy_file_column: 'Priority Flag', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
     { id: '106', customer: 'DEFAULT', buy_file_column: 'Material Name', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
