@@ -545,8 +545,6 @@ def generate_templates(
                 ))
             continue
 
-        total_buy_rows += 1
-
         # ── Core fields ──────────────────────────────────────────────────────
         product = _as_text(_cell(row_idx, "product")) or _as_text(_cell(row_idx, "product_alt"))
         colour  = _as_text(_cell(row_idx, "colour"))
@@ -558,7 +556,8 @@ def generate_templates(
         # Fix #1: Use actual season/range value, raise error if missing
         season_raw = _as_text(_cell(row_idx, "season"))
         if not season_raw:
-            raise ValueError(f"Row {row_idx} PO {po}: No season/range/ProductRange value found.")
+            add_warning(f"Row {row_idx} PO {po}: season/range is empty; row skipped.")
+            continue
         template_raw = _as_text(_cell(row_idx, "template"))
         brand_value  = _as_text(_cell(row_idx, "brand"))
         customer_raw = _as_text(_cell(row_idx, "customer"))
@@ -568,8 +567,12 @@ def generate_templates(
         buy_round    = _as_text(_cell(row_idx, "submit_buy"))
         status_raw   = _as_text(_cell(row_idx, "status"))
 
+        total_buy_rows += 1
+
         # ── Derived values ───────────────────────────────────────────────────
         trans_method       = _transport_method(trans_cond)
+        if not _as_text(orig_ex_fac):
+            add_warning(f"Row {row_idx} PO {po}: exFtyDate is empty; delivery/cancel dates left blank.")
         key_date_obj       = _parse_date(buy_date)
         key_date_lines     = _format_date(buy_date, "%m/%d/%Y")
         delivery_date      = _format_date(orig_ex_fac, "%m/%d/%Y")
@@ -577,7 +580,7 @@ def generate_templates(
 
         customer_value     = _resolve_customer(customer_raw, brand_value, customer_fallback)
         supplier_value     = _resolve_supplier(vendor_code, vendor_name, brand_value or customer_raw)
-        size_value         = size_raw or "OS"
+        size_value         = size_raw or "One Size"
         product_range      = _format_product_range(season_raw)
         template_value     = _normalize_template(template_raw)
         status_value       = status_raw if status_raw else "Confirmed"
@@ -590,7 +593,7 @@ def generate_templates(
             ("season",   season_raw,   f"ProductRange '{product_range}'"),
             ("template", template_raw, f"Template '{template_value}'"),
             ("customer", customer_raw, f"Customer '{customer_value}'"),
-            ("size",     size_raw,     "Size 'OS'"),
+            ("size",     size_raw,     "Size 'One Size'"),
         ]:
             if not field_val:
                 msg = f"Row {row_idx} PO {po}: {field_name} is empty; fallback {fallback_desc} used."

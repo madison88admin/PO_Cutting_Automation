@@ -320,14 +320,14 @@ export class ExcelEngine {
             'lineratio', 'colourext', 'customerext', 'departmentext',
             'customattribute1ext', 'customattribute2ext', 'customattribute3ext',
             // Arcteryx-specific columns not needed for NG output
-            'file date', 'sku', 'gsc type', 'product group description',
+            'file date', 'sku', 'sku description', 'model description', 'gsc type', 'product group description',
             'product line description', 'planning category',
             'transit vendor destination', 'official buy', 'plant',
             'storage location', 'stock segment',
             // COL INFOR metadata
             'erp ind', 'company code', 'ab number', 'gtn issue date',
-            'sku status', 'slo', 'plo', 'dest country', 'ult. destination',
-            'priority flag', 'lb', 'tooling code', 'vas',
+            'sku status', 'slo', 'plo',
+            'priority flag', 'lb', 'tooling code', 'vas', 'capacity type',
         ]);
         if (exactIgnore.has(normalized)) return true;
         const ignorePrefixes = ['findfield_', 'udf-inspection', 'udf-report', 'udf-inspector',
@@ -515,10 +515,18 @@ export class ExcelEngine {
             const headerText = cell.value?.toString().trim();
             if (!headerText) return;
 
-            const internalField = normalizedColMap[headerText.toLowerCase()];
+            const headerKey = headerText.toLowerCase();
+            const internalField = normalizedColMap[headerKey];
+            const fallbackField = fallbackAliases[headerKey];
             if (internalField && internalField !== 'ignore') {
                 if (!headerMap[internalField]) headerMap[internalField] = colNumber;
             } else if (internalField === 'ignore') {
+                // NOTE: DEFAULT column_mapping currently marks TransportLocation as "ignore".
+                // If/when that DB entry is corrected to "transportLocation", remove this override.
+                // Allow transportLocation fallback even if DB mapping marks ignore.
+                if (fallbackField === 'transportLocation') {
+                    if (!headerMap['transportLocation']) headerMap['transportLocation'] = colNumber;
+                }
                 return;
             } else {
                 if (!headerMap['sizeName'] && inferredSizeCol === null && this.looksLikeSizeHeader(headerText)) {
@@ -542,7 +550,7 @@ export class ExcelEngine {
 
         const useDefaultSizeBucket = !headerMap['sizeName'];
         if (useDefaultSizeBucket) {
-            this.errors.push({ field: 'Mapping', row: 1, message: "No size column detected. Using default 'OS' for all rows.", severity: 'WARNING' });
+            this.errors.push({ field: 'Mapping', row: 1, message: "No size column detected. Using default 'One Size' for all rows.", severity: 'WARNING' });
         }
 
         // 4. Validate mandatory fields
@@ -567,6 +575,7 @@ export class ExcelEngine {
         const warnedInferredCategory = new Set<string>();
         const warnedMissingCategory = new Set<string>();
         const warnedMissingFactory = new Set<string>();
+        let skippedMissingSeason = 0;
 
         worksheet.eachRow((row, rowNumber) => {
             if (rowNumber <= headerRowNumber) return;
@@ -588,19 +597,36 @@ export class ExcelEngine {
             const categoryRaw = getVal('category');
             const inferredCat = categoryRaw || this.inferCategoryFromFactoryMap(brand, factoryMap);
             const styleNumber = getVal('product');
-            const size = getVal('sizeName') || (useDefaultSizeBucket ? 'OS' : undefined);
+            const size = getVal('sizeName') || (useDefaultSizeBucket ? 'One Size' : undefined);
             const qty = parseFloat(getVal('quantity') || '0');
             const colour = (getVal('colour') || '').trim();
-            // Fix #1: Remove default 'NOS', throw error if missing
+            // Fix #1: Remove default 'NOS', log CRITICAL and skip row if missing
             const season = getVal('season');
-            if (!season) throw new Error(`Row ${rowNumber} PO ${poNumber}: No season/range value found.`);
+            if (!season) {
+                skippedMissingSeason += 1;
+                this.errors.push({
+                    field: 'season',
+                    row: rowNumber,
+                    message: `Row ${rowNumber} PO ${poNumber}: No season/range value found.`,
+                    severity: 'CRITICAL',
+                });
+                return;
+            }
             // Fix #2: TransportLocation mapping
             const transportLocation = getVal('transportLocation') || '';
             const buyDate = getVal('buyDate');
             const buyRound = getVal('buyRound') || '';
-            const exFtyDate = getVal('exFtyDate') || new Date().toISOString();
-            const cancelDate = getVal('cancelDate') || exFtyDate;
-            const poIssuanceDate = getVal('poIssuanceDate') || buyDate || exFtyDate;
+            const exFtyDate = getVal('exFtyDate') || undefined;
+            if (!exFtyDate) {
+                this.errors.push({
+                    field: 'exFtyDate',
+                    row: rowNumber,
+                    message: `Row ${rowNumber} PO ${poNumber}: exFtyDate is empty.`,
+                    severity: 'WARNING',
+                });
+            }
+            const cancelDate = getVal('cancelDate') || exFtyDate || '';
+            const poIssuanceDate = getVal('poIssuanceDate') || buyDate || exFtyDate || '';
             const statusRaw = getVal('status') || 'Confirmed';
             const transportRaw = getVal('transportMethod');
             const templateRaw = getVal('template') || '';
@@ -720,7 +746,7 @@ export class ExcelEngine {
 
             if (qty > 0) {
                 if (!po.sizes[lineItemNum]) po.sizes[lineItemNum] = [];
-                po.sizes[lineItemNum].push({ productSize: size || 'OS', quantity: qty });
+                po.sizes[lineItemNum].push({ productSize: size || 'One Size', quantity: qty });
             } else {
                 this.errors.push({ field: 'Quantity', row: rowNumber, message: `Qty for ${styleNumber} size ${size} is ${qty} (excluded).`, severity: 'WARNING' });
             }
@@ -782,6 +808,22 @@ export class ExcelEngine {
         }
 
         const processedData = Array.from(results.values());
+        if (skippedMissingSeason > 0) {
+            this.errors.push({
+                field: 'season',
+                row: 1,
+                message: `${skippedMissingSeason} row(s) skipped due to missing season/range.`,
+                severity: 'WARNING',
+            });
+        }
+        if (processedData.length === 0 && skippedMissingSeason > 0) {
+            this.errors.push({
+                field: 'File Format',
+                row: 1,
+                message: 'No usable rows remain after skipping rows with missing season/range.',
+                severity: 'CRITICAL',
+            });
+        }
         const errorCount = this.errors.filter(e => e.severity === 'CRITICAL').length;
         const warningCount = this.errors.filter(e => e.severity === 'WARNING').length;
 

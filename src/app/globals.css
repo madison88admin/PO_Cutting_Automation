@@ -19,13 +19,13 @@
 }
 
 html.light {
-  --background: 210 16% 98%;
-  --foreground: 222 14% 12%;
-  --panel: 210 20% 98%;
-  --border: 210 16% 86%;
-  --card: 210 20% 96%;
-  --muted: 220 10% 54%;
-  --shadow-color: 0 0% 0% / 0.08;
+  --background: 208 24% 96%;
+  --foreground: 215 18% 12%;
+  --panel: 210 24% 97%;
+  --border: 210 16% 85%;
+  --card: 210 28% 95%;
+  --muted: 220 12% 45%;
+  --shadow-color: 210 14% 10% / 0.08;
   color-scheme: light;
 }
 
@@ -39,6 +39,33 @@ html.dark {
   --shadow-color: 0 0% 0% / 0.28;
   color-scheme: dark;
 }
+
+html.light .glass-panel {
+  background: hsl(var(--card) / 0.9);
+  border-color: hsl(var(--border) / 0.5);
+  color: hsl(var(--foreground));
+  box-shadow: 0 15px 40px rgba(15, 23, 42, 0.08);
+}
+
+html.light .glass-card {
+  background: hsl(var(--card) / 0.95);
+  border-color: hsl(var(--border) / 0.35);
+  color: hsl(var(--foreground));
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.08);
+}
+
+html.light .text-white {
+  color: hsl(var(--foreground)) !important;
+}
+
+html.light .bg-slate-900, html.light .bg-slate-900\/40, html.light .bg-slate-900\/60, html.light .bg-slate-900\/70 {
+  background-color: hsl(210 12% 94%) !important;
+}
+
+html.light .border-white\/10, html.light .border-white\/5 {
+  border-color: hsla(210, 20%, 75%, 0.45) !important;
+}
+
 
 @layer base {
   * {
