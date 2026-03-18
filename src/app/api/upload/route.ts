@@ -64,6 +64,9 @@ export async function POST(req: NextRequest) {
 
         const formData = await req.formData();
         const files = formData.getAll("file") as File[];
+        const manualPo = (formData.get("manualPo")?.toString() || "").trim();
+        const manualDestination = (formData.get("manualDestination")?.toString() || "").trim();
+        const manualProductRange = (formData.get("manualProductRange")?.toString() || "").trim();
 
         if (!files || files.length === 0) {
             return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
@@ -107,14 +110,19 @@ export async function POST(req: NextRequest) {
 
         const mergedPOsMap = new Map<string, ProcessedPO>();
         const allErrors: ValidationError[] = [];
-        const fileSummaries: Array<{ filename: string; orders: number; lines: number; sizes: number; errors: number; warnings: number; }> = [];
+        const fileSummaries: Array<{ filename: string; orders: number; lines: number; sizes: number; errors: number; warnings: number; brands: string[]; }> = [];
         const perFileExports: Record<string, { orders: string; lines: string; sizes: string }> = {};
         const poMap = new Map<string, string>();
 
         for (const file of files) {
             const buffer = Buffer.from(await file.arrayBuffer());
             const engine = new ExcelEngine(runId || undefined, userId);
-            const { data, errors } = await engine.processBuyFile(buffer);
+            const { data, errors } = await engine.processBuyFile(buffer, {
+                manualPurchaseOrder: manualPo || undefined,
+                manualDestination: manualDestination || undefined,
+                manualProductRange: manualProductRange || undefined,
+                defaultQuantityIfMissing: !!manualPo,
+            });
 
             let allSizes = 0;
             let allLines = 0;
@@ -126,6 +134,12 @@ export async function POST(req: NextRequest) {
             const criticalCount = errors.filter(e => e.severity === 'CRITICAL').length;
             const warningCount = errors.filter(e => e.severity === 'WARNING').length;
 
+            const brandSet = new Set<string>();
+            data.forEach(po => {
+                const label = (po.header?.customer || '').trim();
+                if (label) brandSet.add(label);
+            });
+
             fileSummaries.push({
                 filename: file.name,
                 orders: data.length,
@@ -133,6 +147,7 @@ export async function POST(req: NextRequest) {
                 sizes: allSizes,
                 errors: criticalCount,
                 warnings: warningCount,
+                brands: Array.from(brandSet),
             });
 
             for (const po of data) {

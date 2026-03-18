@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from collections import defaultdict
+from collections import defaultdict, Counter
 from datetime import datetime, date
 from pathlib import Path
 import json
@@ -39,6 +39,27 @@ TRANSPORT_MAP = {
 
 # Valid mapped transport values after TRANSPORT_MAP resolution
 VALID_TRANSPORT_VALUES = {"Sea", "Air", "Courier"}
+
+# Country code → full name (used for TransportLocation)
+COUNTRY_NAME_MAP = {
+    "US": "United States",
+    "KR": "Korea",
+    "FR": "France",
+    "GR": "Greece",
+    "DE": "Germany",
+    "IT": "Italy",
+    "ES": "Spain",
+    "CN": "China",
+    "JP": "Japan",
+    "VN": "Vietnam",
+    "TH": "Thailand",
+    "PH": "Philippines",
+    "ID": "Indonesia",
+    "TW": "Taiwan",
+    "HK": "Hong Kong",
+    "UK": "United Kingdom",
+    "GB": "United Kingdom",
+}
 
 CURRENCY = "USD"
 SUPPLIER_PROFILE = "DEFAULT_PROFILE"
@@ -246,6 +267,9 @@ HEADER_ALIASES: dict[str, list[str]] = {
             "transportlocation", "transport location",
             "destination", "dest country", "ult. destination",
         ],
+    "plant": [
+        "plant", "plant code",
+    ],
     "po": [
         "po #", "po#", "po", "pono",
         "purchase order", "purchaseorder",
@@ -255,6 +279,7 @@ HEADER_ALIASES: dict[str, list[str]] = {
     ],
     "product": [
         "material style", "product", "style number", "style no",
+        "product name",
         # Arcteryx – Article is the colourway-level style code
         "article",
         # Generic fallbacks
@@ -265,9 +290,21 @@ HEADER_ALIASES: dict[str, list[str]] = {
         # Arcteryx model = base style without colour suffix
         "model",
     ],
+    "product_external_ref": [
+        "name",
+        "product external ref",
+    ],
+    "product_customer_ref": [
+        "buyer style number",
+        "buyer style no",
+        "buyer style #",
+        "buyer style",
+        "product customer ref",
+    ],
     "product_name": [
         "model description", "article name", "sku description",
         "material name", "style name", "description",
+        "buyer style name",
     ],
     "size": [
         "size", "size name", "sizename", "product size", "productsize",
@@ -285,6 +322,7 @@ HEADER_ALIASES: dict[str, list[str]] = {
     ],
     "vendor_name": [
         "vendor name", "vendorname", "supplier name",
+        "factory",
     ],
     "vendor_code": [
         "vendor code", "vendorcode", "vendor", "supplier",
@@ -435,8 +473,16 @@ def _transport_method(value: Any) -> str:
     return TRANSPORT_MAP.get(key, text or "Sea")
 
 
+def _format_transport_location(value: Any) -> str:
+    raw = _strip_brackets(_as_text(value))
+    if not raw:
+        return ""
+    key = raw.strip().upper()
+    return COUNTRY_NAME_MAP.get(key, raw.strip())
+
+
 def _format_product_range(season: str) -> str:
-    normalized = (season or "").strip()
+    normalized = _strip_brackets((season or "").strip())
     # Handle "FW26" → "FH:2026"  and "SS26" → "SH:2026" as well as "F26"/"S26"
     match = re.match(r"^([FS])(?:W|S)?(\d{2})$", normalized, flags=re.IGNORECASE)
     if match:
@@ -487,14 +533,14 @@ def _build_comments(brand: str, season: str, buy_date: Any, template: str, buy_r
     s = (season or "NOS").strip() or "NOS"
     parsed = _parse_date(buy_date)
     if buy_round:
-        return f"[{b}] {s} {buy_round} {template}"
+        return f"{b} {s} {buy_round} {template}"
     if parsed:
         mon_short = parsed.strftime("%b")
         day = parsed.strftime("%d")
         mon_upper = mon_short.upper()
         suffix = f" {template}" if template else ""
-        return f"[{b}] {s} {mon_short} Buy {day}-{mon_upper}{suffix}"
-    return f"[{b}] {s}"
+        return f"{b} {s} {mon_short} Buy {day}-{mon_upper}{suffix}"
+    return f"{b} {s}"
 
 
 # Fix #4: parse_int for UDF-buyer_po_number, keep 0 as 0
@@ -529,6 +575,15 @@ def _normalize_header(value: Any) -> str:
 
 def _compact_text(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", value.lower())
+
+
+def _strip_brackets(value: str) -> str:
+    if not value:
+        return value
+    # Remove bracket characters but keep the inner text
+    cleaned = re.sub(r"\[([^\]]+)\]", r"\1", value)
+    cleaned = cleaned.replace("[", "").replace("]", "")
+    return re.sub(r"\s+", " ", cleaned).strip()
 
 
 def _header_matches(header: str, alias: str) -> bool:
@@ -566,6 +621,8 @@ def _resolve_supplier(vendor_code: str, vendor_name: str, brand: str) -> str:
 
 def _resolve_customer(customer_raw: str, brand: str, fallback: str) -> str:
     """Resolve output customer name from available fields."""
+    customer_raw = _strip_brackets(customer_raw)
+    brand = _strip_brackets(brand)
     if customer_raw:
         brand_key = customer_raw.strip().lower()
         mapped = BRAND_CUSTOMER_MAP.get(brand_key)
@@ -591,6 +648,8 @@ def _resolve_customer_subtype(customer_raw: str, brand: str, fallback: str) -> s
     3. customer_raw as-is if non-empty.
     4. fallback.
     """
+    customer_raw = _strip_brackets(customer_raw)
+    brand = _strip_brackets(brand)
     if customer_raw:
         key = customer_raw.strip().lower()
         # Try explicit subtype map first
@@ -627,6 +686,7 @@ def _validate_output_slices(
     orders_ws,
     lines_ws,
     sizes_ws,
+    validate_sizes: bool = True,
 ) -> list[tuple[str, str]]:
     """
     Post-generation validation of the three output slices.
@@ -659,11 +719,11 @@ def _validate_output_slices(
                 return c
         return None
 
-    # 1. Row counts
+    # 1. Row counts (optional for ORDER_SIZES)
     lines_data_rows = lines_ws.max_row - 1
     sizes_data_rows = sizes_ws.max_row - 1
 
-    if lines_data_rows != sizes_data_rows:
+    if validate_sizes and lines_data_rows != sizes_data_rows:
         issues.append((
             "ERROR",
             f"Row count mismatch: LINES has {lines_data_rows} rows, "
@@ -671,7 +731,10 @@ def _validate_output_slices(
         ))
 
     # 2. Column counts
-    for ws, sheet_key in [(orders_ws, "ORDERS"), (lines_ws, "LINES"), (sizes_ws, "ORDER_SIZES")]:
+    sheet_checks = [(orders_ws, "ORDERS"), (lines_ws, "LINES")]
+    if validate_sizes:
+        sheet_checks.append((sizes_ws, "ORDER_SIZES"))
+    for ws, sheet_key in sheet_checks:
         expected = EXPECTED_COL_COUNTS[sheet_key]
         actual = ws.max_column
         if actual != expected:
@@ -682,6 +745,7 @@ def _validate_output_slices(
 
     # 3 & 4. PO universe + ORDERS uniqueness
     orders_po_col = header_index(orders_ws, "PurchaseOrder") or 1
+    orders_customer_col = header_index(orders_ws, "Customer")
     lines_po_col  = header_index(lines_ws,  "PurchaseOrder") or 1
     sizes_po_col  = header_index(sizes_ws,  "PurchaseOrder") or 1
 
@@ -693,9 +757,16 @@ def _validate_output_slices(
     lines_po_set  = set(lines_pos)
     sizes_po_set  = set(sizes_pos)
 
-    if len(orders_pos) != len(orders_po_set):
-        dupes = [p for p in orders_po_set if orders_pos.count(p) > 1]
-        issues.append(("ERROR", f"ORDERS has duplicate POs: {dupes[:5]}"))
+    if orders_customer_col:
+        orders_customers = col_values(orders_ws, orders_customer_col)
+        orders_keys = list(zip(orders_pos, orders_customers))
+        dupes = [k for k, c in Counter(orders_keys).items() if c > 1]
+        if dupes:
+            issues.append(("ERROR", f"ORDERS has duplicate PO+Customer keys: {dupes[:5]}"))
+    else:
+        dupes = [p for p, c in Counter(orders_pos).items() if c > 1]
+        if dupes:
+            issues.append(("ERROR", f"ORDERS has duplicate POs: {dupes[:5]}"))
 
     if orders_po_set != lines_po_set:
         only_orders = orders_po_set - lines_po_set
@@ -705,7 +776,7 @@ def _validate_output_slices(
         if only_lines:
             issues.append(("ERROR", f"POs in LINES but not ORDERS: {list(only_lines)[:5]}"))
 
-    if orders_po_set != sizes_po_set:
+    if validate_sizes and orders_po_set != sizes_po_set:
         only_orders = orders_po_set - sizes_po_set
         only_sizes  = sizes_po_set - orders_po_set
         if only_orders:
@@ -713,14 +784,15 @@ def _validate_output_slices(
         if only_sizes:
             issues.append(("ERROR", f"POs in ORDER_SIZES but not ORDERS: {list(only_sizes)[:5]}"))
 
-    # 5. Qty total
-    qty_col = header_index(sizes_ws, "Quantity") or 7
-    total_qty = sum(
-        _to_int_quantity(sizes_ws.cell(row=r, column=qty_col).value)
-        for r in range(2, sizes_ws.max_row + 1)
-    )
-    if total_qty == 0:
-        issues.append(("ERROR", "ORDER_SIZES total Quantity is 0 — no units written."))
+    # 5. Qty total (optional)
+    if validate_sizes:
+        qty_col = header_index(sizes_ws, "Quantity") or 7
+        total_qty = sum(
+            _to_int_quantity(sizes_ws.cell(row=r, column=qty_col).value)
+            for r in range(2, sizes_ws.max_row + 1)
+        )
+        if total_qty == 0:
+            issues.append(("ERROR", "ORDER_SIZES total Quantity is 0 — no units written."))
 
     # 6. Transport mapping
     for ws, label in [(lines_ws, "LINES"), (orders_ws, "ORDERS")]:
@@ -790,24 +862,25 @@ def _validate_output_slices(
 
     if len(lines_keys) != len(lines_key_set):
         issues.append(("ERROR", "LINES has duplicate (PurchaseOrder, LineItem) keys."))
-    if len(sizes_keys) != len(sizes_key_set):
+    if validate_sizes and len(sizes_keys) != len(sizes_key_set):
         issues.append(("ERROR", "ORDER_SIZES has duplicate (PurchaseOrder, LineItem) keys."))
 
-    # 10. LINES/SIZES key alignment
-    only_lines_keys = lines_key_set - sizes_key_set
-    only_sizes_keys = sizes_key_set - lines_key_set
-    if only_lines_keys:
-        issues.append((
-            "ERROR",
-            f"(PO, LineItem) keys in LINES but not ORDER_SIZES: "
-            f"{sorted(only_lines_keys)[:5]}"
-        ))
-    if only_sizes_keys:
-        issues.append((
-            "ERROR",
-            f"(PO, LineItem) keys in ORDER_SIZES but not LINES: "
-            f"{sorted(only_sizes_keys)[:5]}"
-        ))
+    # 10. LINES/SIZES key alignment (optional)
+    if validate_sizes:
+        only_lines_keys = lines_key_set - sizes_key_set
+        only_sizes_keys = sizes_key_set - lines_key_set
+        if only_lines_keys:
+            issues.append((
+                "ERROR",
+                f"(PO, LineItem) keys in LINES but not ORDER_SIZES: "
+                f"{sorted(only_lines_keys)[:5]}"
+            ))
+        if only_sizes_keys:
+            issues.append((
+                "ERROR",
+                f"(PO, LineItem) keys in ORDER_SIZES but not LINES: "
+                f"{sorted(only_sizes_keys)[:5]}"
+            ))
 
     return issues
 
@@ -816,7 +889,10 @@ def _validate_output_slices(
 # Layout detection  –  scans up to row 80 for the best header row
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _detect_layout(ws) -> tuple[int, dict[str, int], str, int, int, set[str]]:
+def _detect_layout(
+    ws,
+    required_keys: set[str] | None = None,
+) -> tuple[int, dict[str, int], str, int, int, set[str]]:
     best_row = 14
     best_map: dict[str, int] = {}
     best_score = -1
@@ -839,24 +915,32 @@ def _detect_layout(ws) -> tuple[int, dict[str, int], str, int, int, set[str]]:
                     col_map[key] = col
                     break
 
-        # Require at minimum: a PO-like field AND quantity AND a product field
-        has_required = (
-            ("po" in col_map)
-            and ("qty" in col_map)
-            and (("product" in col_map) or ("product_alt" in col_map))
-        )
+        required_keys = required_keys or {"po", "qty", "product"}
+        # Require at minimum: required keys with special handling for product field
+        has_required = True
+        for key in required_keys:
+            if key == "product":
+                if not (("product" in col_map) or ("product_alt" in col_map)):
+                    has_required = False
+                    break
+            elif key not in col_map:
+                has_required = False
+                break
         if not has_required:
             continue
 
         score = len(col_map)
 
-        # Probe how many rows below actually have PO data
-        po_col = col_map["po"]
-        probe_end = min(ws.max_row, row_idx + 300)
-        nonempty_po_rows = sum(
-            1 for r in range(row_idx + 1, probe_end + 1)
-            if _normalize_po(ws.cell(row=r, column=po_col).value)
-        )
+        # Probe how many rows below actually have PO data (if PO exists)
+        if "po" in col_map:
+            po_col = col_map["po"]
+            probe_end = min(ws.max_row, row_idx + 300)
+            nonempty_po_rows = sum(
+                1 for r in range(row_idx + 1, probe_end + 1)
+                if _normalize_po(ws.cell(row=r, column=po_col).value)
+            )
+        else:
+            nonempty_po_rows = 0
 
         if (score > best_score) or (score == best_score and nonempty_po_rows > best_nonempty_po_rows):
             best_score = score
@@ -876,13 +960,17 @@ def _detect_layout(ws) -> tuple[int, dict[str, int], str, int, int, set[str]]:
     return 15, DEFAULT_COL_MAP.copy(), "fallback fixed-column layout", 0, 0, set(DEFAULT_COL_MAP.keys())
 
 
-def _pick_source_sheet(wb, requested_sheet: str | None):
+def _pick_source_sheet(
+    wb,
+    requested_sheet: str | None,
+    required_keys: set[str] | None = None,
+):
     if requested_sheet:
         if requested_sheet not in wb.sheetnames:
             available = ", ".join(wb.sheetnames)
             raise ValueError(f"Sheet '{requested_sheet}' not found. Available: {available}")
         ws = wb[requested_sheet]
-        return (ws,) + _detect_layout(ws)
+        return (ws,) + _detect_layout(ws, required_keys)
 
     best_ws = wb.active
     best_data_start = 15
@@ -893,7 +981,7 @@ def _pick_source_sheet(wb, requested_sheet: str | None):
     best_detected: set[str] = set()
 
     for ws in wb.worksheets:
-        data_start, col_map, layout_mode, score, nonempty, detected = _detect_layout(ws)
+        data_start, col_map, layout_mode, score, nonempty, detected = _detect_layout(ws, required_keys)
         if (score > best_score) or (score == best_score and nonempty > best_nonempty):
             best_ws, best_data_start, best_col_map = ws, data_start, col_map
             best_layout_mode, best_score, best_nonempty, best_detected = layout_mode, score, nonempty, detected
@@ -911,10 +999,25 @@ def generate_templates(
     sheet_name: str | None = None,
     customer_fallback: str = DEFAULT_CUSTOMER,
     strict: bool = False,
+    manual_po: str | None = None,
+    manual_destination: str | None = None,
+    manual_product_range: str | None = None,
+    validate_sizes: bool = True,
 ) -> None:
     wb = load_workbook(input_path, data_only=True)
+    manual_po_norm = _normalize_po(manual_po) if manual_po else ""
+    manual_product_range = (manual_product_range or "").strip() or ""
+    manual_destination = (manual_destination or "").strip() or ""
+    default_qty_if_missing = bool(manual_po_norm)
+
+    required_keys = {"product"}
+    if not manual_po_norm:
+        required_keys.add("po")
+    if not default_qty_if_missing:
+        required_keys.add("qty")
+
     src, data_start_row, col_map, layout_mode, layout_score, probed_po_rows, detected_keys = \
-        _pick_source_sheet(wb, sheet_name)
+        _pick_source_sheet(wb, sheet_name, required_keys)
 
     orders_wb, lines_wb, sizes_wb = Workbook(), Workbook(), Workbook()
     orders_ws = orders_wb.active
@@ -926,17 +1029,19 @@ def generate_templates(
     _append_row(lines_ws,  LINES_HEADERS)
     _append_row(sizes_ws,  SIZES_HEADERS)
 
-    seen_orders:         set[str]              = set()
+    seen_orders:         set[tuple[str, str]]  = set()
     line_item_counter:   dict[str, int]        = defaultdict(int)
     po_to_lines:         dict[str, list[int]]  = defaultdict(list)
     po_to_nonzero_lines: dict[str, list[int]]  = defaultdict(list)
     po_to_sizes:         dict[str, list[int]]  = defaultdict(list)
 
     total_buy_rows = total_lines_rows = total_sizes_rows = 0
+    skipped_no_colour = 0
     skipped_empty_po = 0
     skipped_empty_po_samples: list[tuple] = []
     validation_warnings: list[str] = []
     validation_errors:   list[str] = []
+    qty_default_warned = False
 
     def add_warning(msg: str) -> None:
         if len(validation_warnings) < 200:
@@ -947,10 +1052,18 @@ def generate_templates(
             validation_errors.append(msg)
 
     # Column-level checks
-    for required_key in ("season", "template", "customer", "size"):
-        if required_key not in detected_keys:
-            msg = f"Missing required column mapping for '{required_key}' (header not detected)."
-            (add_error if strict else add_warning)(msg)
+    if "product" not in detected_keys and "product_alt" not in detected_keys:
+        msg = "Missing required column mapping for 'product' (header not detected)."
+        (add_error if strict else add_warning)(msg)
+    if not manual_po_norm and "po" not in detected_keys:
+        msg = "Missing required column mapping for 'po' (header not detected)."
+        (add_error if strict else add_warning)(msg)
+    if not manual_product_range and "season" not in detected_keys:
+        msg = "Missing required column mapping for 'season' (header not detected)."
+        (add_error if strict else add_warning)(msg)
+    if not default_qty_if_missing and "qty" not in detected_keys:
+        msg = "Missing required column mapping for 'qty' (header not detected)."
+        (add_error if strict else add_warning)(msg)
 
     if "brand" not in detected_keys:
         add_warning("Missing column mapping for 'brand' (comments will use fallback brand value).")
@@ -963,7 +1076,7 @@ def generate_templates(
 
     for row_idx in range(data_start_row, src.max_row + 1):
         raw_po_val = _cell(row_idx, "po")
-        po = _normalize_po(raw_po_val)
+        po = manual_po_norm or _normalize_po(raw_po_val)
         if not po:
             skipped_empty_po += 1
             if len(skipped_empty_po_samples) < 10:
@@ -978,15 +1091,28 @@ def generate_templates(
 
         # ── Core fields ──────────────────────────────────────────────────────
         product = _as_text(_cell(row_idx, "product")) or _as_text(_cell(row_idx, "product_alt"))
+        if not product:
+            add_warning(f"Row {row_idx} PO {po}: product is empty; row skipped.")
+            continue
+        product_external_ref = _as_text(_cell(row_idx, "product_external_ref"))
+        product_customer_ref = _as_text(_cell(row_idx, "product_customer_ref"))
         colour  = _as_text(_cell(row_idx, "colour"))
-        qty     = _to_int_quantity(_cell(row_idx, "qty"))
+        qty_cell = _cell(row_idx, "qty")
+        if qty_cell is None and default_qty_if_missing:
+            qty = 1
+            if not qty_default_warned:
+                add_warning("Quantity column missing; defaulting Quantity=1 for all rows.")
+                qty_default_warned = True
+        else:
+            qty = _to_int_quantity(qty_cell)
 
         orig_ex_fac  = _cell(row_idx, "orig_ex_fac")
         buy_date     = _cell(row_idx, "buy_date")
         trans_cond   = _cell(row_idx, "trans_cond")
         # Fix #1: Use actual season/range value, raise error if missing
         season_raw = _as_text(_cell(row_idx, "season"))
-        if not season_raw:
+        season_value = manual_product_range or season_raw
+        if not season_value:
             add_warning(f"Row {row_idx} PO {po}: season/range is empty; row skipped.")
             continue
         template_raw = _as_text(_cell(row_idx, "template"))
@@ -997,6 +1123,12 @@ def generate_templates(
         vendor_name  = _as_text(_cell(row_idx, "vendor_name"))
         buy_round    = _as_text(_cell(row_idx, "submit_buy"))
         status_raw   = _as_text(_cell(row_idx, "status"))
+
+        # Build PO suffix: PO-PLANT-DEST (Dest uses transport_location)
+        plant_value = _as_text(_cell(row_idx, "plant"))
+        dest_country_raw = manual_destination or _as_text(_cell(row_idx, "transport_location"))
+        if plant_value or dest_country_raw:
+            po = "-".join([po] + [p for p in [plant_value, dest_country_raw] if p])
 
         total_buy_rows += 1
 
@@ -1014,12 +1146,12 @@ def generate_templates(
         customer_value     = _resolve_customer_subtype(customer_raw, brand_value, customer_fallback)
         supplier_value     = _resolve_supplier(vendor_code, vendor_name, brand_lookup)
         size_value         = size_raw or "One Size"
-        product_range      = _format_product_range(season_raw)
+        product_range      = _format_product_range(season_value)
         orders_template    = _resolve_orders_template(brand_lookup, template_raw, brand_config)
         lines_template     = _resolve_lines_template(brand_lookup, template_raw, brand_config)
         status_value       = status_raw if status_raw else "Confirmed"
         comments_value     = _build_comments(
-            brand_lookup, season_raw, buy_date, orders_template, buy_round
+            brand_lookup, product_range, buy_date, orders_template, buy_round
         )
         keyusers           = _resolve_keyusers(brand_lookup)
         if brand_config and isinstance(brand_config.get("keyusers"), dict):
@@ -1040,7 +1172,8 @@ def generate_templates(
 
         # ── Row-level validation warnings ────────────────────────────────────
         for field_name, field_val, fallback_desc in [
-            ("season",   season_raw,   f"ProductRange '{product_range}'"),
+            ("season",   season_value, f"ProductRange '{product_range}'"),
+            ("product",  product,      "Product missing"),
             ("template", template_raw, f"Template '{orders_template}'"),
             ("customer", customer_raw, f"Customer '{customer_value}'"),
             ("size",     size_raw,     "Size 'One Size'"),
@@ -1059,10 +1192,13 @@ def generate_templates(
                 )
 
         # ── ORDERS row (one per unique PO) ───────────────────────────────────
-        if po not in seen_orders:
-            seen_orders.add(po)
+        order_key = (po, customer_value)
+        if order_key not in seen_orders:
+            seen_orders.add(order_key)
             # Fix #2: Map TransportLocation from source
-            transport_location = _as_text(_cell(row_idx, "transport_location"))
+            transport_location = _format_transport_location(
+                manual_destination or _cell(row_idx, "transport_location")
+            )
             _append_row(orders_ws, [
                 po, supplier_value, status_value, customer_value,
                 trans_method, transport_location, "", orders_template,
@@ -1074,19 +1210,27 @@ def generate_templates(
                 "", "", "", "", "",
             ])
 
+        # Skip LINES / SIZES if Colour is blank
+        if not colour:
+            skipped_no_colour += 1
+            add_warning(f"Row {row_idx} PO {po}: colour is empty; line/size skipped.")
+            continue
+
         # ── LINES row (one per buy file row) ─────────────────────────────────
         line_item_counter[po] += 1
         line_item = line_item_counter[po]
 
         # Fix #2: Map TransportLocation from source for LINES
-        transport_location = _as_text(_cell(row_idx, "transport_location"))
+        transport_location = _format_transport_location(
+            manual_destination or _cell(row_idx, "transport_location")
+        )
         # Fix #3: KeyDate per line from DeliveryDate
         key_date_line = delivery_date
         _append_row(lines_ws, [
             po, line_item, product_range, product, customer_value,
             delivery_date, trans_method, transport_location, status_value, "", "",
             lines_template, key_date_line, SUPPLIER_PROFILE,
-            "", "", CURRENCY, "", "", "", "", "",
+            "", "", CURRENCY, "", product_external_ref, product_customer_ref, "", "",
             raw_po_val if raw_po_val is not None else po,
             delivery_date, cancel_date,
             "", "", "", "", "", "",
@@ -1109,14 +1253,19 @@ def generate_templates(
         total_sizes_rows += 1
 
     # ── Post-processing integrity checks ─────────────────────────────────────
-    unique_po_count = len(seen_orders)
+    unique_order_count = len(seen_orders)
+    unique_po_count = len({po for po, _ in seen_orders})
     orders_count    = orders_ws.max_row - 1
 
-    if orders_count != unique_po_count:
-        raise ValueError(f"ORDERS row count mismatch. Expected {unique_po_count}, got {orders_count}.")
+    if orders_count != unique_order_count:
+        raise ValueError(
+            f"ORDERS row count mismatch. Expected {unique_order_count}, got {orders_count}."
+        )
 
-    if total_lines_rows != total_buy_rows:
-        raise ValueError(f"LINES row count mismatch. Expected {total_buy_rows}, got {total_lines_rows}.")
+    if total_lines_rows != total_buy_rows - skipped_no_colour:
+        raise ValueError(
+            f"LINES row count mismatch. Expected {total_buy_rows - skipped_no_colour}, got {total_lines_rows}."
+        )
 
     if total_buy_rows == 0:
         raise ValueError(
@@ -1142,31 +1291,35 @@ def generate_templates(
     if strict and validation_errors:
         _print_summary(
             src, layout_mode, layout_score, probed_po_rows, data_start_row,
-            total_buy_rows, unique_po_count, orders_count,
+            total_buy_rows, unique_po_count, unique_order_count, orders_count,
             total_lines_rows, total_sizes_rows,
             skipped_empty_po, validation_warnings, validation_errors,
             skipped_empty_po_samples,
+            validate_sizes=validate_sizes,
         )
         raise ValueError("Strict validation failed due to missing/blank required fields.")
 
     # ── Output slice validation (NEW) ─────────────────────────────────────────
-    slice_issues = _validate_output_slices(orders_ws, lines_ws, sizes_ws)
+    slice_issues = _validate_output_slices(
+        orders_ws, lines_ws, sizes_ws, validate_sizes=validate_sizes
+    )
     slice_errors   = [(lvl, msg) for lvl, msg in slice_issues if lvl == "ERROR"]
     slice_warnings = [(lvl, msg) for lvl, msg in slice_issues if lvl == "WARNING"]
 
     # ── Write output files ────────────────────────────────────────────────────
     output_dir.mkdir(parents=True, exist_ok=True)
-    orders_wb.save(output_dir / "ORDERS.xlsx")
-    lines_wb.save(output_dir  / "LINES.xlsx")
-    sizes_wb.save(output_dir  / "ORDER_SIZES.xlsx")
+    orders_wb.save(output_dir / "orders.xlsx")
+    lines_wb.save(output_dir  / "lines.xlsx")
+    sizes_wb.save(output_dir  / "order_sizes.xlsx")
 
     _print_summary(
         src, layout_mode, layout_score, probed_po_rows, data_start_row,
-        total_buy_rows, unique_po_count, orders_count,
+        total_buy_rows, unique_po_count, unique_order_count, orders_count,
         total_lines_rows, total_sizes_rows,
         skipped_empty_po, validation_warnings, validation_errors,
         skipped_empty_po_samples,
         slice_issues=slice_issues,
+        validate_sizes=validate_sizes,
     )
 
     if slice_errors and strict:
@@ -1175,16 +1328,17 @@ def generate_templates(
             "Files written but review the report above."
         )
     print(f"\nGenerated files in: {output_dir.resolve()}")
-    for fname in ("ORDERS.xlsx", "LINES.xlsx", "ORDER_SIZES.xlsx"):
+    for fname in ("orders.xlsx", "lines.xlsx", "order_sizes.xlsx"):
         print(f"  - {fname}")
 
 
 def _print_summary(
     src, layout_mode, layout_score, probed_po_rows, data_start_row,
-    total_buy_rows, unique_po_count, orders_count,
+    total_buy_rows, unique_po_count, unique_order_count, orders_count,
     total_lines_rows, total_sizes_rows,
     skipped_empty_po, validation_warnings, validation_errors,
     skipped_empty_po_samples,
+    validate_sizes: bool = True,
     slice_issues: list[tuple[str, str]] | None = None,
 ) -> None:
     lines_equals_sizes = total_lines_rows == total_sizes_rows
@@ -1201,10 +1355,16 @@ def _print_summary(
     print(f"  Data start row : {data_start_row}")
     print(f"  Buy rows       : {total_buy_rows}")
     print(f"  Unique POs     : {unique_po_count}")
+    print(f"  Unique Orders  : {unique_order_count} (PO+Customer)")
     print(f"  ORDERS rows    : {orders_count}")
     print(f"  LINES rows     : {total_lines_rows}")
+    if skipped_no_colour:
+        print(f"  Skipped (no Colour): {skipped_no_colour}")
     print(f"  ORDER_SIZES    : {total_sizes_rows}")
-    print(f"  LINES==SIZES   : {'YES' if lines_equals_sizes else 'NO (qty=0 rows excluded in ORDER_SIZES)'}")
+    if validate_sizes:
+        print(f"  LINES==SIZES   : {'YES' if lines_equals_sizes else 'NO (qty=0 rows excluded in ORDER_SIZES)'}")
+    else:
+        print("  LINES==SIZES   : SKIPPED (sizes validation disabled)")
     print(f"  Skipped (no PO): {skipped_empty_po}")
     print(f"  Warnings       : {len(validation_warnings)}")
     print(f"  Errors         : {len(validation_errors)}")
@@ -1224,17 +1384,26 @@ def _print_summary(
     print("\n── Output Slice Validation ─────────────────────────────────────")
     print(f"  Overall        : {overall_status}")
     checks = [
-        "Row counts (LINES == SIZES)",
-        "Column counts (ORDERS=26, LINES=31, SIZES=29)",
-        "PO universe matches across all 3 files",
-        "ORDERS has no duplicate POs",
-        "ORDER_SIZES total Quantity > 0",
+        "Column counts (ORDERS=26, LINES=31)",
+        "ORDERS has no duplicate PO+Customer keys",
         "TransportMethod mapped to Sea, Air, or Courier only",
         "No blank Customer values",
         "ORDERS Status = Confirmed",
         "No duplicate PO+LineItem keys",
-        "LINES/SIZES key alignment",
     ]
+    if validate_sizes:
+        checks = [
+            "Row counts (LINES == SIZES)",
+            "Column counts (ORDERS=26, LINES=31, SIZES=29)",
+            "PO universe matches across all 3 files",
+            "ORDERS has no duplicate PO+Customer keys",
+            "ORDER_SIZES total Quantity > 0",
+            "TransportMethod mapped to Sea, Air, or Courier only",
+            "No blank Customer values",
+            "ORDERS Status = Confirmed",
+            "No duplicate PO+LineItem keys",
+            "LINES/SIZES key alignment",
+        ]
     issue_msgs = [msg for _, msg in slice_issues]
     for check in checks:
         hit = any(
@@ -1266,6 +1435,10 @@ if __name__ == "__main__":
     parser.add_argument("--sheet",      dest="sheet_name",       default=None)
     parser.add_argument("--customer",   dest="customer_fallback", default=DEFAULT_CUSTOMER)
     parser.add_argument("--strict",     dest="strict",           action="store_true")
+    parser.add_argument("--po",         dest="manual_po",        default=None)
+    parser.add_argument("--destination", dest="manual_destination", default=None)
+    parser.add_argument("--product-range", dest="manual_product_range", default=None)
+    parser.add_argument("--validate-sizes", dest="validate_sizes", action="store_true")
     args = parser.parse_args()
 
     base           = Path.cwd()
@@ -1283,4 +1456,8 @@ if __name__ == "__main__":
         sheet_name        = args.sheet_name,
         customer_fallback = args.customer_fallback,
         strict            = args.strict,
+        manual_po         = args.manual_po,
+        manual_destination = args.manual_destination,
+        manual_product_range = args.manual_product_range,
+        validate_sizes    = args.validate_sizes,
     )

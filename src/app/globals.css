@@ -190,6 +190,42 @@ html.light .download-package-btn {
   background-color: hsl(210 16% 94%) !important;
 }
 
+html.light .file-summary-panel {
+  background-color: hsl(210 18% 92%) !important;
+  border-color: hsla(210, 18%, 70%, 0.7) !important;
+}
+
+html.light .file-summary-title {
+  color: hsl(var(--foreground)) !important;
+}
+
+html.light .file-summary-head {
+  color: hsl(var(--foreground)) !important;
+}
+
+html.light .file-summary-file {
+  color: hsl(var(--foreground)) !important;
+}
+
+html.light .file-summary-badge {
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(210 16% 94%) !important;
+  border-color: hsla(210, 18%, 60%, 0.9) !important;
+}
+
+html.light .quick-qa-panel {
+  background-color: hsl(210 18% 92%) !important;
+  border-color: hsla(210, 18%, 70%, 0.7) !important;
+}
+
+html.light .quick-qa-label {
+  color: hsl(var(--foreground) / 0.7) !important;
+}
+
+html.light .quick-qa-value {
+  color: hsl(var(--foreground)) !important;
+}
+
 html.light .template-row .text-slate-200,
 html.light .template-row .text-slate-500,
 html.light .template-row {
@@ -261,6 +297,10 @@ html.light .template-row-desc {
   .glass-card {
     @apply bg-white/[0.02] border border-white/[0.05] transition-all duration-500;
     backdrop-filter: blur(16px);
+  }
+
+  .file-summary-badge {
+    @apply inline-flex items-center rounded-md border border-white/10 bg-white/5 px-2 py-0.5 text-[9px] font-black uppercase tracking-[0.14em] text-slate-300;
   }
 
   .scanline {

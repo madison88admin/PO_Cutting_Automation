@@ -34,6 +34,8 @@ export interface POLine {
     startDate: string;
     cancelDate: string;
     colour: string;
+    productExternalRef: string;
+    productCustomerRef: string;
 }
 
 export interface POSize {
@@ -109,6 +111,26 @@ const TRANSPORT_MAP: Record<string, string> = {
 
 const VALID_TRANSPORT_VALUES = new Set(["Sea", "Air", "Courier"]);
 
+const COUNTRY_NAME_MAP: Record<string, string> = {
+    US: "United States",
+    KR: "Korea",
+    FR: "France",
+    GR: "Greece",
+    DE: "Germany",
+    IT: "Italy",
+    ES: "Spain",
+    CN: "China",
+    JP: "Japan",
+    VN: "Vietnam",
+    TH: "Thailand",
+    PH: "Philippines",
+    ID: "Indonesia",
+    TW: "Taiwan",
+    HK: "Hong Kong",
+    UK: "United Kingdom",
+    GB: "United Kingdom",
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // FIX 1: KeyUser map — per brand, the MLO team members for ORDERS.
 // KeyUser1 = Planning, KeyUser2 = Purchasing, KeyUser4 = Production,
@@ -180,6 +202,7 @@ export class ExcelEngine {
             'tracking number', 'article', 'business unit description',
             'requested qty', 'ex-factory', 'transport mode',
             'qty', 'quantity', 'size', 'colour',
+            'product name', 'buyer style number', 'buyer style name', 'customer name', 'factory',
         ];
 
         let bestRow = 1;
@@ -212,6 +235,8 @@ export class ExcelEngine {
             'transport location': 'transportLocation',
             'destination': 'transportLocation',
             'dest country': 'transportLocation',
+            'plant': 'plant',
+            'plant code': 'plant',
             'ult. destination': 'transportLocation',
             'purchaseorder': 'purchaseOrder',
             'po': 'purchaseOrder',
@@ -232,6 +257,14 @@ export class ExcelEngine {
             'item': 'product',
             'article': 'product',
             'model': 'product',
+            'product name': 'product',
+            'buyer style number': 'productCustomerRef',
+            'buyer style no': 'productCustomerRef',
+            'buyer style #': 'productCustomerRef',
+            'buyer style': 'productCustomerRef',
+            'name': 'productExternalRef',
+            'product external ref': 'productExternalRef',
+            'product customer ref': 'productCustomerRef',
             'vendor code': 'productSupplier',
             'vendorcode': 'productSupplier',
             'vendor': 'productSupplier',
@@ -241,6 +274,7 @@ export class ExcelEngine {
             'vendor name': 'vendorName',
             'vendorname': 'vendorName',
             'supplier name': 'vendorName',
+            'factory': 'vendorName',
             'size': 'sizeName',
             'size name': 'sizeName',
             'sizename': 'sizeName',
@@ -287,10 +321,12 @@ export class ExcelEngine {
             'gsc type': 'status',
             'colour': 'colour',
             'color': 'colour',
+            'color name': 'colour',
             'article name': 'colour',
             'color description': 'colour',
             'submit buy': 'buyRound',
             'buy round': 'buyRound',
+            'buyer style name': 'ignore',
             'udf-buyer_po_number': 'buyerPoNumber',
             'udf-start_date': 'exFtyDate',
             'udf-canel_date': 'cancelDate',
@@ -299,10 +335,40 @@ export class ExcelEngine {
 
     // ── Supplier resolution with brand fallback ───────────────────────────────
 
-    private resolveSupplier(vendorCode: string | undefined, vendorName: string | undefined, brand: string | undefined): string {
-        if (vendorCode && vendorCode.trim().length > 2) return vendorCode.trim();
-        if (vendorName && vendorName.trim().length > 2) return vendorName.trim();
-        const key = (brand || '').trim().toLowerCase();
+    private resolveSupplier(
+        vendorCode: string | undefined,
+        vendorName: string | undefined,
+        brand: string | undefined,
+        category: string | undefined,
+        factoryMap: any[],
+    ): string {
+        const vCode = this.stripBrackets(vendorCode || '').trim();
+        const vName = this.stripBrackets(vendorName || '').trim();
+        const b = this.stripBrackets(brand || '').trim();
+        const cat = this.stripBrackets(category || '').trim();
+        if (vCode && vCode.length > 2) return vCode;
+        if (vName && vName.length > 2) return vName;
+
+        // Factory mapping: brand + category → product_supplier
+        if (b && cat) {
+            const match = factoryMap.find(
+                (f: any) =>
+                    f.brand?.toLowerCase() === b.toLowerCase() &&
+                    f.category?.toLowerCase() === cat.toLowerCase()
+            );
+            if (match?.product_supplier) return match.product_supplier;
+        }
+
+        // Brand-only factory match (when category is unknown)
+        if (b) {
+            const brandMatches = factoryMap.filter(
+                (f: any) => f.brand?.toLowerCase() === b.toLowerCase() && f.product_supplier
+            );
+            if (brandMatches.length === 1) return brandMatches[0].product_supplier;
+        }
+
+        // Hardcoded brand fallback
+        const key = b.toLowerCase();
         return BRAND_SUPPLIER_MAP[key] || 'MISSING_SUPPLIER';
     }
 
@@ -317,7 +383,9 @@ export class ExcelEngine {
         detectedCustomer: string,
         mappedCustomerName: string | undefined,
     ): string {
-        const raw = (customerRaw || '').trim();
+        const raw = this.stripBrackets(customerRaw || '').trim();
+        const brandClean = this.stripBrackets(brand || '').trim();
+        const mapped = this.stripBrackets(mappedCustomerName || '').trim();
 
         // 1. Check subtype map first (handles RTO / SMU / In-Line variants)
         if (raw) {
@@ -329,10 +397,10 @@ export class ExcelEngine {
         //    value (i.e. contains RTO / SMU / In-Line) OR if raw is empty.
         //    This prevents a base-brand DB entry ("The North Face") from
         //    overwriting a correctly detected subtype from the buy file.
-        if (mappedCustomerName?.trim()) {
-            const mappedKey = mappedCustomerName.trim().toLowerCase();
+        if (mapped) {
+            const mappedKey = mapped.toLowerCase();
             const hasSubtype = mappedKey.includes('rto') || mappedKey.includes('smu') || mappedKey.includes('in-line') || mappedKey.includes('inline');
-            if (!raw || hasSubtype) return mappedCustomerName.trim();
+            if (!raw || hasSubtype) return mapped;
         }
 
         // 3. BRAND_CUSTOMER_MAP from raw value
@@ -343,15 +411,15 @@ export class ExcelEngine {
         }
 
         // 4. Brand fallback
-        if (brand) {
-            const key = brand.trim().toLowerCase();
+        if (brandClean) {
+            const key = brandClean.toLowerCase();
             if (BRAND_CUSTOMER_MAP[key]) return BRAND_CUSTOMER_MAP[key];
         }
 
         // 5. Detected customer from DB registration
         if (detectedCustomer && detectedCustomer !== 'DEFAULT') return detectedCustomer;
 
-        return brand?.toUpperCase() || 'COL';
+        return brandClean.toUpperCase() || 'COL';
     }
 
     // FIX 1: KeyUser resolution with hardcoded brand fallback ─────────────────
@@ -440,7 +508,7 @@ export class ExcelEngine {
             'customattribute1ext', 'customattribute2ext', 'customattribute3ext',
             'file date', 'sku', 'sku description', 'model description', 'gsc type',
             'product group description', 'product line description', 'planning category',
-            'transit vendor destination', 'official buy', 'plant',
+            'transit vendor destination', 'official buy',
             'storage location', 'stock segment',
             'erp ind', 'company code', 'ab number', 'gtn issue date',
             'sku status', 'slo', 'plo',
@@ -463,7 +531,7 @@ export class ExcelEngine {
     }
 
     private formatProductRange(season: string): string {
-        const normalized = (season || '').trim();
+        const normalized = this.stripBrackets(season || '').trim();
         const m = normalized.match(/^([FS])(?:W|S)?(\d{2})$/i);
         if (m) return `${m[1].toUpperCase()}H:20${m[2]}`;
         if (normalized) return normalized;
@@ -484,6 +552,13 @@ export class ExcelEngine {
         if (mapped) return mapped;
         // Warn if non-empty raw value didn't map
         return raw ? raw.trim() : 'Sea';
+    }
+
+    private normalizeTransportLocation(raw: string | undefined): string {
+        const cleaned = this.stripBrackets(raw || '').trim();
+        if (!cleaned) return '';
+        const key = cleaned.toUpperCase();
+        return COUNTRY_NAME_MAP[key] || cleaned;
     }
 
     private parseDate(raw: string | Date | undefined): Date | null {
@@ -525,26 +600,45 @@ export class ExcelEngine {
         return `${mm}/${dd}/${date.getFullYear()}`;
     }
 
+    private stripBrackets(value: string): string {
+        if (!value) return value;
+        const cleaned = value.replace(/\[([^\]]+)\]/g, '$1').replace(/\[|\]/g, '');
+        return cleaned.replace(/\s+/g, ' ').trim();
+    }
+
     private buildComments(brand: string | undefined, season: string, buyRound: string, buyDateRaw: string | undefined, template: string): string {
-        const b = brand || 'OUTPUT';
-        const s = season || 'NOS';
-        if (buyRound) return `[${b}] ${s} ${buyRound} ${template}`;
+        const b = this.stripBrackets(brand || 'OUTPUT');
+        const s = this.stripBrackets(season || 'NOS');
+        const round = this.stripBrackets(buyRound || '');
+        const tmpl = this.stripBrackets(template || '');
+        if (round) return `${b} ${s} ${round} ${tmpl}`.trim();
         const parsed = this.parseDate(buyDateRaw);
         if (parsed) {
             const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
             const monShort = months[parsed.getMonth()];
             const day = String(parsed.getDate()).padStart(2, '0');
-            const suffix = template ? ` ${template}` : '';
-            return `[${b}] ${s} ${monShort} Buy ${day}-${monShort.toUpperCase()}${suffix}`;
+            const suffix = tmpl ? ` ${tmpl}` : '';
+            return `${b} ${s} ${monShort} Buy ${day}-${monShort.toUpperCase()}${suffix}`.trim();
         }
-        return `[${b}] ${s}`;
+        return `${b} ${s}`.trim();
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Core processing method
     // ─────────────────────────────────────────────────────────────────────────
 
-    async processBuyFile(buffer: any): Promise<{ data: ProcessedPO[]; errors: ValidationError[] }> {
+    async processBuyFile(
+        buffer: any,
+        options?: {
+            manualPurchaseOrder?: string;
+            manualDestination?: string;
+            manualProductRange?: string;
+            defaultQuantityIfMissing?: boolean;
+        },
+    ): Promise<{ data: ProcessedPO[]; errors: ValidationError[] }> {
+        const manualPurchaseOrder = options?.manualPurchaseOrder?.toString().trim() || '';
+        const manualDestination = options?.manualDestination?.toString().trim() || '';
+        const manualProductRange = options?.manualProductRange?.toString().trim() || '';
         const workbook = new ExcelJS.Workbook();
         await workbook.xlsx.load(buffer);
 
@@ -635,7 +729,11 @@ export class ExcelEngine {
             this.errors.push({ field: 'Mapping', row: 1, message: "No size column detected. Using default 'One Size' for all rows.", severity: 'WARNING' });
         }
 
-        const MANDATORY = ['purchaseOrder', 'product', 'quantity'];
+        const allowMissingPurchaseOrder = !!manualPurchaseOrder;
+        const allowMissingQuantity = !!options?.defaultQuantityIfMissing && !headerMap['quantity'];
+        const MANDATORY = ['product'];
+        if (!allowMissingPurchaseOrder) MANDATORY.push('purchaseOrder');
+        if (!allowMissingQuantity) MANDATORY.push('quantity');
         const missing = MANDATORY.filter(f => !headerMap[f]);
 
         const isOutputFile = !!(headerMap['lineItem'] || headerMap['productRange']);
@@ -655,6 +753,7 @@ export class ExcelEngine {
         const results: Map<string, ProcessedPO> = new Map();
         const warnedInferredCategory = new Set<string>();
         let skippedMissingSeason = 0;
+        let warnedDefaultQty = false;
 
         worksheet.eachRow((row, rowNumber) => {
             if (rowNumber <= headerRowNumber) return;
@@ -666,21 +765,48 @@ export class ExcelEngine {
             };
             const getVal = (field: string) => getRawVal(field)?.toString().trim();
 
-            const poNumberRaw = getVal('purchaseOrder');
+            const poNumberRaw = manualPurchaseOrder || getVal('purchaseOrder');
             if (!poNumberRaw) return;
 
-            const dcCode = getVal('dcCode');
-            const poNumber = poNumberRaw + (dcCode ? `-${dcCode}` : '');
+            const plant = this.stripBrackets(getVal('plant') || '');
+            const destCountryRaw = this.stripBrackets(manualDestination || getVal('transportLocation') || '');
+            const poSuffixParts = [plant, destCountryRaw].filter(Boolean);
+            const poNumber = poSuffixParts.length > 0
+                ? `${poNumberRaw}-${poSuffixParts.join('-')}`
+                : poNumberRaw;
 
-            const brand = getVal('brand');
-            const categoryRaw = getVal('category');
+            const brand = this.stripBrackets(getVal('brand') || '');
+            const categoryRaw = this.stripBrackets(getVal('category') || '');
             const inferredCat = categoryRaw || this.inferCategoryFromFactoryMap(brand, factoryMap);
-            const styleNumber = getVal('product');
-            const size = getVal('sizeName') || (useDefaultSizeBucket ? 'One Size' : undefined);
-            const qty = parseFloat(getVal('quantity') || '0');
-            const colour = (getVal('colour') || '').trim();
+            const styleNumber = this.stripBrackets(getVal('product') || '');
+            const productExternalRef = this.stripBrackets(getVal('productExternalRef') || '');
+            const productCustomerRef = this.stripBrackets(getVal('productCustomerRef') || '');
+            const sizeRaw = this.stripBrackets(getVal('sizeName') || '');
+            const size = sizeRaw || (useDefaultSizeBucket ? 'One Size' : undefined);
+            let qty = parseFloat(getVal('quantity') || '0');
+            if (!headerMap['quantity'] && options?.defaultQuantityIfMissing) {
+                qty = 1;
+                if (!warnedDefaultQty) {
+                    warnedDefaultQty = true;
+                    this.errors.push({
+                        field: 'quantity',
+                        row: 1,
+                        message: "Quantity column missing. Defaulting Quantity=1 for all rows.",
+                        severity: 'WARNING',
+                    });
+                }
+            }
+            const colour = this.stripBrackets(getVal('colour') || '').trim();
+            if (!colour) {
+                this.errors.push({
+                    field: 'colour', row: rowNumber,
+                    message: `Row ${rowNumber} PO ${poNumber}: colour is empty; line/size skipped.`,
+                    severity: 'WARNING',
+                });
+                return;
+            }
 
-            const season = getVal('season');
+            const season = this.stripBrackets(getVal('season') || manualProductRange);
             if (!season) {
                 skippedMissingSeason += 1;
                 this.errors.push({
@@ -691,9 +817,11 @@ export class ExcelEngine {
                 return;
             }
 
-            const transportLocation = getVal('transportLocation') || '';
+            const transportLocation = this.normalizeTransportLocation(
+                manualDestination || getVal('transportLocation') || ''
+            );
             const buyDate = getVal('buyDate');
-            const buyRound = getVal('buyRound') || '';
+            const buyRound = this.stripBrackets(getVal('buyRound') || '');
             const exFtyDate = getVal('exFtyDate') || undefined;
             if (!exFtyDate) {
                 this.errors.push({
@@ -704,11 +832,11 @@ export class ExcelEngine {
             }
             const cancelDate = getVal('cancelDate') || exFtyDate || '';
             const poIssuanceDate = getVal('poIssuanceDate') || buyDate || exFtyDate || '';
-            const statusRaw = getVal('status') || 'Confirmed';
-            const transportRaw = getVal('transportMethod');
-            const templateRaw = getVal('template') || '';
-            const vendorCodeRaw = getVal('productSupplier');
-            const vendorNameRaw = getVal('vendorName');
+            const statusRaw = this.stripBrackets(getVal('status') || 'Confirmed');
+            const transportRaw = this.stripBrackets(getVal('transportMethod') || '');
+            const templateRaw = this.stripBrackets(getVal('template') || '');
+            const vendorCodeRaw = this.stripBrackets(getVal('productSupplier') || '');
+            const vendorNameRaw = this.stripBrackets(getVal('vendorName') || '');
 
             const buyerPoNumberCell = getRawVal('buyerPoNumber');
             const buyerPoNumber: string | number = (() => {
@@ -720,7 +848,7 @@ export class ExcelEngine {
                 return poNumberRaw;
             })();
 
-            const productSupplier = this.resolveSupplier(vendorCodeRaw, vendorNameRaw, brand);
+            const productSupplier = this.resolveSupplier(vendorCodeRaw, vendorNameRaw, brand, inferredCat, factoryMap);
             const customerName = this.resolveCustomer(getVal('customerName'), brand, detectedCustomer, undefined);
             const transportMethod = this.normalizeTransportMethod(transportRaw);
 
@@ -732,6 +860,7 @@ export class ExcelEngine {
                 || this.resolveOrdersTemplate(brand, templateRaw);
             const linesTemplate = brandConfig?.lines_template?.trim()
                 || this.resolveLinesTemplate(brand, templateRaw);
+            const productRange = this.formatProductRange(season);
 
             const validStatuses = Array.isArray(brandConfig?.valid_statuses)
                 ? brandConfig!.valid_statuses!.map((s: string) => s.toLowerCase())
@@ -794,7 +923,7 @@ export class ExcelEngine {
                         ordersTemplate,
                         linesTemplate,
                         keyDate: poIssuanceDate,
-                        comments: this.buildComments(brand, season, buyRound, buyDate, ordersTemplate),
+                        comments: this.buildComments(brand, productRange, buyRound, buyDate, ordersTemplate),
                         currency: 'USD',
                         keyUser1: keyUsers.k1,
                         keyUser2: keyUsers.k2,
@@ -826,13 +955,15 @@ export class ExcelEngine {
             if (!existingLine) {
                 existingLine = {
                     lineItem: lineItemNum,
-                    productRange: this.formatProductRange(season),
+                    productRange,
                     styleNumber: styleNumber || '',
                     supplierProfile: 'DEFAULT_PROFILE',
                     buyerPoNumber,
                     startDate: exFtyDate || '',
                     cancelDate: cancelDate || '',
                     colour: colour || '',
+                    productExternalRef,
+                    productCustomerRef,
                 };
                 po.lines.push(existingLine);
             } else {
@@ -844,6 +975,12 @@ export class ExcelEngine {
                     });
                 }
                 if (!existingLine.styleNumber && styleNumber) existingLine.styleNumber = styleNumber;
+                if (!existingLine.productExternalRef && productExternalRef) {
+                    existingLine.productExternalRef = productExternalRef;
+                }
+                if (!existingLine.productCustomerRef && productCustomerRef) {
+                    existingLine.productCustomerRef = productCustomerRef;
+                }
             }
 
             if (qty > 0) {
@@ -1091,8 +1228,8 @@ export class ExcelEngine {
                         comments: '',
                         currency: 'USD',
                         archiveDate: '',
-                        productExternalRef: '',
-                        productCustomerRef: '',
+                        productExternalRef: line.productExternalRef || '',
+                        productCustomerRef: line.productCustomerRef || '',
                         purchaseUOM: '',
                         sellingUOM: '',
                         udfBuyerPoNumber: line.buyerPoNumber,

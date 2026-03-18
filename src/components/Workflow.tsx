@@ -17,6 +17,7 @@ export default function Workflow() {
     const [isProcessing, setIsProcessing] = useState(false);
     const [errors, setErrors] = useState<any[]>([]);
     const [uploadData, setUploadData] = useState<any>(null);
+    const [manualPo, setManualPo] = useState("");
     const applyTheme = (nextTheme: "dark" | "light") => {
       document.documentElement.classList.remove("light", "dark");
       document.documentElement.classList.add(nextTheme);
@@ -51,6 +52,7 @@ export default function Workflow() {
         for (let i = 0; i < fileList.length; i++) {
             formData.append("file", fileList[i]);
         }
+        if (manualPo.trim()) formData.append("manualPo", manualPo.trim());
 
         try {
             const res = await fetch("/api/upload", {
@@ -261,6 +263,18 @@ export default function Workflow() {
                                 </p>
                             </div>
 
+                            <div className="grid grid-cols-1 gap-4 max-w-3xl mx-auto text-left">
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Manual PO</label>
+                                    <input
+                                        value={manualPo}
+                                        onChange={(e) => setManualPo(e.target.value)}
+                                        placeholder="PO002954"
+                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                    />
+                                </div>
+                            </div>
+
                             <div className="flex flex-col items-center gap-6">
                                 <label className="primary-button inline-flex items-center gap-4 cursor-pointer bg-blue-600 text-white" style={{ background: "linear-gradient(90deg, #2563eb, #1d4ed8)" }}>
                                     <span>SELECT LOCAL SOURCE</span>
@@ -449,18 +463,29 @@ export default function Workflow() {
                                 </div>
 
                                 {uploadData?.fileSummary?.length > 0 && (
-                                    <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-4 text-left text-xs text-slate-300">
-                                        <div className="font-black text-white uppercase tracking-[0.2em] text-[10px] mb-2">File-level Summary</div>
+                                    <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-4 text-left text-xs text-slate-300 file-summary-panel">
+                                        <div className="font-black text-white uppercase tracking-[0.2em] text-[10px] mb-2 file-summary-title">File-level Summary</div>
                                         <div className="grid grid-cols-2 md:grid-cols-6 gap-2 text-[10px]">
-                                            <div className="font-semibold text-slate-200">File</div>
-                                            <div className="font-semibold text-slate-200">Orders</div>
-                                            <div className="font-semibold text-slate-200">Lines</div>
-                                            <div className="font-semibold text-slate-200">Sizes</div>
-                                            <div className="font-semibold text-slate-200">Errors</div>
-                                            <div className="font-semibold text-slate-200">Warnings</div>
+                                            <div className="font-semibold text-slate-200 file-summary-head">File</div>
+                                            <div className="font-semibold text-slate-200 file-summary-head">Orders</div>
+                                            <div className="font-semibold text-slate-200 file-summary-head">Lines</div>
+                                            <div className="font-semibold text-slate-200 file-summary-head">Sizes</div>
+                                            <div className="font-semibold text-slate-200 file-summary-head">Errors</div>
+                                            <div className="font-semibold text-slate-200 file-summary-head">Warnings</div>
                                                 {uploadData.fileSummary.map((f:any, idx:number) => (
                                                 <div key={`file-summary-${idx}`} className="contents">
-                                                    <div className="truncate">{f.filename}</div>
+                                                    <div className="truncate">
+                                                        <div className="font-black file-summary-file">{f.filename}</div>
+                                                        {Array.isArray(f.brands) && f.brands.length > 0 && (
+                                                            <div className="mt-1 flex flex-wrap gap-1">
+                                                                {f.brands.map((b: string) => (
+                                                                    <span key={`${f.filename}-${b}`} className="file-summary-badge">
+                                                                        {b}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                     <div className="font-black text-emerald-300">{f.orders}</div>
                                                     <div>{f.lines}</div>
                                                     <div>{f.sizes}</div>
@@ -471,6 +496,24 @@ export default function Workflow() {
                                         </div>
                                     </div>
                                 )}
+
+                                <div className="quick-qa-panel bg-white/5 border border-white/10 rounded-2xl px-6 py-4 backdrop-blur-md">
+                                    <div className="font-black text-[10px] uppercase tracking-[0.3em] text-slate-500 mb-2 quick-qa-label">Quick QA Summary</div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-[11px]">
+                                        <div>
+                                            <div className="text-slate-400 quick-qa-label">PO Count</div>
+                                            <div className="text-emerald-300 font-black quick-qa-value">{uploadData?.mergedSummary?.orders || 0}</div>
+                                        </div>
+                                        <div>
+                                            <div className="text-slate-400 quick-qa-label">Line Count</div>
+                                            <div className="text-blue-300 font-black quick-qa-value">{uploadData?.mergedSummary?.lines || 0}</div>
+                                        </div>
+                                        <div>
+                                            <div className="text-slate-400 quick-qa-label">Size Total</div>
+                                            <div className="text-amber-300 font-black quick-qa-value">{uploadData?.mergedSummary?.sizes || 0}</div>
+                                        </div>
+                                    </div>
+                                </div>
 
                                 {blockerMessages.length > 0 && (
                                     <div className="bg-rose-950/70 border border-rose-400/30 rounded-2xl p-4 text-left text-xs text-rose-200">
