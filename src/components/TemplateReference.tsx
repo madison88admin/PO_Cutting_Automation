@@ -86,22 +86,22 @@ export default function TemplateReference() {
 
                         <div className="relative space-y-3.5">
                             {tpl.cols.map((col, ci) => (
-                                <div key={ci} className="flex flex-col gap-1.5 p-3.5 rounded-xl bg-black/20 border border-white/5 hover:border-white/15 transition-colors">
+                                <div key={ci} className="template-row flex flex-col gap-1.5 p-3.5 rounded-xl bg-black/20 border border-white/5 hover:border-white/15 transition-colors">
                                     <div className="flex items-center justify-between">
                                         <span className="text-sm sm:text-[15px] font-extrabold text-slate-200">{col.name}</span>
                                         {col.req && <CheckCircle2 className="w-3.5 h-3.5 text-blue-500" />}
                                     </div>
-                                    <p className="text-[10px] sm:text-[11px] text-slate-500 font-medium">{col.desc}</p>
+                                    <p className="template-row-desc text-[10px] sm:text-[11px] text-slate-500 font-medium">{col.desc}</p>
                                 </div>
                             ))}
                         </div>
 
-                        <div className="relative mt-7 flex items-center justify-between gap-2 text-[10px] font-black uppercase tracking-widest text-blue-400 opacity-75">
+                        <div className="relative mt-7 flex items-center justify-between gap-2 text-[10px] font-black uppercase tracking-widest text-blue-400 light-blue-text opacity-75">
                             <div className="flex items-center gap-2">
                                 <Info className="w-3 h-3" />
                                 <span>Round-Trip Compatible</span>
                             </div>
-                            <span className="rounded-md border border-white/10 px-2 py-1 text-[9px] tracking-[0.16em] text-slate-300">Ready</span>
+                            <span className="rounded-md border border-white/10 px-2 py-1 text-[9px] tracking-[0.16em] text-slate-300 light-strong-text">Ready</span>
                         </div>
                     </motion.div>
                 ))}

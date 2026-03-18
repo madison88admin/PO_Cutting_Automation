@@ -129,7 +129,7 @@ export default function Home() {
     }[healthState];
 
     return (
-        <main className="min-h-screen relative flex flex-col items-center px-6 py-12 md:py-20 overflow-x-hidden selection:bg-blue-500/30 bg-[hsl(var(--background))] text-[hsl(var(--foreground))]">
+        <main className="system-enter min-h-screen relative flex flex-col items-center px-6 py-12 md:py-20 overflow-x-hidden selection:bg-blue-500/30 bg-[hsl(var(--background))] text-[hsl(var(--foreground))]">
             {/* Ultra-Premium Ambient Background */}
             <div className="fixed inset-0 pointer-events-none -z-10 overflow-hidden bg-[hsl(var(--background))]">
                 <div className="absolute top-[-10%] left-[-10%] w-[60vw] h-[60vw] bg-blue-600/10 rounded-full blur-[180px] animate-pulse-glow" />
@@ -185,8 +185,8 @@ export default function Home() {
                                 }
                                 setShowAdminLogin(true);
                             }}
-                            className={`group relative flex items-center gap-4 px-6 py-5 border rounded-2xl text-[10px] font-black uppercase tracking-[0.3em] transition-all shadow-2xl overflow-hidden ${isAdminAuthenticated
-                                    ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-200"
+                                    className={`group relative flex items-center gap-4 px-6 py-5 border rounded-2xl text-[10px] font-black uppercase tracking-[0.3em] transition-all shadow-2xl overflow-hidden ${isAdminAuthenticated
+                                    ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-200 light-emerald-text"
                                     : "bg-[hsl(var(--card))] border-[hsl(var(--border))] text-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))] hover:bg-[rgba(255,255,255,0.08)]"
                                 }`}
                         >
@@ -195,7 +195,7 @@ export default function Home() {
                         </button>
 
                         <button
-                            onClick={() => setView("REFERENCE")}
+                            onClick={() => setView(view === "REFERENCE" ? "WORKFLOW" : "REFERENCE")}
                             className={`group relative flex items-center gap-4 px-6 py-5 border rounded-2xl text-[10px] font-black uppercase tracking-[0.3em] transition-all shadow-2xl overflow-hidden ${view === "REFERENCE"
                                     ? "bg-blue-500/10 border-blue-500/50 text-[hsl(var(--foreground))]"
                                     : "bg-[hsl(var(--card))] border-[hsl(var(--border))] text-[hsl(var(--muted))] hover:text-[hsl(var(--foreground))] hover:bg-[rgba(255,255,255,0.08)]"
@@ -264,7 +264,11 @@ export default function Home() {
                     transition={{ type: "spring", damping: 25, stiffness: 120 }}
                     className="w-full relative z-20"
                 >
-                    {view === "WORKFLOW" ? <Workflow /> : view === "ADMIN" ? <AdminPanel /> : <TemplateReference />}
+                    {view === "WORKFLOW" ? <Workflow /> : view === "ADMIN" ? (
+                        <AdminPanel onReturnToWorkflow={() => setView("WORKFLOW")} />
+                    ) : (
+                        <TemplateReference />
+                    )}
                 </motion.div>
             </AnimatePresence>
 
@@ -347,7 +351,7 @@ export default function Home() {
                                     type="button"
                                     onClick={attemptAdminLogin}
                                     disabled={isAdminLoginLoading}
-                                    className="h-11 px-5 rounded-xl bg-blue-600 text-[hsl(var(--foreground))] disabled:opacity-60 text-xs font-black uppercase tracking-[0.15em]"
+                                    className="h-11 px-5 rounded-xl bg-blue-600 text-white light-force-white disabled:opacity-60 text-xs font-black uppercase tracking-[0.15em]"
                                 >
                                     {isAdminLoginLoading ? "Signing in..." : "Sign In"}
                                 </button>

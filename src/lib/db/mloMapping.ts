@@ -8,13 +8,40 @@ export interface MloMapping {
     keyuser2: string;
     keyuser4: string;
     keyuser5: string;
+    orders_template?: string | null;
+    lines_template?: string | null;
+    valid_statuses?: string[] | null;
     updated_by: string;
     updated_at: string;
 }
 
 const MOCK_MLO: MloMapping[] = [
-    { id: '1', brand: 'BrandAlpha', keyuser1: 'KU-ALPHA-1', keyuser2: 'KU-ALPHA-2', keyuser4: 'KU-ALPHA-4', keyuser5: 'KU-ALPHA-5', updated_by: 'mock', updated_at: '' },
-    { id: '2', brand: 'BrandBeta', keyuser1: 'KU-BETA-1', keyuser2: 'KU-BETA-2', keyuser4: 'KU-BETA-4', keyuser5: 'KU-BETA-5', updated_by: 'mock', updated_at: '' }
+    {
+        id: '1',
+        brand: 'BrandAlpha',
+        keyuser1: 'KU-ALPHA-1',
+        keyuser2: 'KU-ALPHA-2',
+        keyuser4: 'KU-ALPHA-4',
+        keyuser5: 'KU-ALPHA-5',
+        orders_template: 'BULK',
+        lines_template: 'BULK',
+        valid_statuses: ['Confirmed'],
+        updated_by: 'mock',
+        updated_at: '',
+    },
+    {
+        id: '2',
+        brand: 'BrandBeta',
+        keyuser1: 'KU-BETA-1',
+        keyuser2: 'KU-BETA-2',
+        keyuser4: 'KU-BETA-4',
+        keyuser5: 'KU-BETA-5',
+        orders_template: 'BULK',
+        lines_template: 'BULK',
+        valid_statuses: ['Confirmed'],
+        updated_by: 'mock',
+        updated_at: '',
+    }
 ];
 
 export async function getMloMappings(): Promise<MloMapping[]> {

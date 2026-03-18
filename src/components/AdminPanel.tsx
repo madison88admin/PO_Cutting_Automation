@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import {
     Settings, Shield, Edit2, Save, X, ChevronRight, Search, History,
-    Users, BarChart3, Clock, Database, Lock, UserCircle2, Filter, Zap, Activity
+    Users, BarChart3, Clock, Database, Lock, UserCircle2, Filter, Zap, Activity, ArrowLeft
 } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -23,7 +23,11 @@ type FactoryMappingRow = {
     updated_at?: string;
 };
 
-export default function AdminPanel() {
+type AdminPanelProps = {
+    onReturnToWorkflow?: () => void;
+};
+
+export default function AdminPanel({ onReturnToWorkflow }: AdminPanelProps) {
     const [activeTab, setActiveTab] = useState<Tab>("DASHBOARD");
     const [isLoading, setIsLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState("");
@@ -112,26 +116,39 @@ export default function AdminPanel() {
                     <p className="text-blue-500/60 text-[10px] uppercase font-black tracking-[0.4em]">Madison 88 Operations Governance</p>
                 </div>
 
-                <div className="flex bg-slate-900/40 backdrop-blur-xl p-1.5 rounded-[24px] border border-white/5 shadow-2xl">
-                    {(["DASHBOARD", "MAPPINGS", "USERS", "SECURITY"] as const).map(tab => (
+                <div className="flex flex-col sm:flex-row items-center gap-4">
+                    {onReturnToWorkflow && (
                         <button
-                            key={tab}
-                            onClick={() => setActiveTab(tab)}
-                            className={cn(
-                                "px-8 py-3.5 rounded-[18px] text-[10px] font-black transition-all duration-500 uppercase tracking-widest whitespace-nowrap relative overflow-hidden group",
-                                activeTab === tab ? "text-white" : "text-slate-500 hover:text-slate-300"
-                            )}
+                            type="button"
+                            onClick={onReturnToWorkflow}
+                            className="secondary-button light-strong-text px-6 py-3 rounded-2xl text-[10px] tracking-[0.3em] flex items-center gap-3"
                         >
-                            <span className="relative z-10">{tab}</span>
-                            {activeTab === tab && (
-                                <motion.div
-                                    layoutId="activeTab"
-                                    className="absolute inset-0 bg-blue-600 shadow-[0_0_20px_rgba(37,99,235,0.4)]"
-                                    transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-                                />
-                            )}
+                            <ArrowLeft className="w-4 h-4" />
+                            RETURN TO WORKFLOW
                         </button>
-                    ))}
+                    )}
+
+                    <div className="flex bg-slate-900/40 backdrop-blur-xl p-1.5 rounded-[24px] border border-white/5 shadow-2xl">
+                        {(["DASHBOARD", "MAPPINGS", "USERS", "SECURITY"] as const).map(tab => (
+                            <button
+                                key={tab}
+                                onClick={() => setActiveTab(tab)}
+                                className={cn(
+                                    "px-8 py-3.5 rounded-[18px] text-[10px] font-black transition-all duration-500 uppercase tracking-widest whitespace-nowrap relative overflow-hidden group",
+                                    activeTab === tab ? "text-white" : "text-slate-500 hover:text-slate-300"
+                                )}
+                            >
+                                <span className="relative z-10">{tab}</span>
+                                {activeTab === tab && (
+                                    <motion.div
+                                        layoutId="activeTab"
+                                        className="absolute inset-0 bg-blue-600 shadow-[0_0_20px_rgba(37,99,235,0.4)]"
+                                        transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
+                                    />
+                                )}
+                            </button>
+                        ))}
+                    </div>
                 </div>
             </div>
 
@@ -227,7 +244,7 @@ export default function AdminPanel() {
                                     />
                                 </div>
                                 <div className="flex gap-4 w-full md:w-auto">
-                                    <button type="button" className="secondary-button h-16 px-10 flex-1 md:flex-none flex items-center gap-3 text-[10px] tracking-[0.3em]">
+                                    <button type="button" className="secondary-button light-strong-text h-16 px-10 flex-1 md:flex-none flex items-center gap-3 text-[10px] tracking-[0.3em]">
                                         <Filter className="w-5 h-5" /> FILTERS
                                     </button>
                                     <button

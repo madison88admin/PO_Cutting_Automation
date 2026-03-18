@@ -19,10 +19,15 @@ export default function ThemeToggle() {
 
   const toggle = () => {
     const next = isDark ? "light" : "dark";
-    document.documentElement.classList.remove("light", "dark");
-    document.documentElement.classList.add(next);
+    const root = document.documentElement;
+    root.classList.add("theme-transition");
+    root.classList.remove("light", "dark");
+    root.classList.add(next);
     localStorage.setItem("theme", next);
     setIsDark(next === "dark");
+    window.setTimeout(() => {
+      root.classList.remove("theme-transition");
+    }, 420);
   };
 
   const buttonClass = isDark

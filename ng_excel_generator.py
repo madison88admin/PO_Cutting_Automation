@@ -4,28 +4,41 @@ import argparse
 from collections import defaultdict
 from datetime import datetime, date
 from pathlib import Path
+import json
+import os
 import re
 from typing import Any
 
 from openpyxl import Workbook, load_workbook
+from urllib.error import URLError, HTTPError
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 
 
 TRANSPORT_MAP = {
-    "Ocean": "Sea",
-    "Air": "Air",
-    "Sea": "Sea",
+    "ocean": "Sea",
+    "air": "Air",
+    "sea": "Sea",
     # Arcteryx-specific transport codes
-    "S1 - Seafreight": "Sea",
-    "S1": "Sea",
-    "A1 - Airfreight": "Air",
-    "A1": "Air",
-    "A2 - Airfreight": "Air",
-    "A2": "Air",
-    "Seafreight": "Sea",
-    "Airfreight": "Air",
-    "Sea Freight": "Sea",
-    "Air Freight": "Air",
+    "s1 - seafreight": "Sea",
+    "s1": "Sea",
+    "a1 - airfreight": "Air",
+    "a1": "Air",
+    "a2 - airfreight": "Air",
+    "a2": "Air",
+    "seafreight": "Sea",
+    "airfreight": "Air",
+    "sea freight": "Sea",
+    "air freight": "Air",
+    # Courier variants
+    "courier": "Courier",
+    "dhl": "Courier",
+    "fedex": "Courier",
+    "ups": "Courier",
 }
+
+# Valid mapped transport values after TRANSPORT_MAP resolution
+VALID_TRANSPORT_VALUES = {"Sea", "Air", "Courier"}
 
 CURRENCY = "USD"
 SUPPLIER_PROFILE = "DEFAULT_PROFILE"
@@ -56,6 +69,158 @@ BRAND_CUSTOMER_MAP: dict[str, str] = {
     "arc'teryx": "Arcteryx",
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Customer subtype overrides.
+# Keys are lowercase brand + subtype signal found in source data.
+# Used by _resolve_customer_subtype() to map raw customer values that contain
+# "RTO", "SMU", or other signals to the correct spelled-out customer name.
+# ─────────────────────────────────────────────────────────────────────────────
+TNF_CUSTOMER_SUBTYPE_MAP: dict[str, str] = {
+    "the north face in-line": "The North Face In-Line",
+    "the north face inline":  "The North Face In-Line",
+    "the north face rto":     "The North Face RTO",
+    "the north face smu":     "The North Face SMU",
+    "tnf in-line":            "The North Face In-Line",
+    "tnf inline":             "The North Face In-Line",
+    "tnf rto":                "The North Face RTO",
+    "tnf smu":                "The North Face SMU",
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# KeyUser map — per brand, the MLO team members that go into ORDERS.
+# Keys are lowercase brand identifiers.
+# Values are dicts keyed by KeyUser column name.
+# Only KeyUser1 (Planning), KeyUser2 (Purchasing), KeyUser4 (Production),
+# KeyUser5 (Logistics/Shipping) are populated per BRD; 3/6/7/8 left blank.
+# ─────────────────────────────────────────────────────────────────────────────
+BRAND_KEYUSER_MAP: dict[str, dict[str, str]] = {
+    "tnf": {
+        "KeyUser1": "Ron",
+        "KeyUser2": "Maricar",
+        "KeyUser3": "",
+        "KeyUser4": "Ron",
+        "KeyUser5": "Elaine Sanchez",
+        "KeyUser6": "",
+        "KeyUser7": "",
+        "KeyUser8": "",
+    },
+    "the north face": {
+        "KeyUser1": "Ron",
+        "KeyUser2": "Maricar",
+        "KeyUser3": "",
+        "KeyUser4": "Ron",
+        "KeyUser5": "Elaine Sanchez",
+        "KeyUser6": "",
+        "KeyUser7": "",
+        "KeyUser8": "",
+    },
+    "col": {
+        "KeyUser1": "",
+        "KeyUser2": "",
+        "KeyUser3": "",
+        "KeyUser4": "",
+        "KeyUser5": "",
+        "KeyUser6": "",
+        "KeyUser7": "",
+        "KeyUser8": "",
+    },
+    "columbia": {
+        "KeyUser1": "",
+        "KeyUser2": "",
+        "KeyUser3": "",
+        "KeyUser4": "",
+        "KeyUser5": "",
+        "KeyUser6": "",
+        "KeyUser7": "",
+        "KeyUser8": "",
+    },
+    "arcteryx": {
+        "KeyUser1": "",
+        "KeyUser2": "",
+        "KeyUser3": "",
+        "KeyUser4": "",
+        "KeyUser5": "",
+        "KeyUser6": "",
+        "KeyUser7": "",
+        "KeyUser8": "",
+    },
+    "arc'teryx": {
+        "KeyUser1": "",
+        "KeyUser2": "",
+        "KeyUser3": "",
+        "KeyUser4": "",
+        "KeyUser5": "",
+        "KeyUser6": "",
+        "KeyUser7": "",
+        "KeyUser8": "",
+    },
+}
+
+# Default KeyUser block (all blank) used when brand not found in map.
+_DEFAULT_KEYUSERS: dict[str, str] = {
+    k: "" for k in [
+        "KeyUser1", "KeyUser2", "KeyUser3", "KeyUser4",
+        "KeyUser5", "KeyUser6", "KeyUser7", "KeyUser8",
+    ]
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Template map — per brand, the NG template name to use.
+# Overrides _normalize_template() default of "BULK" for brands with
+# brand-specific template names (e.g. TNF uses "Major Brand Bulk").
+# For LINES the template field uses a different, more granular value.
+# ─────────────────────────────────────────────────────────────────────────────
+BRAND_ORDERS_TEMPLATE_MAP: dict[str, str] = {
+    "tnf":            "Major Brand Bulk",
+    "the north face": "Major Brand Bulk",
+    "col":            "BULK",
+    "columbia":       "BULK",
+    "arcteryx":       "BULK",
+    "arc'teryx":      "BULK",
+}
+
+BRAND_LINES_TEMPLATE_MAP: dict[str, str] = {
+    "tnf":            "FOB Bulk EDI PO (New)",
+    "the north face": "FOB Bulk EDI PO (New)",
+    "col":            "BULK",
+    "columbia":       "BULK",
+    "arcteryx":       "BULK",
+    "arc'teryx":      "BULK",
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Remote brand config (TS API) — optional source of truth.
+# Python CLI will call this when available, otherwise fall back to maps above.
+# ─────────────────────────────────────────────────────────────────────────────
+_BRAND_CONFIG_CACHE: dict[str, dict[str, Any] | None] = {}
+
+
+def _fetch_brand_config(brand: str) -> dict[str, Any] | None:
+    base_url = os.getenv("BRAND_CONFIG_URL", "http://localhost:3000/api/brand-config")
+    if not base_url or not brand:
+        return None
+    url = f"{base_url}?brand={quote(brand)}"
+    try:
+        req = Request(url, headers={"Accept": "application/json"})
+        with urlopen(req, timeout=2) as resp:
+            if resp.status != 200:
+                return None
+            payload = json.loads(resp.read().decode("utf-8"))
+            return payload if isinstance(payload, dict) else None
+    except (HTTPError, URLError, ValueError, OSError):
+        return None
+
+
+def _get_brand_config(brand: str) -> dict[str, Any] | None:
+    key = (brand or "").strip().lower()
+    if not key:
+        return None
+    if key in _BRAND_CONFIG_CACHE:
+        return _BRAND_CONFIG_CACHE[key]
+    config = _fetch_brand_config(brand)
+    _BRAND_CONFIG_CACHE[key] = config
+    return config
+
 # Fallback fixed positions for the original COL buy file (1-based Excel columns)
 DEFAULT_COL_MAP = {
     "po": 7,
@@ -79,7 +244,7 @@ DEFAULT_COL_MAP = {
 HEADER_ALIASES: dict[str, list[str]] = {
         "transport_location": [
             "transportlocation", "transport location",
-            "destination", "dest country",
+            "destination", "dest country", "ult. destination",
         ],
     "po": [
         "po #", "po#", "po", "pono",
@@ -106,7 +271,7 @@ HEADER_ALIASES: dict[str, list[str]] = {
     ],
     "size": [
         "size", "size name", "sizename", "product size", "productsize",
-        "size code", "size #",
+        "size code", "size #", "size#", "size_name", "size-name",
     ],
     "customer": [
         "customer", "customer name", "brand",
@@ -123,7 +288,7 @@ HEADER_ALIASES: dict[str, list[str]] = {
     ],
     "vendor_code": [
         "vendor code", "vendorcode", "vendor", "supplier",
-        "product supplier",
+        "product supplier", "productsupplier",
     ],
     "season": [
         "season", "range", "productrange",
@@ -210,6 +375,13 @@ SIZES_HEADERS = [
     "FindField_CustomAttribute3", "FindField_Product",
 ]
 
+# Expected column counts for output validation
+EXPECTED_COL_COUNTS = {
+    "ORDERS":      len(ORDERS_HEADERS),   # 26
+    "LINES":       len(LINES_HEADERS),    # 31
+    "ORDER_SIZES": len(SIZES_HEADERS),    # 29
+}
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Utility helpers
@@ -259,7 +431,8 @@ def _parse_date(value: Any) -> datetime | None:
 
 def _transport_method(value: Any) -> str:
     text = _as_text(value)
-    return TRANSPORT_MAP.get(text, text or "Sea")
+    key = text.lower()
+    return TRANSPORT_MAP.get(key, text or "Sea")
 
 
 def _format_product_range(season: str) -> str:
@@ -275,11 +448,38 @@ def _format_product_range(season: str) -> str:
 
 
 def _normalize_template(raw_template: str) -> str:
+    """Normalise raw doc-type codes from buy files to internal template tokens."""
     normalized = (raw_template or "").strip().upper()
     template_map = {
         "OG": "BULK", "ZNB1": "BULK", "ZMF1": "BULK", "ZDS1": "BULK",
+        "SMS": "SMS",
     }
     return template_map.get(normalized, (raw_template or "BULK").strip() or "BULK")
+
+
+def _resolve_orders_template(brand: str, raw_template: str, brand_config: dict[str, Any] | None = None) -> str:
+    """Return the ORDERS Template value for this brand.
+    Brand-config value takes priority; then brand-specific map; then _normalize_template()."""
+    if brand_config:
+        cfg = _as_text(brand_config.get("orders_template"))
+        if cfg:
+            return cfg
+    brand_key = (brand or "").strip().lower()
+    if brand_key in BRAND_ORDERS_TEMPLATE_MAP:
+        return BRAND_ORDERS_TEMPLATE_MAP[brand_key]
+    return _normalize_template(raw_template)
+
+
+def _resolve_lines_template(brand: str, raw_template: str, brand_config: dict[str, Any] | None = None) -> str:
+    """Return the LINES Template value for this brand."""
+    if brand_config:
+        cfg = _as_text(brand_config.get("lines_template"))
+        if cfg:
+            return cfg
+    brand_key = (brand or "").strip().lower()
+    if brand_key in BRAND_LINES_TEMPLATE_MAP:
+        return BRAND_LINES_TEMPLATE_MAP[brand_key]
+    return _normalize_template(raw_template)
 
 
 def _build_comments(brand: str, season: str, buy_date: Any, template: str, buy_round: str = "") -> str:
@@ -379,6 +579,237 @@ def _resolve_customer(customer_raw: str, brand: str, fallback: str) -> str:
         brand_key = brand.strip().lower()
         return BRAND_CUSTOMER_MAP.get(brand_key, brand.strip())
     return fallback
+
+
+def _resolve_customer_subtype(customer_raw: str, brand: str, fallback: str) -> str:
+    """Resolve full customer name including In-Line / SMU / RTO subtype.
+
+    Priority:
+    1. Direct match in TNF_CUSTOMER_SUBTYPE_MAP (handles raw values already
+       containing the subtype signal, e.g. 'The North Face RTO').
+    2. BRAND_CUSTOMER_MAP default (In-Line) for the given brand.
+    3. customer_raw as-is if non-empty.
+    4. fallback.
+    """
+    if customer_raw:
+        key = customer_raw.strip().lower()
+        # Try explicit subtype map first
+        if key in TNF_CUSTOMER_SUBTYPE_MAP:
+            return TNF_CUSTOMER_SUBTYPE_MAP[key]
+        # Try brand customer map
+        brand_key = key
+        if brand_key in BRAND_CUSTOMER_MAP:
+            return BRAND_CUSTOMER_MAP[brand_key]
+        # Short uppercase code → try brand map
+        if len(customer_raw) <= 6 and customer_raw.isupper():
+            brand_key2 = customer_raw.strip().lower()
+            return BRAND_CUSTOMER_MAP.get(brand_key2, customer_raw)
+        return customer_raw.strip()
+    if brand:
+        brand_key = brand.strip().lower()
+        return BRAND_CUSTOMER_MAP.get(brand_key, brand.strip())
+    return fallback
+
+
+def _resolve_keyusers(brand: str) -> dict[str, str]:
+    """Return KeyUser1-8 dict for the given brand."""
+    brand_key = (brand or "").strip().lower()
+    return dict(BRAND_KEYUSER_MAP.get(brand_key, _DEFAULT_KEYUSERS))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Output slice validation  (NEW)
+# Validates the three generated workbooks against the reference format rules.
+# Returns a list of (level, message) tuples — level is "ERROR" or "WARNING".
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _validate_output_slices(
+    orders_ws,
+    lines_ws,
+    sizes_ws,
+) -> list[tuple[str, str]]:
+    """
+    Post-generation validation of the three output slices.
+
+    Checks enforced
+    ---------------
+    1.  Row counts  : LINES rows == SIZES rows (data rows, excluding header)
+    2.  Column counts: each sheet has the expected number of columns
+    3.  PO universe : ORDERS, LINES, SIZES all share the exact same PO set
+    4.  ORDERS      : one row per unique PO (no duplicates)
+    5.  Qty total   : SIZES Quantity sum > 0
+    6.  Transport   : every TransportMethod value in LINES and ORDERS maps to
+                      Sea, Air, or Courier (catches unmapped raw values)
+    7.  Customer    : no blank Customer values in LINES or ORDERS
+    8.  Status      : ORDERS Status column contains only "Confirmed"
+    9.  Duplicate PO+LineItem: LINES and SIZES must have no duplicate keys
+    10. LINES/SIZES key alignment: same exact (PO, LineItem) pairs in both sheets
+    """
+    issues: list[tuple[str, str]] = []
+
+    def col_values(ws, col_idx: int) -> list[str]:
+        return [
+            _as_text(ws.cell(row=r, column=col_idx).value)
+            for r in range(2, ws.max_row + 1)
+        ]
+
+    def header_index(ws, name: str) -> int | None:
+        for c in range(1, ws.max_column + 1):
+            if _as_text(ws.cell(row=1, column=c).value).lower() == name.lower():
+                return c
+        return None
+
+    # 1. Row counts
+    lines_data_rows = lines_ws.max_row - 1
+    sizes_data_rows = sizes_ws.max_row - 1
+
+    if lines_data_rows != sizes_data_rows:
+        issues.append((
+            "ERROR",
+            f"Row count mismatch: LINES has {lines_data_rows} rows, "
+            f"ORDER_SIZES has {sizes_data_rows} rows."
+        ))
+
+    # 2. Column counts
+    for ws, sheet_key in [(orders_ws, "ORDERS"), (lines_ws, "LINES"), (sizes_ws, "ORDER_SIZES")]:
+        expected = EXPECTED_COL_COUNTS[sheet_key]
+        actual = ws.max_column
+        if actual != expected:
+            issues.append((
+                "ERROR",
+                f"{sheet_key} column count is {actual}, expected {expected}."
+            ))
+
+    # 3 & 4. PO universe + ORDERS uniqueness
+    orders_po_col = header_index(orders_ws, "PurchaseOrder") or 1
+    lines_po_col  = header_index(lines_ws,  "PurchaseOrder") or 1
+    sizes_po_col  = header_index(sizes_ws,  "PurchaseOrder") or 1
+
+    orders_pos = col_values(orders_ws, orders_po_col)
+    lines_pos  = col_values(lines_ws,  lines_po_col)
+    sizes_pos  = col_values(sizes_ws,  sizes_po_col)
+
+    orders_po_set = set(orders_pos)
+    lines_po_set  = set(lines_pos)
+    sizes_po_set  = set(sizes_pos)
+
+    if len(orders_pos) != len(orders_po_set):
+        dupes = [p for p in orders_po_set if orders_pos.count(p) > 1]
+        issues.append(("ERROR", f"ORDERS has duplicate POs: {dupes[:5]}"))
+
+    if orders_po_set != lines_po_set:
+        only_orders = orders_po_set - lines_po_set
+        only_lines  = lines_po_set - orders_po_set
+        if only_orders:
+            issues.append(("ERROR", f"POs in ORDERS but not LINES: {list(only_orders)[:5]}"))
+        if only_lines:
+            issues.append(("ERROR", f"POs in LINES but not ORDERS: {list(only_lines)[:5]}"))
+
+    if orders_po_set != sizes_po_set:
+        only_orders = orders_po_set - sizes_po_set
+        only_sizes  = sizes_po_set - orders_po_set
+        if only_orders:
+            issues.append(("ERROR", f"POs in ORDERS but not ORDER_SIZES: {list(only_orders)[:5]}"))
+        if only_sizes:
+            issues.append(("ERROR", f"POs in ORDER_SIZES but not ORDERS: {list(only_sizes)[:5]}"))
+
+    # 5. Qty total
+    qty_col = header_index(sizes_ws, "Quantity") or 7
+    total_qty = sum(
+        _to_int_quantity(sizes_ws.cell(row=r, column=qty_col).value)
+        for r in range(2, sizes_ws.max_row + 1)
+    )
+    if total_qty == 0:
+        issues.append(("ERROR", "ORDER_SIZES total Quantity is 0 — no units written."))
+
+    # 6. Transport mapping
+    for ws, label in [(lines_ws, "LINES"), (orders_ws, "ORDERS")]:
+        tm_col = header_index(ws, "TransportMethod")
+        if tm_col is None:
+            issues.append(("WARNING", f"{label}: TransportMethod column not found."))
+            continue
+        bad_transport = set()
+        for r in range(2, ws.max_row + 1):
+            val = _as_text(ws.cell(row=r, column=tm_col).value)
+            if val and val not in VALID_TRANSPORT_VALUES:
+                bad_transport.add(val)
+        if bad_transport:
+            issues.append((
+                "ERROR",
+                f"{label} TransportMethod has unmapped values (must be Sea, Air, or Courier): "
+                f"{sorted(bad_transport)}"
+            ))
+
+    # 7. Customer not blank
+    for ws, label in [(lines_ws, "LINES"), (orders_ws, "ORDERS")]:
+        cust_col = header_index(ws, "Customer")
+        if cust_col is None:
+            issues.append(("WARNING", f"{label}: Customer column not found."))
+            continue
+        blank_rows = [
+            r for r in range(2, ws.max_row + 1)
+            if not _as_text(ws.cell(row=r, column=cust_col).value)
+        ]
+        if blank_rows:
+            issues.append((
+                "ERROR",
+                f"{label} has {len(blank_rows)} blank Customer value(s) "
+                f"(first 5 rows: {blank_rows[:5]})."
+            ))
+
+    # 8. Status = Confirmed
+    status_col = header_index(orders_ws, "Status")
+    if status_col:
+        bad_status = set()
+        for r in range(2, orders_ws.max_row + 1):
+            val = _as_text(orders_ws.cell(row=r, column=status_col).value)
+            if val and val != "Confirmed":
+                bad_status.add(val)
+        if bad_status:
+            issues.append((
+                "WARNING",
+                f"ORDERS Status has unexpected values (expected 'Confirmed'): "
+                f"{sorted(bad_status)} — OK if source INFOR view is 'Unconfirmed Only'."
+            ))
+
+    # 9. Duplicate PO+LineItem
+    li_col_lines = header_index(lines_ws, "LineItem") or 2
+    li_col_sizes = header_index(sizes_ws, "LineItem") or 2
+
+    lines_keys = [
+        (col_values(lines_ws, lines_po_col)[i], col_values(lines_ws, li_col_lines)[i])
+        for i in range(lines_data_rows)
+    ]
+    sizes_keys = [
+        (col_values(sizes_ws, sizes_po_col)[i], col_values(sizes_ws, li_col_sizes)[i])
+        for i in range(sizes_data_rows)
+    ]
+
+    lines_key_set = set(lines_keys)
+    sizes_key_set = set(sizes_keys)
+
+    if len(lines_keys) != len(lines_key_set):
+        issues.append(("ERROR", "LINES has duplicate (PurchaseOrder, LineItem) keys."))
+    if len(sizes_keys) != len(sizes_key_set):
+        issues.append(("ERROR", "ORDER_SIZES has duplicate (PurchaseOrder, LineItem) keys."))
+
+    # 10. LINES/SIZES key alignment
+    only_lines_keys = lines_key_set - sizes_key_set
+    only_sizes_keys = sizes_key_set - lines_key_set
+    if only_lines_keys:
+        issues.append((
+            "ERROR",
+            f"(PO, LineItem) keys in LINES but not ORDER_SIZES: "
+            f"{sorted(only_lines_keys)[:5]}"
+        ))
+    if only_sizes_keys:
+        issues.append((
+            "ERROR",
+            f"(PO, LineItem) keys in ORDER_SIZES but not LINES: "
+            f"{sorted(only_sizes_keys)[:5]}"
+        ))
+
+    return issues
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -578,20 +1009,39 @@ def generate_templates(
         delivery_date      = _format_date(orig_ex_fac, "%m/%d/%Y")
         cancel_date        = _format_date(_cell(row_idx, "cancel_date") or orig_ex_fac, "%m/%d/%Y")
 
-        customer_value     = _resolve_customer(customer_raw, brand_value, customer_fallback)
-        supplier_value     = _resolve_supplier(vendor_code, vendor_name, brand_value or customer_raw)
+        brand_lookup       = brand_value or customer_raw
+        brand_config       = _get_brand_config(brand_lookup)
+        customer_value     = _resolve_customer_subtype(customer_raw, brand_value, customer_fallback)
+        supplier_value     = _resolve_supplier(vendor_code, vendor_name, brand_lookup)
         size_value         = size_raw or "One Size"
         product_range      = _format_product_range(season_raw)
-        template_value     = _normalize_template(template_raw)
+        orders_template    = _resolve_orders_template(brand_lookup, template_raw, brand_config)
+        lines_template     = _resolve_lines_template(brand_lookup, template_raw, brand_config)
         status_value       = status_raw if status_raw else "Confirmed"
         comments_value     = _build_comments(
-            brand_value or customer_raw, season_raw, buy_date, template_value, buy_round
+            brand_lookup, season_raw, buy_date, orders_template, buy_round
         )
+        keyusers           = _resolve_keyusers(brand_lookup)
+        if brand_config and isinstance(brand_config.get("keyusers"), dict):
+            cfg_keyusers = brand_config.get("keyusers") or {}
+            keyusers = {
+                "KeyUser1": _as_text(cfg_keyusers.get("KeyUser1")) or keyusers.get("KeyUser1", ""),
+                "KeyUser2": _as_text(cfg_keyusers.get("KeyUser2")) or keyusers.get("KeyUser2", ""),
+                "KeyUser3": _as_text(cfg_keyusers.get("KeyUser3")) or keyusers.get("KeyUser3", ""),
+                "KeyUser4": _as_text(cfg_keyusers.get("KeyUser4")) or keyusers.get("KeyUser4", ""),
+                "KeyUser5": _as_text(cfg_keyusers.get("KeyUser5")) or keyusers.get("KeyUser5", ""),
+                "KeyUser6": _as_text(cfg_keyusers.get("KeyUser6")) or keyusers.get("KeyUser6", ""),
+                "KeyUser7": _as_text(cfg_keyusers.get("KeyUser7")) or keyusers.get("KeyUser7", ""),
+                "KeyUser8": _as_text(cfg_keyusers.get("KeyUser8")) or keyusers.get("KeyUser8", ""),
+            }
+        valid_statuses = []
+        if brand_config and isinstance(brand_config.get("valid_statuses"), list):
+            valid_statuses = [str(s).strip().lower() for s in brand_config.get("valid_statuses") if s]
 
         # ── Row-level validation warnings ────────────────────────────────────
         for field_name, field_val, fallback_desc in [
             ("season",   season_raw,   f"ProductRange '{product_range}'"),
-            ("template", template_raw, f"Template '{template_value}'"),
+            ("template", template_raw, f"Template '{orders_template}'"),
             ("customer", customer_raw, f"Customer '{customer_value}'"),
             ("size",     size_raw,     "Size 'One Size'"),
         ]:
@@ -601,6 +1051,12 @@ def generate_templates(
 
         if not brand_value:
             add_warning(f"Row {row_idx} PO {po}: brand is empty; comments use fallback brand value.")
+        if valid_statuses:
+            if status_value and status_value.strip().lower() not in valid_statuses:
+                add_warning(
+                    f"Row {row_idx} PO {po}: status '{status_value}' not in valid statuses "
+                    f"{valid_statuses}."
+                )
 
         # ── ORDERS row (one per unique PO) ───────────────────────────────────
         if po not in seen_orders:
@@ -609,10 +1065,13 @@ def generate_templates(
             transport_location = _as_text(_cell(row_idx, "transport_location"))
             _append_row(orders_ws, [
                 po, supplier_value, status_value, customer_value,
-                trans_method, transport_location, "", template_value,
+                trans_method, transport_location, "", orders_template,
                 _format_date(key_date_obj, "%m/%d/%Y") if key_date_obj else "",
                 "", "", comments_value, CURRENCY,
-                "", "", "", "", "", "", "", "", "", "", "", "", "",
+                keyusers["KeyUser1"], keyusers["KeyUser2"], keyusers["KeyUser3"],
+                keyusers["KeyUser4"], keyusers["KeyUser5"], keyusers["KeyUser6"],
+                keyusers["KeyUser7"], keyusers["KeyUser8"],
+                "", "", "", "", "",
             ])
 
         # ── LINES row (one per buy file row) ─────────────────────────────────
@@ -626,7 +1085,7 @@ def generate_templates(
         _append_row(lines_ws, [
             po, line_item, product_range, product, customer_value,
             delivery_date, trans_method, transport_location, status_value, "", "",
-            template_value, key_date_line, SUPPLIER_PROFILE,
+            lines_template, key_date_line, SUPPLIER_PROFILE,
             "", "", CURRENCY, "", "", "", "", "",
             raw_po_val if raw_po_val is not None else po,
             delivery_date, cancel_date,
@@ -690,6 +1149,11 @@ def generate_templates(
         )
         raise ValueError("Strict validation failed due to missing/blank required fields.")
 
+    # ── Output slice validation (NEW) ─────────────────────────────────────────
+    slice_issues = _validate_output_slices(orders_ws, lines_ws, sizes_ws)
+    slice_errors   = [(lvl, msg) for lvl, msg in slice_issues if lvl == "ERROR"]
+    slice_warnings = [(lvl, msg) for lvl, msg in slice_issues if lvl == "WARNING"]
+
     # ── Write output files ────────────────────────────────────────────────────
     output_dir.mkdir(parents=True, exist_ok=True)
     orders_wb.save(output_dir / "ORDERS.xlsx")
@@ -702,7 +1166,14 @@ def generate_templates(
         total_lines_rows, total_sizes_rows,
         skipped_empty_po, validation_warnings, validation_errors,
         skipped_empty_po_samples,
+        slice_issues=slice_issues,
     )
+
+    if slice_errors and strict:
+        raise ValueError(
+            f"Output slice validation failed with {len(slice_errors)} error(s). "
+            "Files written but review the report above."
+        )
     print(f"\nGenerated files in: {output_dir.resolve()}")
     for fname in ("ORDERS.xlsx", "LINES.xlsx", "ORDER_SIZES.xlsx"):
         print(f"  - {fname}")
@@ -714,9 +1185,15 @@ def _print_summary(
     total_lines_rows, total_sizes_rows,
     skipped_empty_po, validation_warnings, validation_errors,
     skipped_empty_po_samples,
+    slice_issues: list[tuple[str, str]] | None = None,
 ) -> None:
     lines_equals_sizes = total_lines_rows == total_sizes_rows
-    print("\n── Validation Summary ──────────────────────────────────────────")
+    slice_issues = slice_issues or []
+    slice_errors   = [msg for lvl, msg in slice_issues if lvl == "ERROR"]
+    slice_warnings = [msg for lvl, msg in slice_issues if lvl == "WARNING"]
+    overall_status = "✓ PASS" if not slice_errors else f"✗ FAIL ({len(slice_errors)} error(s))"
+
+    print("\n── Generation Summary ──────────────────────────────────────────")
     print(f"  Source sheet   : {src.title}")
     print(f"  Layout mode    : {layout_mode}")
     print(f"  Layout score   : {layout_score}")
@@ -743,6 +1220,36 @@ def _print_summary(
         print("  Empty-PO samples (row, A, B, C, raw PO cell):")
         for row_idx, col_a, col_b, col_c, sample_val in skipped_empty_po_samples:
             print(f"    - {row_idx}: {col_a} | {col_b} | {col_c} | {sample_val}")
+
+    print("\n── Output Slice Validation ─────────────────────────────────────")
+    print(f"  Overall        : {overall_status}")
+    checks = [
+        "Row counts (LINES == SIZES)",
+        "Column counts (ORDERS=26, LINES=31, SIZES=29)",
+        "PO universe matches across all 3 files",
+        "ORDERS has no duplicate POs",
+        "ORDER_SIZES total Quantity > 0",
+        "TransportMethod mapped to Sea, Air, or Courier only",
+        "No blank Customer values",
+        "ORDERS Status = Confirmed",
+        "No duplicate PO+LineItem keys",
+        "LINES/SIZES key alignment",
+    ]
+    issue_msgs = [msg for _, msg in slice_issues]
+    for check in checks:
+        hit = any(
+            any(keyword in msg for keyword in check.lower().split())
+            for msg in issue_msgs
+        )
+        print(f"  {'✗' if hit else '✓'} {check}")
+    if slice_errors:
+        print("  Errors:")
+        for msg in slice_errors:
+            print(f"    ✗ {msg}")
+    if slice_warnings:
+        print("  Warnings:")
+        for msg in slice_warnings:
+            print(f"    ⚠ {msg}")
     print("────────────────────────────────────────────────────────────────")
 
 

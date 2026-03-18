@@ -157,10 +157,10 @@ export default function Workflow() {
     ].filter(Boolean);
 
     return (
-        <div className="w-full max-w-7xl mx-auto space-y-20 px-4 transition-colors duration-300 bg-[hsl(var(--background))] text-[hsl(var(--foreground))]">
+        <div className="w-full max-w-7xl mx-auto space-y-20 px-4 transition-colors duration-300 text-[hsl(var(--foreground))]">
             {/* Progress Stepper - Redesigned */}
             <div className="relative pt-12">
-                <div className="absolute top-[calc(3rem+28px)] left-[10%] w-[80%] h-px bg-white/10" />
+                <div className="absolute top-[calc(3rem+28px)] left-[10%] w-[80%] h-px bg-white/10 progress-line" />
                 <div
                     className="absolute top-[calc(3rem+28px)] left-[10%] h-0.5 bg-gradient-to-r from-blue-600 to-indigo-500 shadow-[0_0_20px_rgba(37,99,235,0.4)] transition-all duration-1000 ease-in-out"
                     style={{ width: `${(currentStepIndex / (steps.length - 1)) * 80}%` }}
@@ -208,7 +208,7 @@ export default function Workflow() {
                                     )}
                                 </div>
                                 <span className={cn(
-                                    "mt-6 text-[10px] font-black uppercase tracking-[0.3em] transition-all duration-700",
+                                    "step-label mt-6 text-[10px] font-black uppercase tracking-[0.3em] transition-all duration-700",
                                     isActive ? "text-blue-400 opacity-100 translate-y-0" : isCompleted ? "text-emerald-400 opacity-80" : "text-slate-700 opacity-50"
                                 )}>
                                     {step.label}
@@ -535,7 +535,7 @@ export default function Workflow() {
                                         <p className="text-[9px] text-slate-500 mb-10 uppercase font-black tracking-widest">NG_UPLOAD_BLOB .XLSX</p>
                                         <button
                                             onClick={() => handleDownload(file.key as any)}
-                                            className="secondary-button w-full py-4 text-[10px] tracking-[0.3em] group/btn overflow-hidden relative"
+                                            className="secondary-button w-full py-4 text-[10px] tracking-[0.3em] group/btn overflow-hidden relative download-package-btn"
                                         >
                                             <span className="relative z-10">DOWNLOAD PACKAGE</span>
                                             <div className="absolute inset-0 bg-blue-500 translate-y-full group-hover/btn:translate-y-0 transition-transform duration-300" />
@@ -545,17 +545,17 @@ export default function Workflow() {
                             </div>
 
                             {uploadData?.fileOutputs && (
-                                <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-4 text-left text-xs text-slate-300">
-                                    <div className="font-black text-white uppercase tracking-[0.2em] text-[10px] mb-2">Per-file Template Export</div>
+                                <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-4 text-left text-xs text-slate-300 file-export-panel">
+                                    <div className="font-black text-white uppercase tracking-[0.2em] text-[10px] mb-2 file-export-title">Per-file Template Export</div>
                                     <div className="space-y-3">
                                         {Object.entries(uploadData.fileOutputs).map(([fname, payload]: any) => (
-                                            <div key={fname} className="flex flex-wrap items-center gap-3 bg-slate-800/40 border border-white/10 rounded-lg px-3 py-2">
-                                                <div className="text-[11px] font-black text-emerald-300 truncate max-w-[240px]">{fname}</div>
+                                            <div key={fname} className="flex flex-wrap items-center gap-3 bg-slate-800/40 border border-white/10 rounded-lg px-3 py-2 file-export-row">
+                                                <div className="text-[11px] font-black text-emerald-300 truncate max-w-[240px] file-export-name">{fname}</div>
                                                 {['orders','lines','sizes'].map((type) => (
                                                     <button
                                                         key={`${fname}-${type}`}
                                                         onClick={() => handleFileDownload(fname, type as any)}
-                                                        className="px-2 py-1 text-[10px] uppercase tracking-[0.2em] font-black border border-slate-500 rounded-md bg-blue-500/15 hover:bg-blue-500/35"
+                                                        className="px-2 py-1 text-[10px] uppercase tracking-[0.2em] font-black border border-slate-500 rounded-md bg-blue-500/15 hover:bg-blue-500/35 file-export-btn"
                                                     >
                                                         {type.toUpperCase()}
                                                     </button>
