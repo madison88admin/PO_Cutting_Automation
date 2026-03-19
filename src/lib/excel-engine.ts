@@ -13,6 +13,7 @@ export interface POHeader {
     ordersTemplate: string;
     linesTemplate: string;
     keyDate: string | Date;
+    keyDateFormat?: "manual" | "standard";
     comments: string;
     currency: string;
     keyUser1: string;
@@ -31,8 +32,9 @@ export interface POLine {
     styleNumber: string;
     supplierProfile: string;
     buyerPoNumber: string | number;
-    startDate: string;
-    cancelDate: string;
+    startDate: string | Date;
+    cancelDate: string | Date;
+    cost?: string | number;
     colour: string;
     productExternalRef: string;
     productCustomerRef: string;
@@ -41,6 +43,15 @@ export interface POLine {
 export interface POSize {
     productSize: string;
     quantity: number;
+}
+
+interface ProductSheetRow {
+    colour: string;
+    factory?: string;
+    cost?: string | number;
+    customerName?: string;
+    productName?: string;
+    buyerStyleNumber?: string;
 }
 
 export interface ValidationError {
@@ -112,23 +123,51 @@ const TRANSPORT_MAP: Record<string, string> = {
 const VALID_TRANSPORT_VALUES = new Set(["Sea", "Air", "Courier"]);
 
 const COUNTRY_NAME_MAP: Record<string, string> = {
-    US: "United States",
-    KR: "Korea",
-    FR: "France",
-    GR: "Greece",
-    DE: "Germany",
-    IT: "Italy",
-    ES: "Spain",
+    AE: "United Arab Emirates",
+    AR: "Argentina",
+    AT: "Austria",
+    AU: "Australia",
+    BR: "Brazil",
+    CA: "Canada",
+    CH: "Switzerland",         // ← BUG FIX (was "China")
+    CL: "Chile",
     CN: "China",
-    JP: "Japan",
-    VN: "Vietnam",
-    TH: "Thailand",
-    PH: "Philippines",
-    ID: "Indonesia",
-    TW: "Taiwan",
-    HK: "Hong Kong",
-    UK: "United Kingdom",
+    CZ: "Czech Republic",
+    DE: "Germany",
+    DK: "Denmark",
+    EC: "Ecuador",
+    ES: "Spain",
+    FR: "France",
     GB: "United Kingdom",
+    GR: "Greece",
+    HK: "Hong Kong",
+    HR: "Croatia",
+    HU: "Hungary",
+    ID: "Indonesia",
+    IL: "Israel",
+    IN: "India",
+    IT: "Italy",
+    JP: "Japan",
+    KR: "Korea",
+    MN: "Mongolia",
+    NP: "Nepal",
+    MT: "Malta",
+    MX: "Mexico",
+    MY: "Malaysia",
+    PA: "Panama",
+    PE: "Peru",
+    PH: "Philippines",
+    PL: "Poland",
+    RS: "Serbia",
+    RU: "Russia",
+    TH: "Thailand",
+    TR: "Turkey",
+    TW: "Taiwan",
+    UK: "United Kingdom",
+    US: "United States",
+    UY: "Uruguay",
+    VN: "Vietnam",
+    ZA: "South Africa",
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -250,7 +289,6 @@ export class ExcelEngine {
             'style number': 'product',
             'style no': 'product',
             'material style': 'product',
-            'jde style': 'product',
             'style': 'product',
             'product': 'product',
             'sku': 'product',
@@ -296,6 +334,9 @@ export class ExcelEngine {
             'negotiated ex fac date': 'exFtyDate',
             'ex fac': 'exFtyDate',
             'ex-factory': 'exFtyDate',
+            'confirmed fty ex fac': 'confirmedExFac',
+            'confirmed ex fac': 'confirmedExFac',
+            'fty ex fac': 'confirmedExFac',
             'keydate': 'poIssuanceDate',
             'buy date': 'buyDate',
             'file date': 'buyDate',
@@ -316,6 +357,7 @@ export class ExcelEngine {
             'business unit description': 'brand',
             'customer': 'customerName',
             'customer name': 'customerName',
+            'plm customer name': 'customerName',
             'status': 'status',
             'confirmation status': 'status',
             'gsc type': 'status',
@@ -327,10 +369,143 @@ export class ExcelEngine {
             'submit buy': 'buyRound',
             'buy round': 'buyRound',
             'buyer style name': 'ignore',
+            'jde style': 'jdeStyle',
             'udf-buyer_po_number': 'buyerPoNumber',
             'udf-start_date': 'exFtyDate',
             'udf-canel_date': 'cancelDate',
         };
+    }
+
+    private getProductSheetAliases(): Record<string, string> {
+        return {
+            'color name': 'colour',
+            'colour name': 'colour',
+            'color': 'colour',
+            'colour': 'colour',
+            'factory': 'factory',
+            'vendor code': 'factory',
+            'vendorcode': 'factory',
+            'cost': 'cost',
+            'customer name': 'customerName',
+            'customer': 'customerName',
+            'product name': 'productName',
+            'product': 'productName',
+            'buyer style number': 'buyerStyleNumber',
+            'buyer style no': 'buyerStyleNumber',
+            'buyer style #': 'buyerStyleNumber',
+            'buyer style': 'buyerStyleNumber',
+        };
+    }
+
+    private detectProductSheet(worksheet: ExcelJS.Worksheet): { isProductSheet: boolean; headerRow: number } {
+        const headerRow = this.detectHeaderRow(worksheet);
+        const header = worksheet.getRow(headerRow);
+        const aliases = this.getProductSheetAliases();
+        const productHeaders = new Set(Object.keys(aliases));
+        const buyHeaders = new Set([
+            'po #', 'pono', 'purchase order', 'purchaseorder', 'lineitem',
+            'quantity', 'qty', 'size', 'season', 'brand', 'productrange',
+        ]);
+
+        let productScore = 0;
+        let buyScore = 0;
+
+        header.eachCell(cell => {
+            const val = cell.value?.toString().toLowerCase().trim() || '';
+            if (productHeaders.has(val)) productScore++;
+            if (buyHeaders.has(val)) buyScore++;
+        });
+
+        return { isProductSheet: productScore >= 3 && buyScore <= 1, headerRow };
+    }
+
+    private normalizeColourKey(value: string): string {
+        const raw = this.stripBrackets(value || '').toLowerCase().trim();
+        if (!raw) return '';
+        if (/^\d+(\.\d+)?$/.test(raw)) {
+            const num = Number(raw);
+            if (Number.isFinite(num)) return String(Math.trunc(num));
+        }
+        const digits = raw.match(/\d+/);
+        if (digits && digits[0]) {
+            const normalized = digits[0].replace(/^0+/, '');
+            return normalized || '0';
+        }
+        return raw;
+    }
+
+    private extractProductSheetMapFromWorkbook(
+        workbook: ExcelJS.Workbook,
+    ): Record<string, ProductSheetRow[]> {
+        const result: Record<string, ProductSheetRow[]> = {};
+        const aliases = this.getProductSheetAliases();
+        const seenEntries = new Set<string>(); // deduplicate across worksheets
+
+        for (const ws of workbook.worksheets) {
+            const { isProductSheet, headerRow } = this.detectProductSheet(ws);
+            if (!isProductSheet) continue;
+
+            const header = ws.getRow(headerRow);
+            const headerMap: Record<string, number> = {};
+            header.eachCell((cell, colNumber) => {
+                const key = cell.value?.toString().toLowerCase().trim() || '';
+                const mapped = aliases[key];
+                if (mapped && !headerMap[mapped]) headerMap[mapped] = colNumber;
+            });
+
+            if (!headerMap['colour']) continue;
+
+            ws.eachRow((row, rowNumber) => {
+                if (rowNumber <= headerRow) return;
+                const getRaw = (field: string) => {
+                    const col = headerMap[field];
+                    if (!col) return undefined;
+                    return this.getCellValue(row.getCell(col));
+                };
+                const colourRaw = getRaw('colour')?.toString().trim() || '';
+                const colourKey = this.normalizeColourKey(colourRaw);
+                const buyerStyleNumber = getRaw('buyerStyleNumber')?.toString().trim() || '';
+                if (!colourKey || !buyerStyleNumber) return;
+
+                const factoryRaw = getRaw('factory');
+                const costRaw = getRaw('cost');
+                const customerRaw = getRaw('customerName');
+                const productRaw = getRaw('productName');
+
+                const entry: ProductSheetRow = {
+                    colour: colourRaw,
+                    factory: factoryRaw?.toString().trim() || '',
+                    cost: typeof costRaw === 'number' ? costRaw : costRaw?.toString().trim(),
+                    customerName: customerRaw?.toString().trim() || '',
+                    productName: productRaw?.toString().trim() || '',
+                    buyerStyleNumber,
+                };
+                // Build lookup keys: raw buyer_style_number AND each slash-separated segment
+                // e.g. "217554/CU2279" → also index under "CU2279" to match buy file JDE Style
+                // Exact matches are inserted first so they win over slash-segment duplicates
+                const lookupKeys = new Map<string, boolean>(); // key → isExact
+                lookupKeys.set(buyerStyleNumber, true);
+                buyerStyleNumber.split('/').forEach(part => {
+                    const p = part.trim();
+                    if (p && p !== buyerStyleNumber) lookupKeys.set(p, false);
+                });
+                for (const [lk, isExact] of lookupKeys) {
+                    const lkKey = `${lk}|${colourKey}`;
+                    const dedupKey = `${lkKey}|${entry.colour}|${entry.factory}|${entry.productName}|${entry.customerName}`;
+                    if (seenEntries.has(dedupKey)) continue;
+                    seenEntries.add(dedupKey);
+                    if (!result[lkKey]) result[lkKey] = [];
+                    // Exact full buyer_style_number matches go first
+                    if (isExact) {
+                        result[lkKey].unshift(entry);
+                    } else {
+                        result[lkKey].push(entry);
+                    }
+                }
+            });
+        }
+
+        return result;
     }
 
     // ── Supplier resolution with brand fallback ───────────────────────────────
@@ -600,6 +775,12 @@ export class ExcelEngine {
         return `${mm}/${dd}/${date.getFullYear()}`;
     }
 
+    private formatManualDateString(raw: string | Date | undefined): string {
+        const date = this.parseDate(raw);
+        if (!date) return '';
+        return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}`;
+    }
+
     private stripBrackets(value: string): string {
         if (!value) return value;
         const cleaned = value.replace(/\[([^\]]+)\]/g, '$1').replace(/\[|\]/g, '');
@@ -627,20 +808,66 @@ export class ExcelEngine {
     // Core processing method
     // ─────────────────────────────────────────────────────────────────────────
 
+    async extractProductSheetMap(buffer: any): Promise<Record<string, ProductSheetRow[]>> {
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(buffer);
+        return this.extractProductSheetMapFromWorkbook(workbook);
+    }
+
+    async analyzeWorkbook(buffer: any): Promise<{ productSheetMap: Record<string, ProductSheetRow[]>; hasBuySheet: boolean }> {
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(buffer);
+
+        const productSheetMap = this.extractProductSheetMapFromWorkbook(workbook);
+        const aliases = this.getFallbackColumnAliases();
+        let hasBuySheet = false;
+
+        for (const ws of workbook.worksheets) {
+            const { isProductSheet, headerRow } = this.detectProductSheet(ws);
+            if (isProductSheet) continue;
+
+            const row = ws.getRow(headerRow);
+            let score = 0;
+            row.eachCell(cell => {
+                const v = cell.value?.toString().toLowerCase().trim() || '';
+                if (aliases[v]) score++;
+            });
+            if (score >= 4) {
+                hasBuySheet = true;
+                break;
+            }
+        }
+
+        return { productSheetMap, hasBuySheet };
+    }
+
     async processBuyFile(
         buffer: any,
         options?: {
             manualPurchaseOrder?: string;
             manualDestination?: string;
             manualProductRange?: string;
+            manualTemplate?: string;
+            manualComments?: string;
+            manualKeyDate?: string;
             defaultQuantityIfMissing?: boolean;
+            productSheetMap?: Record<string, ProductSheetRow[]>;
         },
     ): Promise<{ data: ProcessedPO[]; errors: ValidationError[] }> {
         const manualPurchaseOrder = options?.manualPurchaseOrder?.toString().trim() || '';
         const manualDestination = options?.manualDestination?.toString().trim() || '';
         const manualProductRange = options?.manualProductRange?.toString().trim() || '';
+        const manualTemplate = options?.manualTemplate?.toString().trim() || '';
+        const manualComments = options?.manualComments?.toString().trim() || '';
+        const manualKeyDate = options?.manualKeyDate?.toString().trim() || '';
         const workbook = new ExcelJS.Workbook();
         await workbook.xlsx.load(buffer);
+
+        const workbookProductMap = this.extractProductSheetMapFromWorkbook(workbook);
+        const productSheetMap: Record<string, ProductSheetRow[]> = {
+            ...(options?.productSheetMap || {}),
+            ...workbookProductMap,
+        };
 
         let worksheet = workbook.worksheets[0];
         let headerRowNumber = this.detectHeaderRow(worksheet);
@@ -763,14 +990,22 @@ export class ExcelEngine {
                 if (!col) return undefined;
                 return this.getCellValue(row.getCell(col));
             };
-            const getVal = (field: string) => getRawVal(field)?.toString().trim();
+            const getVal = (field: string) => {
+                const raw = getRawVal(field);
+                if (raw instanceof Date) return raw.toISOString().split('T')[0];
+                return raw?.toString().trim();
+            };
 
-            const poNumberRaw = manualPurchaseOrder || getVal('purchaseOrder');
+            const rawFilePo = getVal('purchaseOrder'); // always reads from file column
+            const poNumberRaw = manualPurchaseOrder || rawFilePo;
             if (!poNumberRaw) return;
 
             const plant = this.stripBrackets(getVal('plant') || '');
             const destCountryRaw = this.stripBrackets(manualDestination || getVal('transportLocation') || '');
-            const poSuffixParts = [plant, destCountryRaw].filter(Boolean);
+            const destCountry = destCountryRaw
+                ? (COUNTRY_NAME_MAP[destCountryRaw.toUpperCase()] || destCountryRaw)
+                : '';
+            const poSuffixParts = [plant, destCountry].filter(Boolean);
             const poNumber = poSuffixParts.length > 0
                 ? `${poNumberRaw}-${poSuffixParts.join('-')}`
                 : poNumberRaw;
@@ -778,7 +1013,6 @@ export class ExcelEngine {
             const brand = this.stripBrackets(getVal('brand') || '');
             const categoryRaw = this.stripBrackets(getVal('category') || '');
             const inferredCat = categoryRaw || this.inferCategoryFromFactoryMap(brand, factoryMap);
-            const styleNumber = this.stripBrackets(getVal('product') || '');
             const productExternalRef = this.stripBrackets(getVal('productExternalRef') || '');
             const productCustomerRef = this.stripBrackets(getVal('productCustomerRef') || '');
             const sizeRaw = this.stripBrackets(getVal('sizeName') || '');
@@ -805,6 +1039,54 @@ export class ExcelEngine {
                 });
                 return;
             }
+            if (colour.trim().toLowerCase() === 'not set') {
+                this.errors.push({
+                    field: 'colour', row: rowNumber,
+                    message: `Row ${rowNumber} PO ${poNumber}: colour is "Not Set"; line/size skipped.`,
+                    severity: 'WARNING',
+                });
+                return;
+            }
+
+            const colourKey = this.normalizeColourKey(colour);
+            const jdeStyle = this.stripBrackets(getVal('jdeStyle') || '').trim();
+            const lookupKey = jdeStyle && colourKey ? `${jdeStyle}|${colourKey}` : '';
+            let productMatches = lookupKey ? (productSheetMap[lookupKey] || []) : [];
+            // If multiple matches, use the first (exact buyer_style_number matches are inserted first)
+            if (productMatches.length > 1) {
+                productMatches = [productMatches[0]];
+            }
+            const hasPlmMap = Object.keys(productSheetMap).length > 0;
+            let plmMissing = false;
+            if (!jdeStyle && hasPlmMap) {
+                this.errors.push({
+                    field: 'PLM', row: rowNumber,
+                    message: `Row ${rowNumber} PO ${poNumber}: JDE Style missing; PLM fields left blank.`,
+                    severity: 'WARNING',
+                });
+                plmMissing = true;
+            }
+            if (productMatches.length === 0 && hasPlmMap) {
+                this.errors.push({
+                    field: 'PLM', row: rowNumber,
+                    message: `Row ${rowNumber} PO ${poNumber}: JDE ${jdeStyle} color ${colour} not found in PLM sheet; PLM fields left blank.`,
+                    severity: 'WARNING',
+                });
+                plmMissing = true;
+            }
+            const productMatch = !plmMissing && productMatches.length === 1 ? productMatches[0] : undefined;
+            if (productMatch && productMatch.colour && productMatch.colour.trim().toLowerCase() === 'not set') {
+                this.errors.push({
+                    field: 'Colour', row: rowNumber,
+                    message: `Row ${rowNumber} PO ${poNumber}: PLM Color Name is "Not Set"; line/size skipped.`,
+                    severity: 'WARNING',
+                });
+                return;
+            }
+            const styleNumber = plmMissing
+                ? this.stripBrackets(getVal('product') || getVal('jdeStyle') || '')
+                : this.stripBrackets(productMatch?.productName || getVal('product') || getVal('jdeStyle') || '');
+            const cost = undefined; // purchase price not captured
 
             const season = this.stripBrackets(getVal('season') || manualProductRange);
             if (!season) {
@@ -822,7 +1104,7 @@ export class ExcelEngine {
             );
             const buyDate = getVal('buyDate');
             const buyRound = this.stripBrackets(getVal('buyRound') || '');
-            const exFtyDate = getVal('exFtyDate') || undefined;
+            const exFtyDate = (getRawVal('exFtyDate') || getRawVal('confirmedExFac') || undefined) as Date | string | undefined;
             if (!exFtyDate) {
                 this.errors.push({
                     field: 'exFtyDate', row: rowNumber,
@@ -830,12 +1112,14 @@ export class ExcelEngine {
                     severity: 'WARNING',
                 });
             }
-            const cancelDate = getVal('cancelDate') || exFtyDate || '';
+            const cancelDate = (getRawVal('cancelDate') || exFtyDate || '') as Date | string;
             const poIssuanceDate = getVal('poIssuanceDate') || buyDate || exFtyDate || '';
             const statusRaw = this.stripBrackets(getVal('status') || 'Confirmed');
             const transportRaw = this.stripBrackets(getVal('transportMethod') || '');
             const templateRaw = this.stripBrackets(getVal('template') || '');
-            const vendorCodeRaw = this.stripBrackets(getVal('productSupplier') || '');
+            const vendorCodeRaw = this.stripBrackets(plmMissing
+                ? (getVal('productSupplier') || '')
+                : (productMatch?.factory || getVal('productSupplier') || ''));
             const vendorNameRaw = this.stripBrackets(getVal('vendorName') || '');
 
             const buyerPoNumberCell = getRawVal('buyerPoNumber');
@@ -845,22 +1129,29 @@ export class ExcelEngine {
                 if (asText) return asText;
                 const poRaw = getRawVal('purchaseOrder');
                 if (typeof poRaw === 'number') return poRaw;
-                return poNumberRaw;
+                return rawFilePo || poNumberRaw;
             })();
 
             const productSupplier = this.resolveSupplier(vendorCodeRaw, vendorNameRaw, brand, inferredCat, factoryMap);
-            const customerName = this.resolveCustomer(getVal('customerName'), brand, detectedCustomer, undefined);
+            const customerName = plmMissing
+                ? this.resolveCustomer(getVal('customerName'), brand, detectedCustomer, undefined)
+                : this.resolveCustomer(productMatch?.customerName || getVal('customerName'), brand, detectedCustomer, undefined);
             const transportMethod = this.normalizeTransportMethod(transportRaw);
 
             const brandKey = (brand || '').trim().toLowerCase();
             const brandConfig = mloMap.find((m: any) => (m.brand || '').trim().toLowerCase() === brandKey);
 
             // Resolve separate templates for ORDERS and LINES
-            const ordersTemplate = brandConfig?.orders_template?.trim()
+            const ordersTemplate = manualTemplate
+                || brandConfig?.orders_template?.trim()
                 || this.resolveOrdersTemplate(brand, templateRaw);
-            const linesTemplate = brandConfig?.lines_template?.trim()
+            const linesTemplate = manualTemplate
+                || brandConfig?.lines_template?.trim()
                 || this.resolveLinesTemplate(brand, templateRaw);
             const productRange = this.formatProductRange(season);
+            const resolvedColour = plmMissing ? colour : (productMatch?.colour || colour);
+            const keyDate = manualKeyDate || poIssuanceDate;
+            const keyDateFormat: "manual" | "standard" = manualKeyDate ? "manual" : "standard";
 
             const validStatuses = Array.isArray(brandConfig?.valid_statuses)
                 ? brandConfig!.valid_statuses!.map((s: string) => s.toLowerCase())
@@ -876,7 +1167,7 @@ export class ExcelEngine {
             }
 
             const missingData: string[] = [];
-            if (!styleNumber) missingData.push('Product/Style');
+            if (!styleNumber && !plmMissing) missingData.push('Product/Style');
             if (!size) missingData.push('Size');
             if (isNaN(qty)) missingData.push('Quantity');
 
@@ -911,8 +1202,10 @@ export class ExcelEngine {
                 mloRow,
             );
 
-            if (!results.has(poNumber)) {
-                results.set(poNumber, {
+            const customerKey = customerName || detectedCustomer;
+            const poKey = `${poNumber}||${customerKey}`;
+            if (!results.has(poKey)) {
+                results.set(poKey, {
                     header: {
                         purchaseOrder: poNumber,
                         productSupplier,
@@ -922,8 +1215,9 @@ export class ExcelEngine {
                         transportLocation,
                         ordersTemplate,
                         linesTemplate,
-                        keyDate: poIssuanceDate,
-                        comments: this.buildComments(brand, productRange, buyRound, buyDate, ordersTemplate),
+                        keyDate,
+                        keyDateFormat,
+                        comments: manualComments || this.buildComments(brand, productRange, buyRound, buyDate, ordersTemplate),
                         currency: 'USD',
                         keyUser1: keyUsers.k1,
                         keyUser2: keyUsers.k2,
@@ -939,7 +1233,7 @@ export class ExcelEngine {
                 });
             }
 
-            const po = results.get(poNumber)!;
+            const po = results.get(poKey)!;
 
             let lineItemNum = 0;
             const rawLineItem = getRawVal('lineItem');
@@ -959,9 +1253,10 @@ export class ExcelEngine {
                     styleNumber: styleNumber || '',
                     supplierProfile: 'DEFAULT_PROFILE',
                     buyerPoNumber,
-                    startDate: exFtyDate || '',
-                    cancelDate: cancelDate || '',
-                    colour: colour || '',
+                    startDate: (exFtyDate || '') as Date | string,
+                    cancelDate: (cancelDate || '') as Date | string,
+                    cost,
+                    colour: resolvedColour || '',
                     productExternalRef,
                     productCustomerRef,
                 };
@@ -981,13 +1276,20 @@ export class ExcelEngine {
                 if (!existingLine.productCustomerRef && productCustomerRef) {
                     existingLine.productCustomerRef = productCustomerRef;
                 }
+                if ((existingLine.cost === undefined || existingLine.cost === '') && cost !== undefined && cost !== '') {
+                    existingLine.cost = cost;
+                }
             }
 
-            if (qty > 0) {
-                if (!po.sizes[lineItemNum]) po.sizes[lineItemNum] = [];
-                po.sizes[lineItemNum].push({ productSize: size || 'One Size', quantity: qty });
-            } else {
-                this.errors.push({ field: 'Quantity', row: rowNumber, message: `Qty for ${styleNumber} size ${size} is ${qty} (excluded).`, severity: 'WARNING' });
+            if (!po.sizes[lineItemNum]) po.sizes[lineItemNum] = [];
+            po.sizes[lineItemNum].push({ productSize: size || 'One Size', quantity: qty });
+            if (qty <= 0) {
+                this.errors.push({
+                    field: 'Quantity',
+                    row: rowNumber,
+                    message: `Qty for ${styleNumber} size ${size} is ${qty} (included).`,
+                    severity: 'WARNING',
+                });
             }
         });
 
@@ -1186,7 +1488,9 @@ export class ExcelEngine {
                     transportLocation: po.header.transportLocation,
                     paymentTerm: '',
                     template: po.header.ordersTemplate,
-                    keyDate: this.formatDateString(po.header.keyDate),
+                    keyDate: po.header.keyDateFormat === 'manual'
+                        ? this.formatManualDateString(po.header.keyDate)
+                        : this.formatDateString(po.header.keyDate),
                     closedDate: '',
                     defaultDeliveryDate: '',
                     comments: po.header.comments,
@@ -1219,7 +1523,7 @@ export class ExcelEngine {
                         transportMethod: po.header.transportMethod,
                         transportLocation: po.header.transportLocation,
                         status: po.header.status,
-                        purchasePrice: '',
+                        purchasePrice: line.cost ?? '',
                         sellingPrice: '',
                         template: po.header.linesTemplate,
                         keyDate: this.formatDateString(line.startDate),
@@ -1248,7 +1552,6 @@ export class ExcelEngine {
             data.forEach(po => {
                 po.lines.forEach(line => {
                     (po.sizes[line.lineItem] || []).forEach(sz => {
-                        if (sz.quantity <= 0) return;
                         sizesSheet.addRow({
                             purchaseOrder: po.header.purchaseOrder,
                             lineItem: line.lineItem,

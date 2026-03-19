@@ -36,6 +36,9 @@ function mergePOs(primary: ProcessedPO, secondary: ProcessedPO): ProcessedPO {
         } else {
             if (!existing.styleNumber && line.styleNumber) existing.styleNumber = line.styleNumber;
             if (existing.colour === "" && line.colour) existing.colour = line.colour;
+            if ((existing.cost === undefined || existing.cost === "") && line.cost !== undefined && line.cost !== "") {
+                existing.cost = line.cost;
+            }
         }
     });
 
@@ -67,6 +70,9 @@ export async function POST(req: NextRequest) {
         const manualPo = (formData.get("manualPo")?.toString() || "").trim();
         const manualDestination = (formData.get("manualDestination")?.toString() || "").trim();
         const manualProductRange = (formData.get("manualProductRange")?.toString() || "").trim();
+        const manualTemplate = (formData.get("manualTemplate")?.toString() || "").trim();
+        const manualComments = (formData.get("manualComments")?.toString() || "").trim();
+        const manualKeyDate = (formData.get("manualKeyDate")?.toString() || "").trim();
 
         if (!files || files.length === 0) {
             return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
@@ -92,6 +98,7 @@ export async function POST(req: NextRequest) {
             status: 'Processing'
         });
 
+        const fileBuffers: Array<{ file: File; buffer: Buffer }> = [];
         for (const file of files) {
             await logEvent({
                 eventName: "BUY_FILE_UPLOADED",
@@ -99,6 +106,8 @@ export async function POST(req: NextRequest) {
                 runId,
                 metadata: { filename: file.name, size: file.size }
             });
+            const buffer = Buffer.from(await file.arrayBuffer());
+            fileBuffers.push({ file, buffer });
         }
 
         await logEvent({
@@ -114,14 +123,30 @@ export async function POST(req: NextRequest) {
         const perFileExports: Record<string, { orders: string; lines: string; sizes: string }> = {};
         const poMap = new Map<string, string>();
 
-        for (const file of files) {
-            const buffer = Buffer.from(await file.arrayBuffer());
+        let productSheetMap: Record<string, any> = {};
+        const buyFiles: Array<{ file: File; buffer: Buffer }> = [];
+
+        for (const entry of fileBuffers) {
+            const engine = new ExcelEngine(runId || undefined, userId);
+            const analysis = await engine.analyzeWorkbook(entry.buffer);
+            productSheetMap = { ...productSheetMap, ...analysis.productSheetMap };
+            if (analysis.hasBuySheet) {
+                buyFiles.push(entry);
+            }
+        }
+
+        for (const entry of buyFiles) {
+            const { file, buffer } = entry;
             const engine = new ExcelEngine(runId || undefined, userId);
             const { data, errors } = await engine.processBuyFile(buffer, {
                 manualPurchaseOrder: manualPo || undefined,
                 manualDestination: manualDestination || undefined,
                 manualProductRange: manualProductRange || undefined,
+                manualTemplate: manualTemplate || undefined,
+                manualComments: manualComments || undefined,
+                manualKeyDate: manualKeyDate || undefined,
                 defaultQuantityIfMissing: !!manualPo,
+                productSheetMap,
             });
 
             let allSizes = 0;

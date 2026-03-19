@@ -17,7 +17,12 @@ export default function Workflow() {
     const [isProcessing, setIsProcessing] = useState(false);
     const [errors, setErrors] = useState<any[]>([]);
     const [uploadData, setUploadData] = useState<any>(null);
+    const [buyFiles, setBuyFiles] = useState<FileList | null>(null);
+    const [productSheetFile, setProductSheetFile] = useState<File | null>(null);
     const [manualPo, setManualPo] = useState("");
+    const [manualTemplate, setManualTemplate] = useState("");
+    const [manualComments, setManualComments] = useState("");
+    const [manualKeyDate, setManualKeyDate] = useState("");
     const applyTheme = (nextTheme: "dark" | "light") => {
       document.documentElement.classList.remove("light", "dark");
       document.documentElement.classList.add(nextTheme);
@@ -41,18 +46,23 @@ export default function Workflow() {
 
     const currentStepIndex = steps.findIndex(s => s.key === currentStep);
 
-    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const fileList = e.target.files;
-        if (!fileList || fileList.length === 0) return;
+    const handleStartUpload = async () => {
+        if (!buyFiles || buyFiles.length === 0) return;
 
         setIsProcessing(true);
         setCurrentStep("RUN");
 
         const formData = new FormData();
-        for (let i = 0; i < fileList.length; i++) {
-            formData.append("file", fileList[i]);
+        for (let i = 0; i < buyFiles.length; i++) {
+            formData.append("file", buyFiles[i]);
+        }
+        if (productSheetFile) {
+            formData.append("file", productSheetFile);
         }
         if (manualPo.trim()) formData.append("manualPo", manualPo.trim());
+        if (manualTemplate.trim()) formData.append("manualTemplate", manualTemplate.trim());
+        if (manualComments.trim()) formData.append("manualComments", manualComments.trim());
+        if (manualKeyDate.trim()) formData.append("manualKeyDate", manualKeyDate.trim());
 
         try {
             const res = await fetch("/api/upload", {
@@ -246,24 +256,50 @@ export default function Workflow() {
                             exit={{ opacity: 0, y: -30 }}
                             className="text-center max-w-3xl mx-auto space-y-12"
                         >
-                            <label className="relative inline-block cursor-pointer group">
-                                <input type="file" className="hidden" accept=".xlsx" multiple onChange={handleFileUpload} />
+                            <div className="relative inline-block group">
                                 <div className="absolute inset-0 bg-blue-500/20 blur-[80px] rounded-full group-hover:bg-blue-500/30 transition-all duration-500" />
                                 <div className="relative w-40 h-40 bg-[hsl(var(--panel))] border border-[hsl(var(--border))] rounded-[38%] flex items-center justify-center mx-auto transition-all duration-500 group-hover:scale-105 group-hover:border-blue-500/50 group-hover:shadow-[0_0_50px_rgba(59,130,246,0.3)] shadow-2xl">
                                     <CloudUpload className="w-16 h-16 text-blue-500 group-hover:text-blue-400 group-hover:-translate-y-1 transition-all" />
                                 </div>
-                            </label>
+                            </div>
 
                             <div className="space-y-6">
                                 <h2 className="text-5xl font-black tracking-tight text-[hsl(var(--foreground))] leading-tight">
                                     INITIALIZE <br /> <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-500 via-sky-400 to-indigo-500">SYSTEM ACQUISITION</span>
                                 </h2>
                                 <p className="text-[hsl(var(--muted))] text-xl font-medium max-w-xl mx-auto">
-                                    Proprietary alignment engine for NextGen mass uploads. Drop buy-files (.xlsx) to begin.
+                                    Upload your buy file and optional product sheet. Use both for PLM-enriched outputs.
                                 </p>
                             </div>
 
                             <div className="grid grid-cols-1 gap-4 max-w-3xl mx-auto text-left">
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Buy File (.xlsx) — Required</label>
+                                    <input
+                                        type="file"
+                                        accept=".xlsx"
+                                        multiple
+                                        onChange={(e) => setBuyFiles(e.target.files)}
+                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white file-input"
+                                    />
+                                    {buyFiles && buyFiles.length > 0 && (
+                                        <div className="text-[10px] text-slate-400">
+                                            {Array.from(buyFiles).map((f) => f.name).join(", ")}
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Product Sheet / PLM (.xlsx) — Optional</label>
+                                    <input
+                                        type="file"
+                                        accept=".xlsx"
+                                        onChange={(e) => setProductSheetFile(e.target.files?.[0] || null)}
+                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white file-input"
+                                    />
+                                    {productSheetFile && (
+                                        <div className="text-[10px] text-slate-400">{productSheetFile.name}</div>
+                                    )}
+                                </div>
                                 <div className="space-y-2">
                                     <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Manual PO</label>
                                     <input
@@ -273,14 +309,45 @@ export default function Workflow() {
                                         className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
                                     />
                                 </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Template</label>
+                                    <input
+                                        value={manualTemplate}
+                                        onChange={(e) => setManualTemplate(e.target.value)}
+                                        placeholder="FOB Bulk EDI PO (New) or SMS EDI"
+                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Comments</label>
+                                    <input
+                                        value={manualComments}
+                                        onChange={(e) => setManualComments(e.target.value)}
+                                        placeholder="[TNF] FW25 Nov Buy 15-NOV Bulk"
+                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Orders KeyDate</label>
+                                    <input
+                                        value={manualKeyDate}
+                                        onChange={(e) => setManualKeyDate(e.target.value)}
+                                        placeholder="6/12/2026"
+                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                    />
+                                </div>
                             </div>
 
                             <div className="flex flex-col items-center gap-6">
-                                <label className="primary-button inline-flex items-center gap-4 cursor-pointer bg-blue-600 text-white" style={{ background: "linear-gradient(90deg, #2563eb, #1d4ed8)" }}>
-                                    <span>SELECT LOCAL SOURCE</span>
+                                <button
+                                    onClick={handleStartUpload}
+                                    disabled={!buyFiles || buyFiles.length === 0}
+                                    className="primary-button inline-flex items-center gap-4 bg-blue-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                                    style={{ background: "linear-gradient(90deg, #2563eb, #1d4ed8)" }}
+                                >
+                                    <span>START UPLOAD</span>
                                     <ArrowRight className="w-4 h-4" />
-                                    <input type="file" className="hidden" accept=".xlsx" multiple onChange={handleFileUpload} />
-                                </label>
+                                </button>
 
                                 <div className="flex items-center gap-10 opacity-70">
                                     {['exceljs', 'validation', 'supabase'].map((tech, i) => (

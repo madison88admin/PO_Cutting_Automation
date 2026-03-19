@@ -42,23 +42,51 @@ VALID_TRANSPORT_VALUES = {"Sea", "Air", "Courier"}
 
 # Country code → full name (used for TransportLocation)
 COUNTRY_NAME_MAP = {
-    "US": "United States",
-    "KR": "Korea",
-    "FR": "France",
-    "GR": "Greece",
-    "DE": "Germany",
-    "IT": "Italy",
-    "ES": "Spain",
+    "AE": "United Arab Emirates",
+    "AR": "Argentina",
+    "AT": "Austria",
+    "AU": "Australia",
+    "BR": "Brazil",
+    "CA": "Canada",
+    "CH": "Switzerland",       # ← BUG FIX (was "China")
+    "CL": "Chile",
     "CN": "China",
-    "JP": "Japan",
-    "VN": "Vietnam",
-    "TH": "Thailand",
-    "PH": "Philippines",
-    "ID": "Indonesia",
-    "TW": "Taiwan",
-    "HK": "Hong Kong",
-    "UK": "United Kingdom",
+    "CZ": "Czech Republic",
+    "DE": "Germany",
+    "DK": "Denmark",
+    "EC": "Ecuador",
+    "ES": "Spain",
+    "FR": "France",
     "GB": "United Kingdom",
+    "GR": "Greece",
+    "HK": "Hong Kong",
+    "HR": "Croatia",
+    "HU": "Hungary",
+    "ID": "Indonesia",
+    "IL": "Israel",
+    "IN": "India",
+    "IT": "Italy",
+    "JP": "Japan",
+    "KR": "Korea",
+    "MN": "Mongolia",
+    "NP": "Nepal",
+    "MT": "Malta",
+    "MX": "Mexico",
+    "MY": "Malaysia",
+    "PA": "Panama",
+    "PE": "Peru",
+    "PH": "Philippines",
+    "PL": "Poland",
+    "RS": "Serbia",
+    "RU": "Russia",
+    "TH": "Thailand",
+    "TR": "Turkey",
+    "TW": "Taiwan",
+    "UK": "United Kingdom",
+    "US": "United States",
+    "UY": "Uruguay",
+    "VN": "Vietnam",
+    "ZA": "South Africa",
 }
 
 CURRENCY = "USD"
@@ -246,7 +274,7 @@ def _get_brand_config(brand: str) -> dict[str, Any] | None:
 DEFAULT_COL_MAP = {
     "po": 7,
     "product": 21,
-    "product_alt": 22,
+    "product_alt": 16,
     "size": 0,
     "colour": 24,
     "qty": 28,
@@ -314,6 +342,8 @@ HEADER_ALIASES: dict[str, list[str]] = {
         "customer", "customer name", "brand",
         # Arcteryx
         "business unit description",
+        # PLM/M88
+        "plm customer name",
     ],
     "brand": [
         "brand",
@@ -351,6 +381,9 @@ HEADER_ALIASES: dict[str, list[str]] = {
         # Arcteryx
         "ex-factory",
     ],
+    "confirmed_ex_fac": [
+        "confirmed fty ex fac", "confirmed ex fac", "fty ex fac",
+    ],
     "trans_cond": [
         "trans cond", "transport method", "transportmethod",
         # Arcteryx
@@ -362,7 +395,7 @@ HEADER_ALIASES: dict[str, list[str]] = {
         "file date",
     ],
     "cancel_date": [
-        "cancel date", "canceldate", "cancel",
+        "cancel date", "canceldate", "cancel", "udf-canel_date",
     ],
     "status": [
         "status", "confirmation status",
@@ -431,6 +464,130 @@ def _as_text(value: Any) -> str:
     return str(value).strip()
 
 
+PRODUCT_SHEET_ALIASES = {
+    "color name": "colour",
+    "colour name": "colour",
+    "color": "colour",
+    "colour": "colour",
+    "factory": "factory",
+    "vendor code": "factory",
+    "vendorcode": "factory",
+    "cost": "cost",
+    "customer name": "customer_name",
+    "customer": "customer_name",
+    "product name": "product_name",
+    "product": "product_name",
+    "buyer style number": "buyer_style_number",
+    "buyer style no": "buyer_style_number",
+    "buyer style #": "buyer_style_number",
+    "buyer style": "buyer_style_number",
+}
+
+
+def _normalize_colour_key(value: Any) -> str:
+    raw = _as_text(value).lower().strip()
+    if not raw:
+        return ""
+    if re.fullmatch(r"\d+(\.\d+)?", raw):
+        try:
+            return str(int(float(raw)))
+        except ValueError:
+            return raw
+    m = re.search(r"\d+", raw)
+    if m:
+        return m.group(0).lstrip("0") or "0"
+    return raw
+
+
+def _detect_product_sheet(ws) -> tuple[bool, int]:
+    header_row = 1
+    best_score = -1
+    buy_headers = {
+        "po #", "pono", "purchase order", "purchaseorder", "line #s",
+        "lineitem", "ordered qty", "qty", "quantity", "season", "brand",
+    }
+    for r in range(1, min(50, ws.max_row) + 1):
+        row = ws[r]
+        score = 0
+        buy_score = 0
+        for cell in row:
+            val = _as_text(cell.value).lower().strip()
+            if val in PRODUCT_SHEET_ALIASES:
+                score += 1
+            if val in buy_headers:
+                buy_score += 1
+        if score > best_score:
+            best_score = score
+            header_row = r
+    # Exclude sheets that look like buy sheets (high buy_score means it's a buy file sheet)
+    if best_score < 3:
+        return False, header_row
+    # Re-check buy_score at the detected header row
+    final_buy_score = 0
+    for cell in ws[header_row]:
+        val = _as_text(cell.value).lower().strip()
+        if val in buy_headers:
+            final_buy_score += 1
+    if final_buy_score >= 2:
+        return False, header_row
+    return True, header_row
+
+
+def _extract_product_sheet_map_from_wb(wb) -> dict[str, list[dict[str, Any]]]:
+    result: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    seen_entries: set[tuple] = set()  # deduplicate across worksheets
+    for ws in wb.worksheets:
+        is_product, header_row = _detect_product_sheet(ws)
+        if not is_product:
+            continue
+        header_map: dict[str, int] = {}
+        for cell in ws[header_row]:
+            key = _as_text(cell.value).lower().strip()
+            mapped = PRODUCT_SHEET_ALIASES.get(key)
+            if mapped and mapped not in header_map:
+                header_map[mapped] = cell.column
+        if "colour" not in header_map:
+            continue
+        for r in range(header_row + 1, ws.max_row + 1):
+            colour_raw = _as_text(ws.cell(row=r, column=header_map["colour"]).value)
+            colour_key = _normalize_colour_key(colour_raw)
+            buyer_style_number = _as_text(ws.cell(row=r, column=header_map.get("buyer_style_number", 0)).value) \
+                if header_map.get("buyer_style_number") else ""
+            if not colour_key or not buyer_style_number:
+                continue
+            entry = {
+                "colour": colour_raw,
+                "factory": _as_text(ws.cell(row=r, column=header_map.get("factory", 0)).value)
+                if header_map.get("factory") else "",
+                "cost": ws.cell(row=r, column=header_map.get("cost", 0)).value
+                if header_map.get("cost") else "",
+                "customer_name": _as_text(ws.cell(row=r, column=header_map.get("customer_name", 0)).value)
+                if header_map.get("customer_name") else "",
+                "product_name": _as_text(ws.cell(row=r, column=header_map.get("product_name", 0)).value)
+                if header_map.get("product_name") else "",
+                "buyer_style_number": buyer_style_number,
+            }
+            # Build lookup keys: use raw buyer_style_number AND each slash-separated segment
+            # e.g. "217554/CU2279" → also index under "CU2279" to match buy file JDE Style
+            # Exact matches are inserted first so they win over slash-segment duplicates
+            lookup_keys_ordered = [(buyer_style_number, True)]  # (key, is_exact)
+            for part in re.split(r"\s*/\s*", buyer_style_number):
+                part = part.strip()
+                if part and part != buyer_style_number:
+                    lookup_keys_ordered.append((part, False))
+            for lk, is_exact in lookup_keys_ordered:
+                lk_key = f"{lk}|{colour_key}"
+                dedup_key = (lk_key, entry["colour"], entry["factory"], entry["product_name"], entry["customer_name"])
+                if dedup_key in seen_entries:
+                    continue
+                seen_entries.add(dedup_key)
+                if is_exact:
+                    result[lk_key].insert(0, entry)  # exact match goes first
+                else:
+                    result[lk_key].append(entry)
+    return dict(result)
+
+
 def _format_date(value: Any, fmt: str) -> str:
     if value in (None, ""):
         return ""
@@ -447,6 +604,16 @@ def _format_date(value: Any, fmt: str) -> str:
         except ValueError:
             continue
     return ""
+
+
+def _format_manual_keydate(value: Any) -> str:
+    raw = _as_text(value)
+    if not raw:
+        return ""
+    parsed = _parse_date(raw)
+    if parsed:
+        return f"{parsed.month}/{parsed.day}/{parsed.year}"
+    return raw
 
 
 def _parse_date(value: Any) -> datetime | None:
@@ -792,7 +959,7 @@ def _validate_output_slices(
             for r in range(2, sizes_ws.max_row + 1)
         )
         if total_qty == 0:
-            issues.append(("ERROR", "ORDER_SIZES total Quantity is 0 — no units written."))
+            issues.append(("WARNING", "ORDER_SIZES total Quantity is 0 — all units are zero."))
 
     # 6. Transport mapping
     for ws, label in [(lines_ws, "LINES"), (orders_ws, "ORDERS")]:
@@ -908,9 +1075,14 @@ def _detect_layout(
         if not headers_by_col:
             continue
 
+        # Headers that must never be mapped to product_alt (e.g. "Unique" = JDE+Color concat)
+        PRODUCT_ALT_EXCLUDED_HEADERS = {"unique"}
+
         col_map: dict[str, int] = {}
         for key, aliases in HEADER_ALIASES.items():
             for col, hdr in headers_by_col.items():
+                if key == "product_alt" and hdr in PRODUCT_ALT_EXCLUDED_HEADERS:
+                    continue
                 if any(_header_matches(hdr, alias) for alias in aliases):
                     col_map[key] = col
                     break
@@ -1002,13 +1174,25 @@ def generate_templates(
     manual_po: str | None = None,
     manual_destination: str | None = None,
     manual_product_range: str | None = None,
+    manual_template: str | None = None,
+    manual_keydate: str | None = None,
+    product_sheet_path: Path | None = None,
     validate_sizes: bool = True,
 ) -> None:
     wb = load_workbook(input_path, data_only=True)
     manual_po_norm = _normalize_po(manual_po) if manual_po else ""
     manual_product_range = (manual_product_range or "").strip() or ""
     manual_destination = (manual_destination or "").strip() or ""
+    manual_template = (manual_template or "").strip() or ""
+    manual_keydate = (manual_keydate or "").strip() or ""
     default_qty_if_missing = bool(manual_po_norm)
+
+    product_sheet_map: dict[str, list[dict[str, Any]]] = {}
+    if product_sheet_path and product_sheet_path.exists():
+        product_wb = load_workbook(product_sheet_path, data_only=True)
+        product_sheet_map = _extract_product_sheet_map_from_wb(product_wb)
+    else:
+        product_sheet_map = _extract_product_sheet_map_from_wb(wb)
 
     required_keys = {"product"}
     if not manual_po_norm:
@@ -1091,9 +1275,11 @@ def generate_templates(
 
         # ── Core fields ──────────────────────────────────────────────────────
         product = _as_text(_cell(row_idx, "product")) or _as_text(_cell(row_idx, "product_alt"))
-        if not product:
+        if not product and not product_sheet_map:
             add_warning(f"Row {row_idx} PO {po}: product is empty; row skipped.")
             continue
+        if not product and product_sheet_map:
+            product = ""
         product_external_ref = _as_text(_cell(row_idx, "product_external_ref"))
         product_customer_ref = _as_text(_cell(row_idx, "product_customer_ref"))
         colour  = _as_text(_cell(row_idx, "colour"))
@@ -1106,9 +1292,10 @@ def generate_templates(
         else:
             qty = _to_int_quantity(qty_cell)
 
-        orig_ex_fac  = _cell(row_idx, "orig_ex_fac")
+        orig_ex_fac  = _cell(row_idx, "orig_ex_fac") or _cell(row_idx, "confirmed_ex_fac")
         buy_date     = _cell(row_idx, "buy_date")
         trans_cond   = _cell(row_idx, "trans_cond")
+        cancel_date_raw = _cell(row_idx, "cancel_date")
         # Fix #1: Use actual season/range value, raise error if missing
         season_raw = _as_text(_cell(row_idx, "season"))
         season_value = manual_product_range or season_raw
@@ -1124,11 +1311,48 @@ def generate_templates(
         buy_round    = _as_text(_cell(row_idx, "submit_buy"))
         status_raw   = _as_text(_cell(row_idx, "status"))
 
-        # Build PO suffix: PO-PLANT-DEST (Dest uses transport_location)
+        if not colour or colour.strip().lower() == "not set":
+            skipped_no_colour += 1
+            add_warning(f"Row {row_idx} PO {po}: colour is empty or 'Not Set'; line/size skipped.")
+            continue
+
+        plm_entry = None
+        colour_out = colour
+        plm_missing = False
+        if product_sheet_map:
+            colour_key = _normalize_colour_key(colour)
+            jde_style = _as_text(_cell(row_idx, "product_alt"))
+            if not jde_style:
+                add_warning(f"Row {row_idx} PO {po}: JDE Style missing; PLM fields left blank.")
+                plm_missing = True
+            lookup_key = f"{jde_style}|{colour_key}" if jde_style else ""
+            matches = product_sheet_map.get(lookup_key, []) if lookup_key else []
+            # If multiple matches, use the first (exact buyer_style_number matches are inserted first)
+            if len(matches) > 1:
+                matches = [matches[0]]
+            if len(matches) == 0 and not plm_missing:
+                add_warning(f"Row {row_idx} PO {po}: JDE {jde_style} color {colour} not found in PLM sheet; PLM fields left blank.")
+                plm_missing = True
+            if not plm_missing and len(matches) == 1:
+                plm_entry = matches[0]
+            if plm_entry and _as_text(plm_entry.get("colour")).strip().lower() == "not set":
+                skipped_no_colour += 1
+                add_warning(f"Row {row_idx} PO {po}: PLM Color Name is 'Not Set'; line/size skipped.")
+                continue
+
+            if plm_entry and _as_text(plm_entry.get("product_name")):
+                product = _as_text(plm_entry.get("product_name"))
+            if plm_entry and _as_text(plm_entry.get("factory")):
+                vendor_code = _as_text(plm_entry.get("factory"))
+            if plm_entry and _as_text(plm_entry.get("colour")):
+                colour_out = _as_text(plm_entry.get("colour"))
+
+        # Build PO suffix: PO-PLANT-DEST (Dest uses transport_location, country codes expanded to full name)
         plant_value = _as_text(_cell(row_idx, "plant"))
         dest_country_raw = manual_destination or _as_text(_cell(row_idx, "transport_location"))
-        if plant_value or dest_country_raw:
-            po = "-".join([po] + [p for p in [plant_value, dest_country_raw] if p])
+        dest_country = COUNTRY_NAME_MAP.get(dest_country_raw.strip().upper(), dest_country_raw) if dest_country_raw else ""
+        if plant_value or dest_country:
+            po = "-".join([po] + [p for p in [plant_value, dest_country] if p])
 
         total_buy_rows += 1
 
@@ -1139,7 +1363,7 @@ def generate_templates(
         key_date_obj       = _parse_date(buy_date)
         key_date_lines     = _format_date(buy_date, "%m/%d/%Y")
         delivery_date      = _format_date(orig_ex_fac, "%m/%d/%Y")
-        cancel_date        = _format_date(_cell(row_idx, "cancel_date") or orig_ex_fac, "%m/%d/%Y")
+        cancel_date        = _format_date(cancel_date_raw or orig_ex_fac, "%m/%d/%Y")
 
         brand_lookup       = brand_value or customer_raw
         brand_config       = _get_brand_config(brand_lookup)
@@ -1147,13 +1371,32 @@ def generate_templates(
         supplier_value     = _resolve_supplier(vendor_code, vendor_name, brand_lookup)
         size_value         = size_raw or "One Size"
         product_range      = _format_product_range(season_value)
-        orders_template    = _resolve_orders_template(brand_lookup, template_raw, brand_config)
-        lines_template     = _resolve_lines_template(brand_lookup, template_raw, brand_config)
+        if manual_template:
+            orders_template = manual_template
+            lines_template = manual_template
+        else:
+            orders_template = _resolve_orders_template(brand_lookup, template_raw, brand_config)
+            lines_template  = _resolve_lines_template(brand_lookup, template_raw, brand_config)
         status_value       = status_raw if status_raw else "Confirmed"
         comments_value     = _build_comments(
             brand_lookup, product_range, buy_date, orders_template, buy_round
         )
         keyusers           = _resolve_keyusers(brand_lookup)
+        purchase_price     = ""  # purchase price not captured
+        key_date_orders    = _format_manual_keydate(manual_keydate) if manual_keydate else (
+            _format_date(key_date_obj, "%m/%d/%Y") if key_date_obj else ""
+        )
+        if plm_entry and _as_text(plm_entry.get("customer_name")):
+            customer_value = _as_text(plm_entry.get("customer_name"))
+        elif product_sheet_map and not plm_entry:
+            # plm_missing: only blank PLM-exclusive fields; keep buy file values
+            purchase_price = ""
+            # product stays as Material Style from buy file (already set above)
+            # colour_out stays as Color from buy file (already set above)
+            # vendor_code stays as buy file value (already set above)
+            # customer_value: fall back to brand map instead of blanking
+            customer_value = _resolve_customer_subtype(customer_raw, brand_value, customer_fallback)
+
         if brand_config and isinstance(brand_config.get("keyusers"), dict):
             cfg_keyusers = brand_config.get("keyusers") or {}
             keyusers = {
@@ -1192,7 +1435,8 @@ def generate_templates(
                 )
 
         # ── ORDERS row (one per unique PO) ───────────────────────────────────
-        order_key = (po, customer_value)
+        order_customer_key = customer_value or customer_fallback
+        order_key = (po, order_customer_key)
         if order_key not in seen_orders:
             seen_orders.add(order_key)
             # Fix #2: Map TransportLocation from source
@@ -1202,7 +1446,7 @@ def generate_templates(
             _append_row(orders_ws, [
                 po, supplier_value, status_value, customer_value,
                 trans_method, transport_location, "", orders_template,
-                _format_date(key_date_obj, "%m/%d/%Y") if key_date_obj else "",
+                key_date_orders,
                 "", "", comments_value, CURRENCY,
                 keyusers["KeyUser1"], keyusers["KeyUser2"], keyusers["KeyUser3"],
                 keyusers["KeyUser4"], keyusers["KeyUser5"], keyusers["KeyUser6"],
@@ -1228,7 +1472,7 @@ def generate_templates(
         key_date_line = delivery_date
         _append_row(lines_ws, [
             po, line_item, product_range, product, customer_value,
-            delivery_date, trans_method, transport_location, status_value, "", "",
+            delivery_date, trans_method, transport_location, status_value, purchase_price, "",
             lines_template, key_date_line, SUPPLIER_PROFILE,
             "", "", CURRENCY, "", product_external_ref, product_customer_ref, "", "",
             raw_po_val if raw_po_val is not None else po,
@@ -1238,14 +1482,11 @@ def generate_templates(
         po_to_lines[po].append(line_item)
         total_lines_rows += 1
 
-        # ── ORDER_SIZES row (skip qty=0) ─────────────────────────────────────
-        if qty == 0:
-            continue
-
+        # ── ORDER_SIZES row (include qty=0) ──────────────────────────────────
         po_to_nonzero_lines[po].append(line_item)
         _append_row(sizes_ws, [
             po, line_item, product_range, product,
-            size_value, size_value, qty, colour,
+            size_value, size_value, qty, colour_out,
             "", "", "", "", "", "", "", "", "", "", "", "", "", "",
             "", "", "", "", "", "", "",
         ])
@@ -1281,7 +1522,7 @@ def generate_templates(
                 f"Expected {expected}, got {line_items}."
             )
         size_items          = po_to_sizes.get(po, [])
-        expected_size_items = po_to_nonzero_lines.get(po, [])
+        expected_size_items = po_to_lines.get(po, [])
         if size_items != expected_size_items:
             raise ValueError(
                 f"LineItem mismatch LINES vs ORDER_SIZES for PO {po}. "
@@ -1438,6 +1679,9 @@ if __name__ == "__main__":
     parser.add_argument("--po",         dest="manual_po",        default=None)
     parser.add_argument("--destination", dest="manual_destination", default=None)
     parser.add_argument("--product-range", dest="manual_product_range", default=None)
+    parser.add_argument("--template",   dest="manual_template",  default=None)
+    parser.add_argument("--keydate",    dest="manual_keydate",   default=None)
+    parser.add_argument("--product-sheet", dest="product_sheet", default=None)
     parser.add_argument("--validate-sizes", dest="validate_sizes", action="store_true")
     args = parser.parse_args()
 
@@ -1449,6 +1693,12 @@ if __name__ == "__main__":
 
     output_candidate = Path(args.output_dir)
     output_dir       = output_candidate if output_candidate.is_absolute() else (base / output_candidate)
+    product_sheet_path = None
+    if args.product_sheet:
+        candidate = Path(args.product_sheet)
+        product_sheet_path = candidate if candidate.is_absolute() else (base / candidate)
+        if not product_sheet_path.exists():
+            raise FileNotFoundError(f"Product sheet not found: {product_sheet_path}")
 
     generate_templates(
         input_path        = input_path,
@@ -1459,5 +1709,8 @@ if __name__ == "__main__":
         manual_po         = args.manual_po,
         manual_destination = args.manual_destination,
         manual_product_range = args.manual_product_range,
+        manual_template   = args.manual_template,
+        manual_keydate    = args.manual_keydate,
+        product_sheet_path = product_sheet_path,
         validate_sizes    = args.validate_sizes,
     )
