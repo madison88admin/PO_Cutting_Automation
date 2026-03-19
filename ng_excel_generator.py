@@ -651,6 +651,15 @@ def _format_transport_location(value: Any) -> str:
     return COUNTRY_NAME_MAP.get(key, raw.strip())
 
 
+def _customer_suffix(raw_customer: str) -> str:
+    text = (raw_customer or "").lower()
+    if "smu" in text:
+        return "SMU"
+    if "outlet" in text:
+        return "Outlet"
+    return ""
+
+
 def _format_product_range(season: str) -> str:
     normalized = _strip_brackets((season or "").strip())
     # Handle "FW26" → "FH:2026"  and "SS26" → "SH:2026" as well as "F26"/"S26"
@@ -1356,6 +1365,10 @@ def generate_templates(
         dest_country = COUNTRY_NAME_MAP.get(dest_country_raw.strip().upper(), dest_country_raw) if dest_country_raw else ""
         if plant_value or dest_country:
             po = "-".join([po] + [p for p in [plant_value, dest_country] if p])
+        suffix_source = _as_text(plm_entry.get("customer_name")) if plm_entry else ""
+        suffix = _customer_suffix(suffix_source or customer_raw or brand_value)
+        if suffix and not po.lower().endswith(f"-{suffix.lower()}"):
+            po = f"{po}-{suffix}"
 
         total_buy_rows += 1
 

@@ -21,6 +21,7 @@ export default function Workflow() {
     const [productSheetFile, setProductSheetFile] = useState<File | null>(null);
     const [manualPo, setManualPo] = useState("");
     const [manualTemplate, setManualTemplate] = useState("");
+    const [manualLinesTemplate, setManualLinesTemplate] = useState("");
     const [manualComments, setManualComments] = useState("");
     const [manualKeyDate, setManualKeyDate] = useState("");
     const [manualKeyUser1, setManualKeyUser1] = useState("");
@@ -66,6 +67,7 @@ export default function Workflow() {
         }
         if (manualPo.trim()) formData.append("manualPo", manualPo.trim());
         if (manualTemplate.trim()) formData.append("manualTemplate", manualTemplate.trim());
+        if (manualLinesTemplate.trim()) formData.append("manualLinesTemplate", manualLinesTemplate.trim());
         if (manualComments.trim()) formData.append("manualComments", manualComments.trim());
         if (manualKeyDate.trim()) formData.append("manualKeyDate", manualKeyDate.trim());
         if (manualKeyUser1.trim()) formData.append("manualKeyUser1", manualKeyUser1.trim());
@@ -324,6 +326,15 @@ export default function Workflow() {
                                     <input
                                         value={manualTemplate}
                                         onChange={(e) => setManualTemplate(e.target.value)}
+                                        placeholder="FOB Bulk EDI PO (New) or SMS EDI"
+                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Lines Template</label>
+                                    <input
+                                        value={manualLinesTemplate}
+                                        onChange={(e) => setManualLinesTemplate(e.target.value)}
                                         placeholder="FOB Bulk EDI PO (New) or SMS EDI"
                                         className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
                                     />

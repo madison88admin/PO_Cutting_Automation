@@ -71,6 +71,7 @@ export async function POST(req: NextRequest) {
         const manualDestination = (formData.get("manualDestination")?.toString() || "").trim();
         const manualProductRange = (formData.get("manualProductRange")?.toString() || "").trim();
         const manualTemplate = (formData.get("manualTemplate")?.toString() || "").trim();
+        const manualLinesTemplate = (formData.get("manualLinesTemplate")?.toString() || "").trim();
         const manualComments = (formData.get("manualComments")?.toString() || "").trim();
         const manualKeyDate = (formData.get("manualKeyDate")?.toString() || "").trim();
         const manualKeyUser1 = (formData.get("manualKeyUser1")?.toString() || "").trim();
@@ -148,6 +149,7 @@ export async function POST(req: NextRequest) {
                 manualDestination: manualDestination || undefined,
                 manualProductRange: manualProductRange || undefined,
                 manualTemplate: manualTemplate || undefined,
+                manualLinesTemplate: manualLinesTemplate || undefined,
                 manualComments: manualComments || undefined,
                 manualKeyDate: manualKeyDate || undefined,
                 manualKeyUser1: manualKeyUser1 || undefined,

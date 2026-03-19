@@ -600,6 +600,13 @@ export class ExcelEngine {
         return brandClean.toUpperCase() || 'COL';
     }
 
+    private detectCustomerSubtype(rawCustomer: string | undefined): string | undefined {
+        const text = (rawCustomer || '').toLowerCase();
+        if (text.includes('smu')) return 'SMU';
+        if (text.includes('outlet')) return 'Outlet';
+        return undefined;
+    }
+
     // FIX 1: KeyUser resolution with hardcoded brand fallback ─────────────────
     private resolveKeyUsers(
         brand: string | undefined,
@@ -868,6 +875,7 @@ export class ExcelEngine {
             manualDestination?: string;
             manualProductRange?: string;
             manualTemplate?: string;
+            manualLinesTemplate?: string;
             manualComments?: string;
             manualKeyDate?: string;
             manualKeyUser1?: string;
@@ -883,6 +891,7 @@ export class ExcelEngine {
         const manualDestination = options?.manualDestination?.toString().trim() || '';
         const manualProductRange = options?.manualProductRange?.toString().trim() || '';
         const manualTemplate = options?.manualTemplate?.toString().trim() || '';
+        const manualLinesTemplate = options?.manualLinesTemplate?.toString().trim() || '';
         const manualComments = options?.manualComments?.toString().trim() || '';
         const manualKeyDate = options?.manualKeyDate?.toString().trim() || '';
         const manualKeyUser1 = options?.manualKeyUser1?.toString().trim() || '';
@@ -1036,10 +1045,9 @@ export class ExcelEngine {
                 ? (COUNTRY_NAME_MAP[destCountryRaw.toUpperCase()] || destCountryRaw)
                 : '';
             const poSuffixParts = [plant, destCountry].filter(Boolean);
-            const poNumber = poSuffixParts.length > 0
+            let poNumber = poSuffixParts.length > 0
                 ? `${poNumberRaw}-${poSuffixParts.join('-')}`
                 : poNumberRaw;
-
             const brand = this.stripBrackets(getVal('brand') || '');
             const categoryRaw = this.stripBrackets(getVal('category') || '');
             const inferredCat = categoryRaw || this.inferCategoryFromFactoryMap(brand, factoryMap);
@@ -1175,13 +1183,23 @@ export class ExcelEngine {
             const ordersTemplate = manualTemplate
                 || brandConfig?.orders_template?.trim()
                 || this.resolveOrdersTemplate(brand, templateRaw);
-            const linesTemplate = manualTemplate
+            const linesTemplate = manualLinesTemplate
                 || brandConfig?.lines_template?.trim()
                 || this.resolveLinesTemplate(brand, templateRaw);
             const productRange = this.formatProductRange(season);
             const resolvedColour = plmMissing ? colour : (productMatch?.colour || colour);
             const keyDate = manualKeyDate || poIssuanceDate;
             const keyDateFormat: "manual" | "standard" = manualKeyDate ? "manual" : "standard";
+            const customerSubtype = this.detectCustomerSubtype(
+                productMatch?.customerName
+                || getVal('customerName')
+                || getVal('brand')
+                || detectedCustomer
+                || ''
+            );
+            if (customerSubtype && !poNumber.toLowerCase().endsWith(`-${customerSubtype.toLowerCase()}`)) {
+                poNumber = `${poNumber}-${customerSubtype}`;
+            }
 
             const validStatuses = Array.isArray(brandConfig?.valid_statuses)
                 ? brandConfig!.valid_statuses!.map((s: string) => s.toLowerCase())
