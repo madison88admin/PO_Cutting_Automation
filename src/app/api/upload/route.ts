@@ -73,6 +73,11 @@ export async function POST(req: NextRequest) {
         const manualTemplate = (formData.get("manualTemplate")?.toString() || "").trim();
         const manualComments = (formData.get("manualComments")?.toString() || "").trim();
         const manualKeyDate = (formData.get("manualKeyDate")?.toString() || "").trim();
+        const manualKeyUser1 = (formData.get("manualKeyUser1")?.toString() || "").trim();
+        const manualKeyUser2 = (formData.get("manualKeyUser2")?.toString() || "").trim();
+        const manualKeyUser3 = (formData.get("manualKeyUser3")?.toString() || "").trim();
+        const manualKeyUser4 = (formData.get("manualKeyUser4")?.toString() || "").trim();
+        const manualKeyUser5 = (formData.get("manualKeyUser5")?.toString() || "").trim();
 
         if (!files || files.length === 0) {
             return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
@@ -145,6 +150,11 @@ export async function POST(req: NextRequest) {
                 manualTemplate: manualTemplate || undefined,
                 manualComments: manualComments || undefined,
                 manualKeyDate: manualKeyDate || undefined,
+                manualKeyUser1: manualKeyUser1 || undefined,
+                manualKeyUser2: manualKeyUser2 || undefined,
+                manualKeyUser3: manualKeyUser3 || undefined,
+                manualKeyUser4: manualKeyUser4 || undefined,
+                manualKeyUser5: manualKeyUser5 || undefined,
                 defaultQuantityIfMissing: !!manualPo,
                 productSheetMap,
             });

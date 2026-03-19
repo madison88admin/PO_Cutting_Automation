@@ -23,6 +23,11 @@ export default function Workflow() {
     const [manualTemplate, setManualTemplate] = useState("");
     const [manualComments, setManualComments] = useState("");
     const [manualKeyDate, setManualKeyDate] = useState("");
+    const [manualKeyUser1, setManualKeyUser1] = useState("");
+    const [manualKeyUser2, setManualKeyUser2] = useState("");
+    const [manualKeyUser3, setManualKeyUser3] = useState("");
+    const [manualKeyUser4, setManualKeyUser4] = useState("");
+    const [manualKeyUser5, setManualKeyUser5] = useState("");
     const applyTheme = (nextTheme: "dark" | "light") => {
       document.documentElement.classList.remove("light", "dark");
       document.documentElement.classList.add(nextTheme);
@@ -63,6 +68,11 @@ export default function Workflow() {
         if (manualTemplate.trim()) formData.append("manualTemplate", manualTemplate.trim());
         if (manualComments.trim()) formData.append("manualComments", manualComments.trim());
         if (manualKeyDate.trim()) formData.append("manualKeyDate", manualKeyDate.trim());
+        if (manualKeyUser1.trim()) formData.append("manualKeyUser1", manualKeyUser1.trim());
+        if (manualKeyUser2.trim()) formData.append("manualKeyUser2", manualKeyUser2.trim());
+        if (manualKeyUser3.trim()) formData.append("manualKeyUser3", manualKeyUser3.trim());
+        if (manualKeyUser4.trim()) formData.append("manualKeyUser4", manualKeyUser4.trim());
+        if (manualKeyUser5.trim()) formData.append("manualKeyUser5", manualKeyUser5.trim());
 
         try {
             const res = await fetch("/api/upload", {
@@ -333,6 +343,51 @@ export default function Workflow() {
                                         value={manualKeyDate}
                                         onChange={(e) => setManualKeyDate(e.target.value)}
                                         placeholder="6/12/2026"
+                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">KeyUser1 (Manual)</label>
+                                    <input
+                                        value={manualKeyUser1}
+                                        onChange={(e) => setManualKeyUser1(e.target.value)}
+                                        placeholder="Planning"
+                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">KeyUser2 (Manual)</label>
+                                    <input
+                                        value={manualKeyUser2}
+                                        onChange={(e) => setManualKeyUser2(e.target.value)}
+                                        placeholder="Purchasing"
+                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">KeyUser3 (Manual)</label>
+                                    <input
+                                        value={manualKeyUser3}
+                                        onChange={(e) => setManualKeyUser3(e.target.value)}
+                                        placeholder="(Optional)"
+                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">KeyUser4 (Manual)</label>
+                                    <input
+                                        value={manualKeyUser4}
+                                        onChange={(e) => setManualKeyUser4(e.target.value)}
+                                        placeholder="Production"
+                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">KeyUser5 (Manual)</label>
+                                    <input
+                                        value={manualKeyUser5}
+                                        onChange={(e) => setManualKeyUser5(e.target.value)}
+                                        placeholder="Logistics"
                                         className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
                                     />
                                 </div>

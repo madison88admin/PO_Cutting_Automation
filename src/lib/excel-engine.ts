@@ -123,7 +123,7 @@ const TRANSPORT_MAP: Record<string, string> = {
 const VALID_TRANSPORT_VALUES = new Set(["Sea", "Air", "Courier"]);
 
 const COUNTRY_NAME_MAP: Record<string, string> = {
-    AE: "United Arab Emirates",
+    AE: "UAE",
     AR: "Argentina",
     AT: "Austria",
     AU: "Australia",
@@ -138,7 +138,7 @@ const COUNTRY_NAME_MAP: Record<string, string> = {
     EC: "Ecuador",
     ES: "Spain",
     FR: "France",
-    GB: "United Kingdom",
+    GB: "UK",
     GR: "Greece",
     HK: "Hong Kong",
     HR: "Croatia",
@@ -163,8 +163,11 @@ const COUNTRY_NAME_MAP: Record<string, string> = {
     TH: "Thailand",
     TR: "Turkey",
     TW: "Taiwan",
-    UK: "United Kingdom",
-    US: "United States",
+    UK: "UK",
+    US: "USA",
+    "UNITED KINGDOM": "UK",
+    "UNITED ARAB EMIRATES": "UAE",
+    "UNITED STATES": "USA",
     UY: "Uruguay",
     VN: "Vietnam",
     ZA: "South Africa",
@@ -600,12 +603,29 @@ export class ExcelEngine {
     // FIX 1: KeyUser resolution with hardcoded brand fallback ─────────────────
     private resolveKeyUsers(
         brand: string | undefined,
+        manualK1: string | undefined,
+        manualK2: string | undefined,
+        manualK3: string | undefined,
+        manualK4: string | undefined,
+        manualK5: string | undefined,
         providedK1: string | undefined,
         providedK2: string | undefined,
         providedK4: string | undefined,
         providedK5: string | undefined,
         mloRow: any,
     ): KeyUsers {
+        const hasManual =
+            !!(manualK1 || manualK2 || manualK3 || manualK4 || manualK5);
+        if (hasManual) {
+            return {
+                k1: manualK1 || '',
+                k2: manualK2 || '',
+                k3: manualK3 || '',
+                k4: manualK4 || '',
+                k5: manualK5 || '',
+                k6: '', k7: '', k8: '',
+            };
+        }
         // If buy file already has explicit KeyUser values, use them
         if (providedK1 || providedK2) {
             return {
@@ -850,6 +870,11 @@ export class ExcelEngine {
             manualTemplate?: string;
             manualComments?: string;
             manualKeyDate?: string;
+            manualKeyUser1?: string;
+            manualKeyUser2?: string;
+            manualKeyUser3?: string;
+            manualKeyUser4?: string;
+            manualKeyUser5?: string;
             defaultQuantityIfMissing?: boolean;
             productSheetMap?: Record<string, ProductSheetRow[]>;
         },
@@ -860,6 +885,11 @@ export class ExcelEngine {
         const manualTemplate = options?.manualTemplate?.toString().trim() || '';
         const manualComments = options?.manualComments?.toString().trim() || '';
         const manualKeyDate = options?.manualKeyDate?.toString().trim() || '';
+        const manualKeyUser1 = options?.manualKeyUser1?.toString().trim() || '';
+        const manualKeyUser2 = options?.manualKeyUser2?.toString().trim() || '';
+        const manualKeyUser3 = options?.manualKeyUser3?.toString().trim() || '';
+        const manualKeyUser4 = options?.manualKeyUser4?.toString().trim() || '';
+        const manualKeyUser5 = options?.manualKeyUser5?.toString().trim() || '';
         const workbook = new ExcelJS.Workbook();
         await workbook.xlsx.load(buffer);
 
@@ -1197,6 +1227,11 @@ export class ExcelEngine {
             const mloRow = brandConfig;
             const keyUsers = this.resolveKeyUsers(
                 brand,
+                manualKeyUser1,
+                manualKeyUser2,
+                manualKeyUser3,
+                manualKeyUser4,
+                manualKeyUser5,
                 getVal('keyUser1'), getVal('keyUser2'),
                 getVal('keyUser4'), getVal('keyUser5'),
                 mloRow,

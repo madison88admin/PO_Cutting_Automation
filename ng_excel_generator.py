@@ -42,7 +42,7 @@ VALID_TRANSPORT_VALUES = {"Sea", "Air", "Courier"}
 
 # Country code → full name (used for TransportLocation)
 COUNTRY_NAME_MAP = {
-    "AE": "United Arab Emirates",
+    "AE": "UAE",
     "AR": "Argentina",
     "AT": "Austria",
     "AU": "Australia",
@@ -57,7 +57,7 @@ COUNTRY_NAME_MAP = {
     "EC": "Ecuador",
     "ES": "Spain",
     "FR": "France",
-    "GB": "United Kingdom",
+    "GB": "UK",
     "GR": "Greece",
     "HK": "Hong Kong",
     "HR": "Croatia",
@@ -82,8 +82,11 @@ COUNTRY_NAME_MAP = {
     "TH": "Thailand",
     "TR": "Turkey",
     "TW": "Taiwan",
-    "UK": "United Kingdom",
-    "US": "United States",
+    "UK": "UK",
+    "US": "USA",
+    "UNITED KINGDOM": "UK",
+    "UNITED ARAB EMIRATES": "UAE",
+    "UNITED STATES": "USA",
     "UY": "Uruguay",
     "VN": "Vietnam",
     "ZA": "South Africa",
