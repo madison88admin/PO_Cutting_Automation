@@ -117,14 +117,12 @@ export default function Workflow() {
             console.log(`Initializing download for ${fileType}...`);
             if (!uploadData?.files?.[fileType]) {
                 console.error("No file data found in uploadData");
+                alert("Walang generated file payload. Paki-run ulit at i-check ang validation result.");
                 return;
             }
 
             const base64 = uploadData.files[fileType];
-            const dataUrl = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${base64}`;
-
-            const res = await fetch(dataUrl);
-            const blob = await res.blob();
+            const blob = base64ToXlsxBlob(base64);
 
             const url = window.URL.createObjectURL(blob);
             const link = document.createElement("a");
@@ -145,12 +143,11 @@ export default function Workflow() {
         try {
             if (!uploadData?.fileOutputs?.[filename]?.[fileType]) {
                 console.error("No per-file output data found", filename, fileType);
+                alert("Walang per-file payload para sa file na ito.");
                 return;
             }
             const base64 = uploadData.fileOutputs[filename][fileType];
-            const dataUrl = `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${base64}`;
-            const res = await fetch(dataUrl);
-            const blob = await res.blob();
+            const blob = base64ToXlsxBlob(base64);
             const url = window.URL.createObjectURL(blob);
             const link = document.createElement("a");
             link.href = url;
@@ -164,6 +161,18 @@ export default function Workflow() {
             console.error("Per-file download failed:", err);
             alert("Failed to generate per-file export. Please try again.");
         }
+    };
+
+    const base64ToXlsxBlob = (base64: string) => {
+        const binary = window.atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return new Blob(
+            [bytes],
+            { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+        );
     };
 
     const blockerConditions = {

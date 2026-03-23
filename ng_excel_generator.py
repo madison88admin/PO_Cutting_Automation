@@ -35,6 +35,9 @@ TRANSPORT_MAP = {
     "dhl": "Courier",
     "fedex": "Courier",
     "ups": "Courier",
+    # M88 shorthand transport code
+    "v": "Sea",
+    "private parcel": "Courier",
 }
 
 # Valid mapped transport values after TRANSPORT_MAP resolution
@@ -95,6 +98,62 @@ COUNTRY_NAME_MAP = {
 CURRENCY = "USD"
 SUPPLIER_PROFILE = "DEFAULT_PROFILE"
 DEFAULT_CUSTOMER = "COL"
+
+# Plant name / plant code → TransportLocation country
+# Used for M88 buy files that have no explicit TransportLocation column.
+PLANT_COUNTRY_MAP: dict[str, str] = {
+    # Plant name patterns (lowercase)
+    "visalia dc":             "USA",
+    "visalia":                "USA",
+    "jonestown dc":           "USA",
+    "jonestown":              "USA",
+    "brampton dc":            "Canada",
+    "brampton":               "Canada",
+    "dropship us":            "USA",
+    "dropship international": "USA",
+    "dropship dc":            "USA",
+    "dropship ca":            "Canada",
+    "vf outdoor mexico":      "Mexico",
+    "vf outdoor mexico s de r l d": "Mexico",
+    "photoshooting":          "BELGIUM",
+    "eu main":                "BELGIUM",
+    "eu uk":                  "UK",
+    "eu":                     "EU",
+    "japan":                  "Japan",
+    "korea":                  "Korea",
+    "australia":              "Australia",
+    "hong kong":              "Hong Kong",
+    "china":                  "China",
+    "virtual":                "Dubai",
+    "argentina":              "Argentina",
+    "brazil":                 "Brazil",
+    "chile":                  "Chile",
+    "guatemala":              "Guatemala",
+    "panama":                 "Panama",
+    "peru":                   "PERU",
+    "uruguay":                "URUGUAY",
+    "united arab emirates":   "UNITED ARAB EMIRATES",
+    "singapore":              "Singapore",
+    "apdindc":                "Singapore",
+    "israel":                 "Israel",
+    "south africa":           "South Africa",
+    "taiwan":                 "Taiwan",
+    "thailand":               "Thailand",
+    "malaysia":               "Malaysia",
+    "nepal":                  "Nepal",
+    "indonesia":              "Indonesia",
+    # Plant code patterns
+    "1001": "USA",
+    "1010": "USA",
+    "1020": "USA",
+    "1004": "Canada",
+    "1009": "USA",
+    "1005": "Mexico",
+    "t909": "Japan",
+    "d060": "BELGIUM",
+    "d080": "UK",
+    "vd60": "Dubai",
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Brand-level supplier fallback map.
@@ -301,12 +360,20 @@ HEADER_ALIASES: dict[str, list[str]] = {
     "plant": [
         "plant", "plant code",
     ],
+    "plant_name": [
+        # Madison88/TNF buy file
+        "plant name",
+    ],
     "po": [
         "po #", "po#", "po", "pono",
         "purchase order", "purchaseorder",
         "extraction po #", "extraction po#",
         # Arcteryx – per-shipment tracking code used as PO key
         "tracking number",
+        "master po#", "master po #",
+    ],
+    "buyer_po_number": [
+        "master po#", "master po #",
     ],
     "product": [
         "material style", "product", "style number", "style no",
@@ -315,11 +382,15 @@ HEADER_ALIASES: dict[str, list[str]] = {
         "article",
         # Generic fallbacks
         "style", "sku", "item",
+        # Madison88/TNF buy file
+        "material",
     ],
     "product_alt": [
         "jde style",
         # Arcteryx model = base style without colour suffix
         "model",
+        # Madison88/TNF buy file base style
+        "style#",
     ],
     "product_external_ref": [
         "name",
@@ -340,6 +411,8 @@ HEADER_ALIASES: dict[str, list[str]] = {
     "size": [
         "size", "size name", "sizename", "product size", "productsize",
         "size code", "size #", "size#", "size_name", "size-name",
+        # Madison88/TNF buy file
+        "grid value", "dim 1", "dim1",
     ],
     "customer": [
         "customer", "customer name", "brand",
@@ -356,13 +429,18 @@ HEADER_ALIASES: dict[str, list[str]] = {
     "vendor_name": [
         "vendor name", "vendorname", "supplier name",
         "factory",
+        "final vendor name",  # Madison88/TNF buy file
     ],
     "vendor_code": [
         "vendor code", "vendorcode", "vendor", "supplier",
         "product supplier", "productsupplier",
+        # Madison88/TNF buy file
+        "final vendor", "final factory",
     ],
     "season": [
         "season", "range", "productrange",
+        # Madison88/TNF buy file
+        "season indicator",
     ],
     "template": [
         "doc type", "template",
@@ -371,18 +449,29 @@ HEADER_ALIASES: dict[str, list[str]] = {
         "color", "colour",
         # Arcteryx – Article Name holds the colour description
         "article name", "color description",
+        # Madison88/TNF buy file colourway code lives in Material (used for PLM lookup key)
+        "material",
+    ],
+    "colour_display": [
+        # Madison88/TNF buy file human-readable colour name (output only, not PLM lookup key)
+        "longtext",
     ],
     "qty": [
         "ordered qty", "quantity", "qty",
         "open qty (pcs/prs)",
         # Arcteryx
         "requested qty",
+        # Madison88/TNF buy file
+        "final qty", "revised qty",
     ],
     "orig_ex_fac": [
         "orig ex fac", "delivery date", "deliverydate",
         "negotiated ex fac date", "ex fac",
         # Arcteryx
         "ex-factory",
+        # Madison88/TNF buy file — Vendor Confirmed CRD is primary date source
+        "vendor confirmed crd",
+        "final crd (order date + lt1)", "brand requested crd",
     ],
     "confirmed_ex_fac": [
         "confirmed fty ex fac", "confirmed ex fac", "fty ex fac",
@@ -391,11 +480,15 @@ HEADER_ALIASES: dict[str, list[str]] = {
         "trans cond", "transport method", "transportmethod",
         # Arcteryx
         "transport mode",
+        # Madison88/TNF buy file
+        "shipment mode", "transportation mode description",
     ],
     "buy_date": [
         "buy date", "keydate", "po issuance date",
         # Arcteryx
         "file date",
+        # Madison88/TNF buy file
+        "order date",
     ],
     "cancel_date": [
         "cancel date", "canceldate", "cancel", "udf-canel_date",
@@ -488,17 +581,43 @@ PRODUCT_SHEET_ALIASES = {
 
 
 def _normalize_colour_key(value: Any) -> str:
-    raw = _as_text(value).lower().strip()
+    raw = _as_text(value).strip()
     if not raw:
         return ""
-    if re.fullmatch(r"\d+(\.\d+)?", raw):
+    upper = raw.upper()
+    compact = re.sub(r"\s*-\s*", "-", upper)
+    compact = re.sub(r"\s+", "", compact)
+
+    # TNF PLM colour names are typically "TNF-<CODE>-<DESC>".
+    m = re.search(r"(?:^|-)TNF-([A-Z0-9]{2,4})(?:-|$)", compact)
+    if m:
+        return m.group(1)
+
+    # Material / style variants often carry the colourway code as the trailing suffix.
+    # e.g. "NF0A887VVQ2" -> "VQ2", "NF0A8HMENLQ" -> "NLQ".
+    m = re.search(r"[A-Z0-9]{3,}([A-Z0-9]{3})$", compact)
+    if m:
+        return m.group(1)
+
+    raw_l = raw.lower().strip()
+    if re.fullmatch(r"\d+(\.\d+)?", raw_l):
         try:
-            return str(int(float(raw)))
+            return str(int(float(raw_l)))
         except ValueError:
-            return raw
-    m = re.search(r"\d+", raw)
+            return raw_l
+    m = re.search(r"\d+", raw_l)
     if m:
         return m.group(0).lstrip("0") or "0"
+    return raw_l
+
+
+def _normalize_style_key(value: Any) -> str:
+    raw = _as_text(value).strip()
+    if not raw:
+        return ""
+    upper = raw.upper()
+    if upper.startswith("NF0A") and len(upper) >= 5:
+        return upper[-5:]
     return raw
 
 
@@ -558,6 +677,7 @@ def _extract_product_sheet_map_from_wb(wb) -> dict[str, list[dict[str, Any]]]:
                 if header_map.get("buyer_style_number") else ""
             if not colour_key or not buyer_style_number:
                 continue
+            normalized_style = _normalize_style_key(buyer_style_number)
             entry = {
                 "colour": colour_raw,
                 "factory": _as_text(ws.cell(row=r, column=header_map.get("factory", 0)).value)
@@ -574,10 +694,16 @@ def _extract_product_sheet_map_from_wb(wb) -> dict[str, list[dict[str, Any]]]:
             # e.g. "217554/CU2279" → also index under "CU2279" to match buy file JDE Style
             # Exact matches are inserted first so they win over slash-segment duplicates
             lookup_keys_ordered = [(buyer_style_number, True)]  # (key, is_exact)
+            if normalized_style and normalized_style != buyer_style_number:
+                lookup_keys_ordered.append((normalized_style, False))
             for part in re.split(r"\s*/\s*", buyer_style_number):
                 part = part.strip()
                 if part and part != buyer_style_number:
                     lookup_keys_ordered.append((part, False))
+            # Strip " - SUFFIX" or " (SUFFIX)" → "A8HME - LP5L"→"A8HME", "A8CGZ (A3FJW)"→"A8CGZ"
+            style_base = re.split(r'\s*[\(\-]', buyer_style_number)[0].strip()
+            if style_base and style_base != buyer_style_number:
+                lookup_keys_ordered.append((style_base, False))
             for lk, is_exact in lookup_keys_ordered:
                 lk_key = f"{lk}|{colour_key}"
                 dedup_key = (lk_key, entry["colour"], entry["factory"], entry["product_name"], entry["customer_name"])
@@ -655,6 +781,8 @@ def _customer_suffix(raw_customer: str) -> str:
     text = (raw_customer or "").lower()
     if "smu" in text:
         return "SMU"
+    if "rto" in text:
+        return "RTO"
     if "outlet" in text:
         return "Outlet"
     return ""
@@ -774,7 +902,8 @@ def _header_matches(header: str, alias: str) -> bool:
     a_compact = _compact_text(alias)
     if h_compact == a_compact:
         return True
-    if a_compact and len(a_compact) > 3 and a_compact in h_compact:
+    alias_has_multiple_tokens = bool(re.search(r"[\s#/\-]", alias))
+    if alias_has_multiple_tokens and a_compact and len(a_compact) > 3 and a_compact in h_compact:
         return True
     return False
 
@@ -788,10 +917,21 @@ def _normalize_po(value: Any) -> str:
     return candidate
 
 
+# Numeric factory codes → resolved supplier name
+FACTORY_CODE_MAP: dict[str, str] = {
+    "508582":  "PT. UWU JUMP INDONESIA",
+    "1002436": "PT. UWU JUMP INDONESIA",
+}
+
+
 def _resolve_supplier(vendor_code: str, vendor_name: str, brand: str) -> str:
     """Resolve product supplier from available fields, with brand-level fallback."""
-    if vendor_code and len(vendor_code) > 2:
-        return vendor_code.strip()
+    code = (vendor_code or "").strip()
+    # Numeric factory codes must be resolved through the map, not passed through raw
+    if code in FACTORY_CODE_MAP:
+        return FACTORY_CODE_MAP[code]
+    if code and len(code) > 2 and not code.isdigit():
+        return code
     if vendor_name and len(vendor_name) > 2:
         return vendor_name.strip()
     brand_key = (brand or "").strip().lower()
@@ -1295,6 +1435,7 @@ def generate_templates(
         product_external_ref = _as_text(_cell(row_idx, "product_external_ref"))
         product_customer_ref = _as_text(_cell(row_idx, "product_customer_ref"))
         colour  = _as_text(_cell(row_idx, "colour"))
+        colour_display = _as_text(_cell(row_idx, "colour_display"))  # Longtext: human-readable name
         qty_cell = _cell(row_idx, "qty")
         if qty_cell is None and default_qty_if_missing:
             qty = 1
@@ -1304,6 +1445,7 @@ def generate_templates(
         else:
             qty = _to_int_quantity(qty_cell)
 
+        buyer_po_number_raw = _cell(row_idx, "buyer_po_number")
         orig_ex_fac  = _cell(row_idx, "orig_ex_fac") or _cell(row_idx, "confirmed_ex_fac")
         buy_date     = _cell(row_idx, "buy_date")
         trans_cond   = _cell(row_idx, "trans_cond")
@@ -1333,7 +1475,8 @@ def generate_templates(
         plm_missing = False
         if product_sheet_map:
             colour_key = _normalize_colour_key(colour)
-            jde_style = _as_text(_cell(row_idx, "product_alt"))
+            jde_style_raw = _as_text(_cell(row_idx, "product_alt"))
+            jde_style = _normalize_style_key(jde_style_raw)
             if not jde_style:
                 add_warning(f"Row {row_idx} PO {po}: JDE Style missing; PLM fields left blank.")
                 plm_missing = True
@@ -1358,17 +1501,27 @@ def generate_templates(
                 vendor_code = _as_text(plm_entry.get("factory"))
             if plm_entry and _as_text(plm_entry.get("colour")):
                 colour_out = _as_text(plm_entry.get("colour"))
+        # colour_out is PLM Color Name if found, else raw Material value — Longtext (colour_display) is NOT used as colour output
 
-        # Build PO suffix: PO-PLANT-DEST (Dest uses transport_location, country codes expanded to full name)
+        # Build PO suffix: ManualPO-PlantCode-PlantName (M88) or ManualPO-Plant-Dest (other files)
         plant_value = _as_text(_cell(row_idx, "plant"))
-        dest_country_raw = manual_destination or _as_text(_cell(row_idx, "transport_location"))
+        plant_name_value = _as_text(_cell(row_idx, "plant_name"))
+        # Derive transport location: explicit column → plant name map → plant code map
+        plant_derived_country = (
+            PLANT_COUNTRY_MAP.get(plant_name_value.strip().lower(), "")
+            or PLANT_COUNTRY_MAP.get(plant_value.strip().lower(), "")
+        )
+        dest_country_raw = manual_destination or _as_text(_cell(row_idx, "transport_location")) or plant_derived_country
         dest_country = COUNTRY_NAME_MAP.get(dest_country_raw.strip().upper(), dest_country_raw) if dest_country_raw else ""
-        if plant_value or dest_country:
+        if plant_name_value:
+            # M88 format: ManualPO-PlantCode-PlantName
+            po = "-".join([po] + [p for p in [plant_value, plant_name_value] if p])
+        elif plant_value or dest_country:
             po = "-".join([po] + [p for p in [plant_value, dest_country] if p])
         suffix_source = _as_text(plm_entry.get("customer_name")) if plm_entry else ""
         suffix = _customer_suffix(suffix_source or customer_raw or brand_value)
-        if suffix and not po.lower().endswith(f"-{suffix.lower()}"):
-            po = f"{po}-{suffix}"
+        if suffix and not po.lower().endswith(f" {suffix.lower()}"):
+            po = f"{po} {suffix}"
 
         total_buy_rows += 1
 
@@ -1382,8 +1535,15 @@ def generate_templates(
         cancel_date        = _format_date(cancel_date_raw or orig_ex_fac, "%m/%d/%Y")
 
         brand_lookup       = brand_value or customer_raw
+        # Vendor name fallback for NF0 rows where brand and customer columns are both empty
+        if not brand_lookup:
+            _vname_lower = (vendor_name or "").strip().lower()
+            if "uwu jump" in _vname_lower or "madison 88" in _vname_lower:
+                brand_lookup = "tnf"
         brand_config       = _get_brand_config(brand_lookup)
-        customer_value     = _resolve_customer_subtype(customer_raw, brand_value, customer_fallback)
+        # When customer_raw is empty (e.g. NF0 rows with plm_missing), use brand map instead of raw customer_fallback
+        _cust_raw_for_resolve = customer_raw or (BRAND_CUSTOMER_MAP.get((brand_lookup or "").strip().lower(), "") if brand_lookup else "")
+        customer_value     = _resolve_customer_subtype(_cust_raw_for_resolve, brand_value, customer_fallback)
         supplier_value     = _resolve_supplier(vendor_code, vendor_name, brand_lookup)
         size_value         = size_raw or "One Size"
         product_range      = _format_product_range(season_value)
@@ -1411,7 +1571,7 @@ def generate_templates(
             # colour_out stays as Color from buy file (already set above)
             # vendor_code stays as buy file value (already set above)
             # customer_value: fall back to brand map instead of blanking
-            customer_value = _resolve_customer_subtype(customer_raw, brand_value, customer_fallback)
+            customer_value = _resolve_customer_subtype(_cust_raw_for_resolve, brand_value, customer_fallback)
 
         if brand_config and isinstance(brand_config.get("keyusers"), dict):
             cfg_keyusers = brand_config.get("keyusers") or {}
@@ -1455,9 +1615,9 @@ def generate_templates(
         order_key = (po, order_customer_key)
         if order_key not in seen_orders:
             seen_orders.add(order_key)
-            # Fix #2: Map TransportLocation from source
+            # Fix #2: Map TransportLocation from source (with plant-derived fallback for M88)
             transport_location = _format_transport_location(
-                manual_destination or _cell(row_idx, "transport_location")
+                manual_destination or _cell(row_idx, "transport_location") or plant_derived_country
             )
             _append_row(orders_ws, [
                 po, supplier_value, status_value, customer_value,
@@ -1480,18 +1640,21 @@ def generate_templates(
         line_item_counter[po] += 1
         line_item = line_item_counter[po]
 
-        # Fix #2: Map TransportLocation from source for LINES
+        # Fix #2: Map TransportLocation from source for LINES (with plant-derived fallback for M88)
         transport_location = _format_transport_location(
-            manual_destination or _cell(row_idx, "transport_location")
+            manual_destination or _cell(row_idx, "transport_location") or plant_derived_country
         )
         # Fix #3: KeyDate per line from DeliveryDate
         key_date_line = delivery_date
+        buyer_po_number_out = (
+            buyer_po_number_raw if buyer_po_number_raw not in (None, "") else ""
+        )
         _append_row(lines_ws, [
             po, line_item, product_range, product, customer_value,
             delivery_date, trans_method, transport_location, status_value, purchase_price, "",
             lines_template, key_date_line, SUPPLIER_PROFILE,
             "", "", CURRENCY, "", product_external_ref, product_customer_ref, "", "",
-            raw_po_val if raw_po_val is not None else po,
+            buyer_po_number_out,
             delivery_date, cancel_date,
             "", "", "", "", "", "",
         ])
@@ -1550,7 +1713,7 @@ def generate_templates(
             src, layout_mode, layout_score, probed_po_rows, data_start_row,
             total_buy_rows, unique_po_count, unique_order_count, orders_count,
             total_lines_rows, total_sizes_rows,
-            skipped_empty_po, validation_warnings, validation_errors,
+            skipped_empty_po, skipped_no_colour, validation_warnings, validation_errors,
             skipped_empty_po_samples,
             validate_sizes=validate_sizes,
         )
@@ -1573,7 +1736,7 @@ def generate_templates(
         src, layout_mode, layout_score, probed_po_rows, data_start_row,
         total_buy_rows, unique_po_count, unique_order_count, orders_count,
         total_lines_rows, total_sizes_rows,
-        skipped_empty_po, validation_warnings, validation_errors,
+        skipped_empty_po, skipped_no_colour, validation_warnings, validation_errors,
         skipped_empty_po_samples,
         slice_issues=slice_issues,
         validate_sizes=validate_sizes,
@@ -1593,7 +1756,7 @@ def _print_summary(
     src, layout_mode, layout_score, probed_po_rows, data_start_row,
     total_buy_rows, unique_po_count, unique_order_count, orders_count,
     total_lines_rows, total_sizes_rows,
-    skipped_empty_po, validation_warnings, validation_errors,
+    skipped_empty_po, skipped_no_colour, validation_warnings, validation_errors,
     skipped_empty_po_samples,
     validate_sizes: bool = True,
     slice_issues: list[tuple[str, str]] | None = None,

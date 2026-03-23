@@ -92,7 +92,9 @@ export async function POST(req: NextRequest) {
             if (file.size > MAX_FILE_SIZE) {
                 return NextResponse.json({ error: `File ${file.name} exceeds max size of ${MAX_FILE_SIZE} bytes.` }, { status: 400 });
             }
-            if (file.type && !ALLOWED_MIME.has(file.type)) {
+            const ext = file.name.split('.').pop()?.toLowerCase();
+            const isExcelExt = ext === 'xlsx' || ext === 'xls';
+            if (file.type && !ALLOWED_MIME.has(file.type) && !isExcelExt) {
                 return NextResponse.json({ error: `File ${file.name} has unsupported MIME type ${file.type}.` }, { status: 400 });
             }
         }

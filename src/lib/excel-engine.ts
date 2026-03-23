@@ -1,4 +1,4 @@
-import ExcelJS from "exceljs";
+﻿import ExcelJS from "exceljs";
 import { logEvent } from "@/lib/audit";
 import { getFactoryMapping, getMloMapping, getColumnMapping, getAllColumnMappings } from "@/lib/data-loader";
 import { updateRun } from "@/lib/db/runHistory";
@@ -65,7 +65,66 @@ export interface ProcessedPO {
     header: POHeader;
     lines: POLine[];
     sizes: Record<number, POSize[]>;
+    orderKeys?: Array<{ customer: string; customerName: string | undefined; transportLocation: string; transportMethod: string; ordersTemplate: string }>;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plant code / plant name → destination country mapping (TNF buy files).
+// Used when the buy file has no explicit TransportLocation/Dest Country column.
+// ─────────────────────────────────────────────────────────────────────────────
+const PLANT_COUNTRY_MAP: Record<string, string> = {
+    // Plant name patterns → country
+    'visalia dc':               'USA',
+    'visalia':                  'USA',
+    'jonestown dc':             'USA',
+    'jonestown':                'USA',
+    'brampton dc':              'Canada',
+    'brampton':                 'Canada',
+    'dropship us':              'USA',
+    'dropship international':   'USA',
+    'dropship dc':              'USA',
+    'dropship ca':              'Canada',
+    'vf outdoor mexico':        'Mexico',
+    'vf outdoor mexico s de r l d': 'Mexico',
+    'photoshooting':            'BELGIUM',
+    'eu main':                  'BELGIUM',
+    'eu uk':                    'UK',
+    'eu':                       'EU',
+    'japan':                    'Japan',
+    'korea':                    'Korea',
+    'australia':                'Australia',
+    'hong kong':                'Hong Kong',
+    'china':                    'China',
+    'virtual':                  'Dubai',
+    'argentina':                'Argentina',
+    'brazil':                   'Brazil',
+    'chile':                    'Chile',
+    'guatemala':                'Guatemala',
+    'panama':                   'Panama',
+    'peru':                     'PERU',
+    'uruguay':                  'URUGUAY',
+    'united arab emirates':     'UNITED ARAB EMIRATES',
+    'singapore':                'Singapore',
+    'apdindc':                  'Singapore',
+    'israel':                   'Israel',
+    'south africa':             'South Africa',
+    'taiwan':                   'Taiwan',
+    'thailand':                 'Thailand',
+    'malaysia':                 'Malaysia',
+    'nepal':                    'Nepal',
+    'indonesia':                'Indonesia',
+    // Plant code patterns → country (fallback)
+    '1001': 'USA',
+    '1010': 'USA',
+    '1020': 'USA',      // Jonestown DC
+    '1004': 'Canada',   // Brampton DC
+    '1009': 'USA',      // Dropship US
+    '1005': 'Mexico',   // VF Outdoor Mexico
+    't909': 'Japan',
+    'd060': 'BELGIUM',
+    'd080': 'UK',       // EU Uk
+    'vd60': 'Dubai',    // Virtual
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Brand-level lookup tables (used when buy file provides brand but not
@@ -107,6 +166,7 @@ const TRANSPORT_MAP: Record<string, string> = {
     "seafreight": "Sea",
     "s1 - seafreight": "Sea",
     "s1": "Sea",
+    "v": "Sea",
     "air": "Air",
     "air freight": "Air",
     "airfreight": "Air",
@@ -118,6 +178,7 @@ const TRANSPORT_MAP: Record<string, string> = {
     "dhl": "Courier",
     "fedex": "Courier",
     "ups": "Courier",
+    "private parcel": "Courier",
 };
 
 const VALID_TRANSPORT_VALUES = new Set(["Sea", "Air", "Courier"]);
@@ -202,6 +263,16 @@ const BRAND_KEYUSER_MAP: Record<string, KeyUsers> = {
 const DEFAULT_KEYUSERS: KeyUsers = { k1: "", k2: "", k3: "", k4: "", k5: "", k6: "", k7: "", k8: "" };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Numeric factory codes → resolved supplier name.
+// Raw numeric codes from buy files (e.g. M88 "Final Factory" = 508582) must be
+// resolved here rather than passed through as-is.
+// ─────────────────────────────────────────────────────────────────────────────
+const FACTORY_CODE_MAP: Record<string, string> = {
+    '508582':  'PT. UWU JUMP INDONESIA',
+    '1002436': 'PT. UWU JUMP INDONESIA',
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // FIX 2: Separate template maps for ORDERS and LINES per brand.
 // ORDERS and LINES use different template values for TNF.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -242,7 +313,7 @@ export class ExcelEngine {
             'material style', 'jde style', 'doc type', 'orig ex fac', 'trans cond',
             'ordered qty', 'buy date', 'color', 'season',
             'tracking number', 'article', 'business unit description',
-            'requested qty', 'ex-factory', 'transport mode',
+            'requested qty', 'ex-factory', 'vendor confirmed crd', 'transport mode',
             'qty', 'quantity', 'size', 'colour',
             'product name', 'buyer style number', 'buyer style name', 'customer name', 'factory',
         ];
@@ -291,6 +362,8 @@ export class ExcelEngine {
             'extraction po#': 'buyerPoNumber',
             'style number': 'product',
             'style no': 'product',
+            'style#': 'product',
+            'style #': 'product',
             'material style': 'product',
             'style': 'product',
             'product': 'product',
@@ -331,12 +404,16 @@ export class ExcelEngine {
             'requested qty': 'quantity',
             'quantity': 'quantity',
             'qty': 'quantity',
+            'revised qty (0 if cancel, new qty if top up or reduce)': 'quantity',
+            'final qty': 'finalQty',
             'deliverydate': 'exFtyDate',
             'delivery date': 'exFtyDate',
             'orig ex fac': 'exFtyDate',
             'negotiated ex fac date': 'exFtyDate',
             'ex fac': 'exFtyDate',
             'ex-factory': 'exFtyDate',
+            'vendor confirmed crd': 'exFtyDate',
+            'final crd (order date + lt1)': 'confirmedExFac',
             'confirmed fty ex fac': 'confirmedExFac',
             'confirmed ex fac': 'confirmedExFac',
             'fty ex fac': 'confirmedExFac',
@@ -351,11 +428,13 @@ export class ExcelEngine {
             'transport method': 'transportMethod',
             'trans cond': 'transportMethod',
             'transport mode': 'transportMethod',
+            'shipment mode': 'transportMethod',
             'doc type': 'template',
             'template': 'template',
             'range': 'season',
             'productrange': 'season',
             'season': 'season',
+            'season indicator': 'season',
             'brand': 'brand',
             'business unit description': 'brand',
             'customer': 'customerName',
@@ -369,13 +448,22 @@ export class ExcelEngine {
             'color name': 'colour',
             'article name': 'colour',
             'color description': 'colour',
+            'material': 'colour',
+            'longtext': 'colourDisplay',
             'submit buy': 'buyRound',
             'buy round': 'buyRound',
+            'order date': 'buyDate',
             'buyer style name': 'ignore',
             'jde style': 'jdeStyle',
             'udf-buyer_po_number': 'buyerPoNumber',
             'udf-start_date': 'exFtyDate',
             'udf-canel_date': 'cancelDate',
+            'final po cut#': 'ignore',
+            'master po#': 'purchaseOrder',
+            'final factory': 'productSupplier',
+            'final vendor name': 'vendorName',
+            'plant name': 'plantName',
+            'mhp capacity type': 'category',
         };
     }
 
@@ -425,16 +513,55 @@ export class ExcelEngine {
     private normalizeColourKey(value: string): string {
         const raw = this.stripBrackets(value || '').toLowerCase().trim();
         if (!raw) return '';
+
+        // Pure numeric value (e.g. "007", "10758220") → strip leading zeros
         if (/^\d+(\.\d+)?$/.test(raw)) {
             const num = Number(raw);
             if (Number.isFinite(num)) return String(Math.trunc(num));
         }
+
+        // TNF PLM colour format: "tnf-VQ2-Dimmed Algae-Pacific Teal" → extract 2nd dash-segment
+        // e.g. "tnf-vq2-dimmed algae-pacific teal" → "vq2"
+        const dashParts = raw.split('-');
+        if (dashParts.length >= 2 && dashParts[0].trim() === 'tnf') {
+            return dashParts[1].trim();
+        }
+
+        // TNF buy file material format: "NF0A887VVQ2" → style is NF0+8chars, colour token follows
+        // More generally: if value looks like a concatenated style+colour (all caps alphanumeric, 9+ chars),
+        // try to extract a trailing 2-4 char alphanumeric colour token.
+        // Pattern: brand prefix (NF0|NF) + style body + colour token (2-4 alphanum chars)
+        const upperRaw = value.trim().toUpperCase();
+        const tnfMaterialMatch = upperRaw.match(/^NF0[A-Z0-9]{5}([A-Z0-9]{2,4})$/);
+        if (tnfMaterialMatch) {
+            return tnfMaterialMatch[1].toLowerCase();
+        }
+
+        // Fallback: extract first digit sequence (legacy behaviour for numeric-coded colours)
         const digits = raw.match(/\d+/);
         if (digits && digits[0]) {
             const normalized = digits[0].replace(/^0+/, '');
             return normalized || '0';
         }
         return raw;
+    }
+
+    /**
+     * Normalize a style/JDE key for PLM lookup.
+     * TNF buy files use full article codes like "NF0A887V"; PLM sheet stores "A887V".
+     * Returns an array of candidates to try in order.
+     */
+    private normalizeStyleKeyCandidates(styleKey: string): string[] {
+        const candidates: string[] = [styleKey];
+        // Strip "NF0" prefix → "NF0A887V" becomes "A887V"
+        if (/^NF0/i.test(styleKey)) {
+            candidates.push(styleKey.slice(3));
+        }
+        // Strip "NF" prefix → "NFA887V" becomes "A887V"
+        if (/^NF[^0]/i.test(styleKey)) {
+            candidates.push(styleKey.slice(2));
+        }
+        return candidates;
     }
 
     private extractProductSheetMapFromWorkbook(
@@ -492,6 +619,11 @@ export class ExcelEngine {
                     const p = part.trim();
                     if (p && p !== buyerStyleNumber) lookupKeys.set(p, false);
                 });
+                // Strip " - SUFFIX" or " (SUFFIX)" → "A8HME - LP5L"→"A8HME", "A8CGZ (A3FJW)"→"A8CGZ"
+                const styleBase = buyerStyleNumber.split(/\s*[\(\-]/)[0].trim();
+                if (styleBase && styleBase !== buyerStyleNumber) {
+                    lookupKeys.set(styleBase, false);
+                }
                 for (const [lk, isExact] of lookupKeys) {
                     const lkKey = `${lk}|${colourKey}`;
                     const dedupKey = `${lkKey}|${entry.colour}|${entry.factory}|${entry.productName}|${entry.customerName}`;
@@ -524,8 +656,13 @@ export class ExcelEngine {
         const vName = this.stripBrackets(vendorName || '').trim();
         const b = this.stripBrackets(brand || '').trim();
         const cat = this.stripBrackets(category || '').trim();
-        if (vCode && vCode.length > 2) return vCode;
-        if (vName && vName.length > 2) return vName;
+        // Numeric factory codes must be resolved through the map, not passed through raw
+        if (vCode && FACTORY_CODE_MAP[vCode]) return FACTORY_CODE_MAP[vCode];
+        if (vCode && vCode.length > 2 && !/^\d+$/.test(vCode)) return vCode;
+        if (vName && vName.length > 2) {
+            // Fix 4: normalize "PT UWU ..." → "PT. UWU ..." (missing dot after PT)
+            return vName.replace(/^PT\s+(?!\.)/i, 'PT. ');
+        }
 
         // Factory mapping: brand + category → product_supplier
         if (b && cat) {
@@ -603,6 +740,7 @@ export class ExcelEngine {
     private detectCustomerSubtype(rawCustomer: string | undefined): string | undefined {
         const text = (rawCustomer || '').toLowerCase();
         if (text.includes('smu')) return 'SMU';
+        if (text.includes('rto')) return 'RTO';
         if (text.includes('outlet')) return 'Outlet';
         return undefined;
     }
@@ -683,7 +821,8 @@ export class ExcelEngine {
             'size #', 'size#', 'size code', 'size_name', 'size-name',
         ]);
         if (directMatches.has(normalized)) return true;
-        return normalized.includes('size') && !normalized.includes('status');
+        // Use word-boundary check to avoid false positives (e.g. "surcharge", "merchandise size type")
+        return /\bsize\b/.test(normalized) && !normalized.includes('status');
     }
 
     private shouldSilentlyIgnoreHeader(headerText: string): boolean {
@@ -715,6 +854,37 @@ export class ExcelEngine {
             'erp ind', 'company code', 'ab number', 'gtn issue date',
             'sku status', 'slo', 'plo',
             'priority flag', 'lb', 'tooling code', 'vas', 'capacity type',
+            'log#', 'analysis dc', 'year', 'season indicator', 'buy month',
+            'material description short', 'grid value',
+            'original qty', 'revised qty (0 if cancel, new qty if top up or reduce)',
+            'final qty per material per factory',
+            'final qty per material per factory(combine plus + regular qty)',
+            'final qty per material per factory (regular vs regular + plus)',
+            'purchase requisition', 'item of requisition',
+            'sales document', 'planner name', 'team',
+            'total leadtime1', 'dim 1', 'dim 2',
+            'buy ready file lookup', 'buy ready feedback from vendor',
+            'final factory name', 'final vendor', 'final factory coo',
+            'change in fcty code?', 'new fcty code (if col cd is "yes")',
+            'reason for change, if any', 'ori fob', 'correction to ori fob',
+            'reason for correction, if any', 'final original fob',
+            'production upcharges usd$', 'material upcharges usd$', 'total surcharge usd$',
+            'revised final fob', 'ori rmb fob', 'correction to ori rmb fob',
+            'reason for correction, if any (#1)', 'final ori rmb',
+            'production upcharges rmb$', 'material upcharges rmb$', 'total surcharge rmb$',
+            'revised rmb fob', 'production upcharge %', 'material upcharge %',
+            'total upcharge %', 'production surcharge confirmation status',
+            'material surcharge confirmation status',
+            'comment category (core data check)', 'comment (core data check)',
+            'production minimum order qty / absolute moq', 'moq related comments',
+            'matl related comments', 'additional remark (#1)', 'web code',
+            'vendor remarks', 'planner comments',
+            'decision', 'pped',
+            'brand requested crd', 'sbu - apparel or acc/equip', 'stock category',
+            'order type', 'deliv date(from/to)', 'smu', "planner's comment",
+            'eu old sku', 'lt2', 'calculated indc', 'final qty for pivot',
+            'region grouping', 'transportation mode description', 'eu collection',
+            'm88 ped', 'regular material', 'plus material',
         ]);
         if (exactIgnore.has(normalized)) return true;
         const ignorePrefixes = ['findfield_', 'udf-inspection', 'udf-report', 'udf-inspector',
@@ -849,9 +1019,13 @@ export class ExcelEngine {
         const aliases = this.getFallbackColumnAliases();
         let hasBuySheet = false;
 
+        let hasProductSheet = false;
         for (const ws of workbook.worksheets) {
             const { isProductSheet, headerRow } = this.detectProductSheet(ws);
-            if (isProductSheet) continue;
+            if (isProductSheet) {
+                hasProductSheet = true;
+                continue;
+            }
 
             const row = ws.getRow(headerRow);
             let score = 0;
@@ -859,10 +1033,15 @@ export class ExcelEngine {
                 const v = cell.value?.toString().toLowerCase().trim() || '';
                 if (aliases[v]) score++;
             });
-            if (score >= 4) {
+            if (score >= 2) {
                 hasBuySheet = true;
                 break;
             }
+        }
+
+        // If no sheet scored as a product sheet, treat the workbook as a buy file
+        if (!hasBuySheet && !hasProductSheet) {
+            hasBuySheet = true;
         }
 
         return { productSheetMap, hasBuySheet };
@@ -996,11 +1175,11 @@ export class ExcelEngine {
         }
 
         const allowMissingPurchaseOrder = !!manualPurchaseOrder;
-        const allowMissingQuantity = !!options?.defaultQuantityIfMissing && !headerMap['quantity'];
+        const allowMissingQuantity = !!options?.defaultQuantityIfMissing && !headerMap['quantity'] && !headerMap['finalQty'];
         const MANDATORY = ['product'];
         if (!allowMissingPurchaseOrder) MANDATORY.push('purchaseOrder');
         if (!allowMissingQuantity) MANDATORY.push('quantity');
-        const missing = MANDATORY.filter(f => !headerMap[f]);
+        const missing = MANDATORY.filter(f => !headerMap[f] && !headerMap['finalQty']);
 
         const isOutputFile = !!(headerMap['lineItem'] || headerMap['productRange']);
         if (missing.length > 0) {
@@ -1016,7 +1195,10 @@ export class ExcelEngine {
         }
 
         const [factoryMap, mloMap] = await Promise.all([getFactoryMapping(), getMloMapping()]);
+        // One ProcessedPO per PO number — all customers under the same PO share lines/sizes
         const results: Map<string, ProcessedPO> = new Map();
+        // Track unique (PO, customer) combos so ORDERS gets one row per combo
+        const seenOrderKeys = new Set<string>();
         const warnedInferredCategory = new Set<string>();
         let skippedMissingSeason = 0;
         let warnedDefaultQty = false;
@@ -1040,22 +1222,42 @@ export class ExcelEngine {
             if (!poNumberRaw) return;
 
             const plant = this.stripBrackets(getVal('plant') || '');
-            const destCountryRaw = this.stripBrackets(manualDestination || getVal('transportLocation') || '');
-            const destCountry = destCountryRaw
-                ? (COUNTRY_NAME_MAP[destCountryRaw.toUpperCase()] || destCountryRaw)
-                : '';
-            const poSuffixParts = [plant, destCountry].filter(Boolean);
+            const plantName = this.stripBrackets(getVal('plantName') || '');
+
+            // Fix 1: PO format = ManualPO-PlantCode-PlantName (e.g. PO002951-1001-Visalia DC)
+            const poSuffixParts = [plant, plantName].filter(Boolean);
             let poNumber = poSuffixParts.length > 0
                 ? `${poNumberRaw}-${poSuffixParts.join('-')}`
                 : poNumberRaw;
+
+            // Fix 2: TransportLocation derived from plant name → country map (no direct column in M88)
+            const plantCountryKey = plantName.toLowerCase() || plant.toLowerCase();
+            const plantDerivedCountry = PLANT_COUNTRY_MAP[plantCountryKey] || '';
+            const destCountryRaw = this.stripBrackets(manualDestination || getVal('transportLocation') || plantDerivedCountry);
+            const destCountry = destCountryRaw
+                ? (COUNTRY_NAME_MAP[destCountryRaw.toUpperCase()] || destCountryRaw)
+                : '';
             const brand = this.stripBrackets(getVal('brand') || '');
+            // Infer brand from customerName (primary) or productSupplier (fallback) when buy file has no Brand column
+            const inferredBrand = brand || (() => {
+                const custRaw = (getVal('customerName') || '').toLowerCase();
+                if (custRaw.includes('north face') || custRaw.includes('tnf')) return 'tnf';
+                if (custRaw.includes('columbia') && custRaw.length > 0) return 'columbia';
+                if (custRaw.includes('arcteryx') || custRaw.includes("arc'teryx")) return 'arcteryx';
+                // Vendor fallback — only when customerName gives no signal
+                const suppRaw = (getVal('vendorName') || getVal('productSupplier') || '').toLowerCase();
+                if (suppRaw.includes('uwu jump') || suppRaw.includes('madison 88')) return 'tnf';
+                return '';
+            })();
             const categoryRaw = this.stripBrackets(getVal('category') || '');
             const inferredCat = categoryRaw || this.inferCategoryFromFactoryMap(brand, factoryMap);
             const productExternalRef = this.stripBrackets(getVal('productExternalRef') || '');
             const productCustomerRef = this.stripBrackets(getVal('productCustomerRef') || '');
             const sizeRaw = this.stripBrackets(getVal('sizeName') || '');
-            const size = sizeRaw || (useDefaultSizeBucket ? 'One Size' : undefined);
-            let qty = parseFloat(getVal('quantity') || '0');
+            // Default to "One Size" when: no size column exists, OR size column is present but cell is empty
+            const size = sizeRaw || 'One Size';
+            // Prefer Final Qty over Revised Qty (Revised Qty can be 0 for cancel/top-up rows)
+            let qty = parseFloat(getVal('finalQty') || getVal('quantity') || '0');
             if (!headerMap['quantity'] && options?.defaultQuantityIfMissing) {
                 qty = 1;
                 if (!warnedDefaultQty) {
@@ -1088,15 +1290,50 @@ export class ExcelEngine {
 
             const colourKey = this.normalizeColourKey(colour);
             const jdeStyle = this.stripBrackets(getVal('jdeStyle') || '').trim();
-            const lookupKey = jdeStyle && colourKey ? `${jdeStyle}|${colourKey}` : '';
-            let productMatches = lookupKey ? (productSheetMap[lookupKey] || []) : [];
+            // When jdeStyle is absent, fall back to the product field as the PLM lookup key
+            const productField = this.stripBrackets(getVal('product') || '').trim();
+            const effectiveStyle = jdeStyle || productField;
+            // Try multiple style key candidates (e.g. "NF0A887V" → also try "A887V")
+            const styleKeyCandidates = effectiveStyle ? this.normalizeStyleKeyCandidates(effectiveStyle) : [];
+            let productMatches: ProductSheetRow[] = [];
+            let matchedStyleKey = effectiveStyle;
+            for (const candidate of styleKeyCandidates) {
+                const lk = candidate && colourKey ? `${candidate}|${colourKey}` : '';
+                const matches = lk ? (productSheetMap[lk] || []) : [];
+                if (matches.length > 0) {
+                    productMatches = matches;
+                    matchedStyleKey = candidate;
+                    break;
+                }
+            }
+            // Secondary: if exact style|colour key missed, try all entries for this style
+            // and find one whose stored colour key contains our token (handles format variations)
+            if (productMatches.length === 0 && colourKey && styleKeyCandidates.length > 0) {
+                for (const candidate of styleKeyCandidates) {
+                    const allForStyle = Object.entries(productSheetMap)
+                        .filter(([k]) => k.startsWith(`${candidate}|`))
+                        .flatMap(([, v]) => v);
+                    if (allForStyle.length > 0) {
+                        // Find entry whose normalised colour key contains our token or vice-versa
+                        const fuzzy = allForStyle.find(e => {
+                            const ek = this.normalizeColourKey(e.colour);
+                            return ek === colourKey || ek.includes(colourKey) || colourKey.includes(ek);
+                        });
+                        if (fuzzy) {
+                            productMatches = [fuzzy];
+                            matchedStyleKey = candidate;
+                            break;
+                        }
+                    }
+                }
+            }
             // If multiple matches, use the first (exact buyer_style_number matches are inserted first)
             if (productMatches.length > 1) {
                 productMatches = [productMatches[0]];
             }
             const hasPlmMap = Object.keys(productSheetMap).length > 0;
             let plmMissing = false;
-            if (!jdeStyle && hasPlmMap) {
+            if (!effectiveStyle && hasPlmMap) {
                 this.errors.push({
                     field: 'PLM', row: rowNumber,
                     message: `Row ${rowNumber} PO ${poNumber}: JDE Style missing; PLM fields left blank.`,
@@ -1104,10 +1341,10 @@ export class ExcelEngine {
                 });
                 plmMissing = true;
             }
-            if (productMatches.length === 0 && hasPlmMap) {
+            if (productMatches.length === 0 && !plmMissing && hasPlmMap) {
                 this.errors.push({
                     field: 'PLM', row: rowNumber,
-                    message: `Row ${rowNumber} PO ${poNumber}: JDE ${jdeStyle} color ${colour} not found in PLM sheet; PLM fields left blank.`,
+                    message: `Row ${rowNumber} PO ${poNumber}: JDE ${effectiveStyle} color ${colour} not found in PLM sheet; PLM fields left blank.`,
                     severity: 'WARNING',
                 });
                 plmMissing = true;
@@ -1123,7 +1360,7 @@ export class ExcelEngine {
             }
             const styleNumber = plmMissing
                 ? this.stripBrackets(getVal('product') || getVal('jdeStyle') || '')
-                : this.stripBrackets(productMatch?.productName || getVal('product') || getVal('jdeStyle') || '');
+                : this.stripBrackets(productMatch?.productName || getVal('product') || getVal('jdeStyle') || matchedStyleKey || '');
             const cost = undefined; // purchase price not captured
 
             const season = this.stripBrackets(getVal('season') || manualProductRange);
@@ -1138,7 +1375,7 @@ export class ExcelEngine {
             }
 
             const transportLocation = this.normalizeTransportLocation(
-                manualDestination || getVal('transportLocation') || ''
+                manualDestination || getVal('transportLocation') || plantDerivedCountry
             );
             const buyDate = getVal('buyDate');
             const buyRound = this.stripBrackets(getVal('buyRound') || '');
@@ -1162,31 +1399,39 @@ export class ExcelEngine {
 
             const buyerPoNumberCell = getRawVal('buyerPoNumber');
             const buyerPoNumber: string | number = (() => {
+                // Master PO# (purchaseOrder column) is the preferred UDF-buyer_po_number source
+                const poRaw = getRawVal('purchaseOrder');
+                if (typeof poRaw === 'number') return poRaw;
+                if (poRaw?.toString().trim()) return poRaw.toString().trim();
+                // Fallback: explicit buyerPoNumber column (e.g. UDF-buyer_po_number in other files)
                 if (typeof buyerPoNumberCell === 'number') return buyerPoNumberCell;
                 const asText = buyerPoNumberCell?.toString().trim();
                 if (asText) return asText;
-                const poRaw = getRawVal('purchaseOrder');
-                if (typeof poRaw === 'number') return poRaw;
-                return rawFilePo || poNumberRaw;
+                return '';
             })();
-
-            const productSupplier = this.resolveSupplier(vendorCodeRaw, vendorNameRaw, brand, inferredCat, factoryMap);
+            const productSupplier = this.resolveSupplier(vendorCodeRaw, vendorNameRaw, inferredBrand || brand, inferredCat, factoryMap);
+            // When customerName is empty (e.g. NF0 rows with plmMissing), use brand map via inferredBrand
+            const customerNameRaw = getVal('customerName');
+            const customerNameForResolve = customerNameRaw
+                || (inferredBrand ? (BRAND_CUSTOMER_MAP[(inferredBrand).toLowerCase()] || '') : '')
+                || (brand ? (BRAND_CUSTOMER_MAP[brand.toLowerCase()] || '') : '');
             const customerName = plmMissing
-                ? this.resolveCustomer(getVal('customerName'), brand, detectedCustomer, undefined)
-                : this.resolveCustomer(productMatch?.customerName || getVal('customerName'), brand, detectedCustomer, undefined);
+                ? this.resolveCustomer(customerNameForResolve, inferredBrand || brand, detectedCustomer, undefined)
+                : this.resolveCustomer(productMatch?.customerName || customerNameRaw, inferredBrand || brand, detectedCustomer, undefined);
             const transportMethod = this.normalizeTransportMethod(transportRaw);
 
-            const brandKey = (brand || '').trim().toLowerCase();
+            const brandKey = (inferredBrand || brand || '').trim().toLowerCase();
             const brandConfig = mloMap.find((m: any) => (m.brand || '').trim().toLowerCase() === brandKey);
 
             // Resolve separate templates for ORDERS and LINES
             const ordersTemplate = manualTemplate
                 || brandConfig?.orders_template?.trim()
-                || this.resolveOrdersTemplate(brand, templateRaw);
+                || this.resolveOrdersTemplate(inferredBrand || brand, templateRaw);
             const linesTemplate = manualLinesTemplate
                 || brandConfig?.lines_template?.trim()
-                || this.resolveLinesTemplate(brand, templateRaw);
+                || this.resolveLinesTemplate(inferredBrand || brand, templateRaw);
             const productRange = this.formatProductRange(season);
+            // resolvedColour: PLM Color Name if found, else raw Material value — colourDisplay (Longtext) is NOT used as colour output
             const resolvedColour = plmMissing ? colour : (productMatch?.colour || colour);
             const keyDate = manualKeyDate || poIssuanceDate;
             const keyDateFormat: "manual" | "standard" = manualKeyDate ? "manual" : "standard";
@@ -1197,8 +1442,8 @@ export class ExcelEngine {
                 || detectedCustomer
                 || ''
             );
-            if (customerSubtype && !poNumber.toLowerCase().endsWith(`-${customerSubtype.toLowerCase()}`)) {
-                poNumber = `${poNumber}-${customerSubtype}`;
+            if (customerSubtype && !poNumber.toLowerCase().endsWith(` ${customerSubtype.toLowerCase()}`)) {
+                poNumber = `${poNumber} ${customerSubtype}`;
             }
 
             const validStatuses = Array.isArray(brandConfig?.valid_statuses)
@@ -1244,7 +1489,7 @@ export class ExcelEngine {
             // FIX 1: Use resolveKeyUsers() with hardcoded brand fallback
             const mloRow = brandConfig;
             const keyUsers = this.resolveKeyUsers(
-                brand,
+                inferredBrand || brand,
                 manualKeyUser1,
                 manualKeyUser2,
                 manualKeyUser3,
@@ -1256,7 +1501,9 @@ export class ExcelEngine {
             );
 
             const customerKey = customerName || detectedCustomer;
-            const poKey = `${poNumber}||${customerKey}`;
+            // poKey is PO alone — one ProcessedPO per PO regardless of customer
+            const poKey = poNumber;
+            const orderKey = `${poNumber}||${customerKey}`;
             if (!results.has(poKey)) {
                 results.set(poKey, {
                     header: {
@@ -1283,10 +1530,18 @@ export class ExcelEngine {
                     },
                     lines: [],
                     sizes: {},
+                    orderKeys: [],
                 });
             }
 
             const po = results.get(poKey)!;
+
+            // Track unique (PO, customer) combos for ORDERS sheet
+            if (!seenOrderKeys.has(orderKey)) {
+                seenOrderKeys.add(orderKey);
+                if (!po.orderKeys) po.orderKeys = [];
+                po.orderKeys.push({ customer: customerKey, customerName, transportLocation, transportMethod, ordersTemplate });
+            }
 
             let lineItemNum = 0;
             const rawLineItem = getRawVal('lineItem');
@@ -1295,7 +1550,8 @@ export class ExcelEngine {
                 if (Number.isFinite(maybe) && maybe > 0) lineItemNum = Math.round(maybe);
             }
             if (lineItemNum <= 0) {
-                lineItemNum = po.lines.length > 0 ? Math.max(...po.lines.map(l => l.lineItem)) + 1 : 1;
+                // Counter derived from current po.lines length — shared across all customers since poKey = poNumber
+                lineItemNum = (po.lines.length > 0 ? Math.max(...po.lines.map(l => l.lineItem)) : 0) + 1;
             }
 
             let existingLine = po.lines.find(line => line.lineItem === lineItemNum);
@@ -1531,36 +1787,42 @@ export class ExcelEngine {
 
         if (data && data.length > 0) {
             data.forEach(po => {
-                // FIX 2: ORDERS uses ordersTemplate, LINES uses linesTemplate
-                ordersSheet.addRow({
-                    purchaseOrder: po.header.purchaseOrder,
-                    productSupplier: po.header.productSupplier,
-                    status: po.header.status,
-                    customer: po.header.customer,
-                    transportMethod: po.header.transportMethod,
-                    transportLocation: po.header.transportLocation,
-                    paymentTerm: '',
-                    template: po.header.ordersTemplate,
-                    keyDate: po.header.keyDateFormat === 'manual'
-                        ? this.formatManualDateString(po.header.keyDate)
-                        : this.formatDateString(po.header.keyDate),
-                    closedDate: '',
-                    defaultDeliveryDate: '',
-                    comments: po.header.comments,
-                    currency: 'USD',
-                    keyUser1: po.header.keyUser1,
-                    keyUser2: po.header.keyUser2,
-                    keyUser3: po.header.keyUser3,
-                    keyUser4: po.header.keyUser4,
-                    keyUser5: po.header.keyUser5,
-                    keyUser6: po.header.keyUser6,
-                    keyUser7: po.header.keyUser7,
-                    keyUser8: po.header.keyUser8,
-                    archiveDate: '',
-                    purchaseUOM: '',
-                    sellingUOM: '',
-                    productSupplierExt: '',
-                    findField_ProductSupplier: '',
+                // Write one ORDERS row per unique (PO, customer) combo tracked in orderKeys
+                const orderEntries = (po.orderKeys && po.orderKeys.length > 0)
+                    ? po.orderKeys
+                    : [{ customer: po.header.customer || '', customerName: po.header.customer, transportLocation: po.header.transportLocation, transportMethod: po.header.transportMethod, ordersTemplate: po.header.ordersTemplate }];
+
+                orderEntries.forEach(entry => {
+                    ordersSheet.addRow({
+                        purchaseOrder: po.header.purchaseOrder,
+                        productSupplier: po.header.productSupplier,
+                        status: po.header.status,
+                        customer: entry.customerName || entry.customer,
+                        transportMethod: entry.transportMethod,
+                        transportLocation: entry.transportLocation,
+                        paymentTerm: '',
+                        template: entry.ordersTemplate,
+                        keyDate: po.header.keyDateFormat === 'manual'
+                            ? this.formatManualDateString(po.header.keyDate)
+                            : this.formatDateString(po.header.keyDate),
+                        closedDate: '',
+                        defaultDeliveryDate: '',
+                        comments: po.header.comments,
+                        currency: 'USD',
+                        keyUser1: po.header.keyUser1,
+                        keyUser2: po.header.keyUser2,
+                        keyUser3: po.header.keyUser3,
+                        keyUser4: po.header.keyUser4,
+                        keyUser5: po.header.keyUser5,
+                        keyUser6: po.header.keyUser6,
+                        keyUser7: po.header.keyUser7,
+                        keyUser8: po.header.keyUser8,
+                        archiveDate: '',
+                        purchaseUOM: '',
+                        sellingUOM: '',
+                        productSupplierExt: '',
+                        findField_ProductSupplier: '',
+                    });
                 });
             });
 
@@ -1640,3 +1902,4 @@ export class ExcelEngine {
         };
     }
 }
+
