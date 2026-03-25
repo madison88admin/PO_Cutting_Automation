@@ -38,6 +38,27 @@ TRANSPORT_MAP = {
     # M88 shorthand transport code
     "v": "Sea",
     "private parcel": "Courier",
+    "private parcel service": "Courier",   # ON Running
+    "parcel": "Courier",                   # Burton
+    "international distributor": "Sea",    # Cotopaxi
+    # Ocean carrier names (prAna and others use carrier name instead of mode)
+    "maersk ocean": "Sea",
+    "maersk": "Sea",
+    "hapag-lloyd": "Sea",
+    "hapag lloyd": "Sea",
+    "msc": "Sea",
+    "cma cgm": "Sea",
+    "evergreen": "Sea",
+    "cosco": "Sea",
+    "yang ming": "Sea",
+    "one": "Sea",       # Ocean Network Express
+    # Hunter shipping instruction codes
+    "sos - hunter sos": "Sea",
+    "fb - hunter - fob warehouse": "Sea",
+    "sms - sample warehouse": "Sea",
+    "dte - davies turner e-com warehouse": "Sea",
+    "hm - hammer gmbh & co. kg": "Sea",
+    "hmcd - hammer cross dock": "Sea",
 }
 
 # Valid mapped transport values after TRANSPORT_MAP resolution
@@ -93,6 +114,37 @@ COUNTRY_NAME_MAP = {
     "UY": "Uruguay",
     "VN": "Vietnam",
     "ZA": "South Africa",
+    # Full country name passthrough normalization (e.g. Haglofs destination column)
+    "SWEDEN": "Sweden",
+    "KOREA": "Korea",
+    "JAPAN": "Japan",
+    "HONG KONG": "Hong Kong",
+    "GERMANY": "Germany",
+    "FRANCE": "France",
+    "ITALY": "Italy",
+    "SPAIN": "Spain",
+    "NETHERLANDS": "Netherlands",
+    "BELGIUM": "Belgium",
+    "SWITZERLAND": "Switzerland",
+    "AUSTRIA": "Austria",
+    "DENMARK": "Denmark",
+    "NORWAY": "Norway",
+    "FINLAND": "Finland",
+    "POLAND": "Poland",
+    "CZECH REPUBLIC": "Czech Republic",
+    "AUSTRALIA": "Australia",
+    "CANADA": "Canada",
+    "CHINA": "China",
+    "INDIA": "India",
+    "INDONESIA": "Indonesia",
+    "MALAYSIA": "Malaysia",
+    "THAILAND": "Thailand",
+    "VIETNAM": "Vietnam",
+    "TAIWAN": "Taiwan",
+    "SINGAPORE": "Singapore",
+    "CZECHIA": "Czech Republic",          # Burton
+    "GREAT BRITAIN": "UK",                 # Hunter
+    "TBC": "",                             # Hunter — unknown destination, leave blank
 }
 
 CURRENCY = "USD"
@@ -153,6 +205,20 @@ PLANT_COUNTRY_MAP: dict[str, str] = {
     "d060": "BELGIUM",
     "d080": "UK",
     "vd60": "Dubai",
+    # Fox Racing plant codes — file uses no leading zeros (10, 11, 40, 50, 60)
+    "0010": "",         # TODO: confirm destination
+    "0011": "",         # TODO: confirm destination
+    "0040": "",         # TODO: confirm destination
+    "0050": "",         # TODO: confirm destination
+    "0060": "",         # TODO: confirm destination
+    "10":   "",         # Fox Racing — destination TBD
+    "11":   "",         # Fox Racing — destination TBD
+    "40":   "",         # Fox Racing — destination TBD
+    "50":   "",         # Fox Racing — destination TBD
+    "60":   "",         # Fox Racing — destination TBD
+    # 511 Tactical WH codes
+    "3020": "Sweden",   # SE.PO- prefix confirms Sweden
+    "5001": "Hong Kong",  # HK.PO- prefix confirms Hong Kong
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -166,8 +232,20 @@ BRAND_SUPPLIER_MAP: dict[str, str] = {
     "columbia": "MSO",
     "tnf": "PT. UWU JUMP INDONESIA",
     "the north face": "PT. UWU JUMP INDONESIA",
-    "arcteryx": "PT UWU JUMP INDONESIA",
-    "arc'teryx": "PT UWU JUMP INDONESIA",
+    "arcteryx": "PT. UWU JUMP INDONESIA",
+    "arc'teryx": "PT. UWU JUMP INDONESIA",
+    "fox racing": "PT. UWU JUMP INDONESIA",
+    "511 tactical": "PT. UWU JUMP INDONESIA",
+    "haglofs": "PT. UWU JUMP INDONESIA",
+    "obermeyer": "Hangzhou U-Jump Arts and Crafts",
+    "on running": "PT. UWU JUMP INDONESIA",
+    "on ag": "PT. UWU JUMP INDONESIA",
+    "66 degrees north": "PT. UWU JUMP INDONESIA",
+    "peak performance": "PT. UWU JUMP INDONESIA",
+    "prana": "PT. UWU JUMP INDONESIA",
+    "burton": "PT. UWU JUMP INDONESIA",
+    "cotopaxi": "PT. UWU JUMP INDONESIA",
+    "hunter": "PT. UWU JUMP INDONESIA",
 }
 
 # Brand → friendly customer name used in output files.
@@ -178,6 +256,20 @@ BRAND_CUSTOMER_MAP: dict[str, str] = {
     "the north face": "The North Face In-Line",
     "arcteryx": "Arcteryx",
     "arc'teryx": "Arcteryx",
+    "haglofs": "Haglofs",
+    "obermeyer": "Obermeyer",
+    "on running": "On AG",
+    "on ag": "On AG",
+    "66 degrees north": "66 Degrees North",
+    "peak performance": "Peak Performance",
+    "prana": "prAna",
+    "burton": "Burton",
+    "cotopaxi": "Cotopaxi",
+    "fox racing": "Fox Racing",
+    # Hunter: customer name in file is "Batra Group" — pass through raw, no override
+    # "hunter": "Hunter",
+    # Fox Racing: multiple distributors in file — customer passes through raw from file, no override
+    # 511 Tactical: no customer column — use manual_customer at upload time
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -356,9 +448,17 @@ HEADER_ALIASES: dict[str, list[str]] = {
         "transport_location": [
             "transportlocation", "transport location",
             "destination", "dest country", "ult. destination",
+            # ON Running / Burton
+            "country/region",
+            # Cotopaxi raw INFOR export (2-letter country code column)
+            "country",
+            # Req 1: expanded transportLocation aliases
+            "ship to country", "destination name",
         ],
     "plant": [
         "plant", "plant code",
+        # 511 Tactical
+        "wh",
     ],
     "plant_name": [
         # Madison88/TNF buy file
@@ -371,19 +471,39 @@ HEADER_ALIASES: dict[str, list[str]] = {
         # Arcteryx – per-shipment tracking code used as PO key
         "tracking number",
         "master po#", "master po #",
+        # Fox Racing
+        "purchasing document number", "purchasing document",
+        # 66 Degrees North
+        "purchase order number",
+        # Peak Performance
+        "buy 1 - tracking no.",
+        # Haglofs / Hunter / Book2
+        "po number",
     ],
     "buyer_po_number": [
         "master po#", "master po #",
+        # Req 1: expanded buyerPoNumber aliases
+        "buyer po", "buyer po #", "customer po",
     ],
     "product": [
-        "material style", "product", "style number", "style no",
+        "material style", "product", "style number", "style no", "style no.",
         "product name",
         # Arcteryx – Article is the colourway-level style code
         "article",
-        # Generic fallbacks
-        "style", "sku", "item",
+        # Generic fallbacks — "sku" and "item" removed: too generic, cause false matches
+        "style",
         # Madison88/TNF buy file
         "material",
+        # 511 Tactical
+        "item#", "item #",
+        # ON Running
+        "buyer item #", "buyer item#",
+        # Peak Performance
+        "article code [sap]",
+        # prAna
+        "style #",
+        # Hunter
+        "item code",
     ],
     "product_alt": [
         "jde style",
@@ -391,10 +511,19 @@ HEADER_ALIASES: dict[str, list[str]] = {
         "model",
         # Madison88/TNF buy file base style
         "style#",
+        # Peak Performance
+        "model code [sap]",
+        # ON Running
+        "style",
     ],
     "product_external_ref": [
         "name",
         "product external ref",
+        # 511 Tactical — human-readable description, not the style code
+        "style name",
+        # ON Running / 66 Degrees North / prAna / Cotopaxi / Hunter
+        "short description", "style description", "description",
+        "item description",
     ],
     "product_customer_ref": [
         "buyer style number",
@@ -405,14 +534,18 @@ HEADER_ALIASES: dict[str, list[str]] = {
     ],
     "product_name": [
         "model description", "article name", "sku description",
-        "material name", "style name", "description",
+        "material name", "description",
         "buyer style name",
     ],
     "size": [
         "size", "size name", "sizename", "product size", "productsize",
         "size code", "size #", "size#", "size_name", "size-name",
         # Madison88/TNF buy file
-        "grid value", "dim 1", "dim1",
+        "dim 1", "dim1",
+        # Fox Racing
+        "grid value",
+        # Cotopaxi
+        "merch - size",
     ],
     "customer": [
         "customer", "customer name", "brand",
@@ -430,17 +563,31 @@ HEADER_ALIASES: dict[str, list[str]] = {
         "vendor name", "vendorname", "supplier name",
         "factory",
         "final vendor name",  # Madison88/TNF buy file
+        # Fox Racing
+        "goods supplier name",
+        # 511 Tactical
+        "updated fty",
+        # Peak Performance
+        "production supplier name",
     ],
     "vendor_code": [
         "vendor code", "vendorcode", "vendor", "supplier",
         "product supplier", "productsupplier",
         # Madison88/TNF buy file
         "final vendor", "final factory",
+        # Req 1: expanded productSupplier aliases
+        "supplier code", "mfr code",
     ],
     "season": [
         "season", "range", "productrange",
         # Madison88/TNF buy file
         "season indicator",
+        # Hunter — Requisition No contains season+destination code e.g. "AW26_UKSOS"
+        "requisition no",
+        # Cotopaxi
+        "merch - season",
+        # Req 1: expanded season aliases
+        "season code",
     ],
     "template": [
         "doc type", "template",
@@ -451,10 +598,26 @@ HEADER_ALIASES: dict[str, list[str]] = {
         "article name", "color description",
         # Madison88/TNF buy file colourway code lives in Material (used for PLM lookup key)
         "material",
+        # Fox Racing — material description is the colour name; material itself maps to product
+        "material description",
+        # 511 Tactical
+        "color code",
+        # Haglofs — combined colour code+name (e.g. "5RA Bright Red")
+        "style color",
+        # Peak Performance
+        "primary color peak pdm code",
+        # Cotopaxi
+        "merch - color",
+        # Hunter
+        "colour code",
+        # Req 1: expanded colour aliases
+        "colour desc", "colour description", "color desc",
     ],
     "colour_display": [
         # Madison88/TNF buy file human-readable colour name (output only, not PLM lookup key)
         "longtext",
+        # prAna / Hunter
+        "color", "colour description",
     ],
     "qty": [
         "ordered qty", "quantity", "qty",
@@ -463,6 +626,14 @@ HEADER_ALIASES: dict[str, list[str]] = {
         "requested qty",
         # Madison88/TNF buy file
         "final qty", "revised qty",
+        # Fox Racing
+        "order qty",
+        # Peak Performance
+        "final po qty",
+        # EVO
+        "bulk qty",
+        # Req 1: expanded quantity aliases
+        "qty ordered", "total qty", "units",
     ],
     "orig_ex_fac": [
         "orig ex fac", "delivery date", "deliverydate",
@@ -472,9 +643,30 @@ HEADER_ALIASES: dict[str, list[str]] = {
         # Madison88/TNF buy file — Vendor Confirmed CRD is primary date source
         "vendor confirmed crd",
         "final crd (order date + lt1)", "brand requested crd",
+        # Fox Racing
+        "ex factory date",
+        # 511 Tactical
+        "updated planned exit date",
+        # Peak Performance
+        "buy 1 cfm crd",
+        # Cotopaxi
+        "requested exw date",
+        # Burton
+        "ex-factory date", "ex factory",
+        # Hunter
+        "efd",
+        # ON AG (INFOR export)
+        "ship window end date",
+        # Req 1: expanded exFtyDate aliases
+        "ship date", "ship window", "planned ship date",
+        "in-dc date", "in dc date", "dc arrival date",
     ],
     "confirmed_ex_fac": [
         "confirmed fty ex fac", "confirmed ex fac", "fty ex fac",
+        # 511 Tactical
+        "confirmed x-fty",
+        # 66 Degrees North
+        "delivery date",
     ],
     "trans_cond": [
         "trans cond", "transport method", "transportmethod",
@@ -482,6 +674,16 @@ HEADER_ALIASES: dict[str, list[str]] = {
         "transport mode",
         # Madison88/TNF buy file
         "shipment mode", "transportation mode description",
+        # Fox Racing / Hunter
+        "shipping instructions",
+        # Burton
+        "ship mode description", "ship mode",
+        # prAna
+        "ship via",
+        # ON AG (INFOR export)
+        "shipment method",
+        # Req 1: expanded transportMethod aliases
+        "mode", "freight mode", "shipping method",
     ],
     "buy_date": [
         "buy date", "keydate", "po issuance date",
@@ -489,14 +691,28 @@ HEADER_ALIASES: dict[str, list[str]] = {
         "file date",
         # Madison88/TNF buy file
         "order date",
+        # Fox Racing
+        "purchasing document date",
+        # 66 Degrees North / prAna
+        "po date",
+        # ON Running
+        "create date",
+        # Req 1: expanded poIssuanceDate aliases
+        "issue date",
     ],
     "cancel_date": [
         "cancel date", "canceldate", "cancel", "udf-canel_date",
+        # Fox Racing
+        "so order cancel date",
+        # Req 1: expanded cancelDate aliases
+        "cancellation date",
     ],
     "status": [
         "status", "confirmation status",
         # Arcteryx
         "gsc type",
+        # Fox Racing
+        "po status",
     ],
     "submit_buy": [
         "submit buy", "buy round",
@@ -505,7 +721,15 @@ HEADER_ALIASES: dict[str, list[str]] = {
         "product group description", "product line description",
         "planning category", "dept", "department",
         "capacity type",
+        # Req 1: expanded category aliases
+        "division", "product division", "gender", "gender code",
     ],
+    # ── Haglofs additions ──
+    # (delivery date already covered by orig_ex_fac aliases above)
+    # ── Fox Racing additions ──
+    # purchasing document number → po (added to "po" key below via patch)
+    # ── 511 Tactical additions ──
+    # (item#, color code, wh, updated fty handled via po/product/colour/plant/vendor_name keys)
 }
 
 ORDERS_HEADERS = [
@@ -724,14 +948,9 @@ def _format_date(value: Any, fmt: str) -> str:
         return value.strftime(fmt)
     if isinstance(value, date):
         return value.strftime(fmt)
-    raw = str(value).strip()
-    if not raw:
-        return ""
-    for c in ("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%d-%b-%Y", "%d-%B-%Y"):
-        try:
-            return datetime.strptime(raw, c).strftime(fmt)
-        except ValueError:
-            continue
+    parsed = _parse_date(value)
+    if parsed:
+        return parsed.strftime(fmt)
     return ""
 
 
@@ -752,10 +971,34 @@ def _parse_date(value: Any) -> datetime | None:
         return value
     if isinstance(value, date):
         return datetime.combine(value, datetime.min.time())
+
+    # Excel serial number: numeric value in range [1, 2958465] (1900-01-01 to 9999-12-31)
+    # Excel epoch is 1899-12-30 (day 0), so serial 1 = 1900-01-01
+    if isinstance(value, (int, float)):
+        serial = int(value)
+        if 1 <= serial <= 2958465:
+            from datetime import timedelta
+            excel_epoch = datetime(1899, 12, 30)
+            return excel_epoch + timedelta(days=serial)
+        return None
+
     raw = str(value).strip()
     if not raw:
         return None
-    for c in ("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%d-%b-%Y", "%d-%B-%Y"):
+
+    # Try formats in US-first order (most common in buy files), then international variants.
+    # US slash/dash formats are tried before European to avoid ambiguity when day <= 12.
+    for c in (
+        "%Y-%m-%d",      # ISO: 2026-06-17
+        "%Y/%m/%d",      # ISO slash: 2026/06/17
+        "%m/%d/%Y",      # US slash: 06/17/2026
+        "%m-%d-%Y",      # US dash: 06-17-2026
+        "%d-%b-%Y",      # DD-Mon-YYYY: 17-Jun-2026
+        "%d-%B-%Y",      # DD-Month-YYYY: 17-June-2026
+        "%b %d %Y",      # Mon DD YYYY: Jun 17 2026
+        "%B %d %Y",      # Month DD YYYY: June 17 2026
+        "%d/%m/%Y",      # European slash: 17/06/2026
+    ):
         try:
             return datetime.strptime(raw, c)
         except ValueError:
@@ -790,10 +1033,14 @@ def _customer_suffix(raw_customer: str) -> str:
 
 def _format_product_range(season: str) -> str:
     normalized = _strip_brackets((season or "").strip())
-    # Handle "FW26" → "FH:2026"  and "SS26" → "SH:2026" as well as "F26"/"S26"
-    match = re.match(r"^([FS])(?:W|S)?(\d{2})$", normalized, flags=re.IGNORECASE)
+    # Hunter: Requisition No has format "AW26_UKSOS" — strip everything after underscore
+    if "_" in normalized:
+        normalized = normalized.split("_")[0].strip()
+    # Handle FW26→FH:2026, SS26→SH:2026, AW27→FH:2027, F26→FH:2026
+    # A/AW (Autumn/Winter) maps to Fall half (FH), same as F/FW
+    match = re.match(r"^([FSA])(?:W|S)?(\d{2})$", normalized, flags=re.IGNORECASE)
     if match:
-        half = "F" if match.group(1).upper() == "F" else "S"
+        half = "S" if match.group(1).upper() == "S" else "F"
         return f"{half}H:20{match.group(2)}"
     if normalized:
         return normalized
@@ -893,6 +1140,61 @@ def _strip_brackets(value: str) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
+def _should_silently_ignore_header(header: str) -> bool:
+    normalized = _normalize_header(header)
+    exact_ignore = {
+        "lineitem", "purchaseprice", "sellingprice", "supplierprofile",
+        "closeddate", "comments", "currency", "archivedate",
+        "productexternalref", "productcustomerref", "purchaseuom",
+        "sellinguom", "paymentterm", "defaultdeliverydate",
+        "productsupplierext", "keyuser1", "keyuser2", "keyuser3",
+        "keyuser4", "keyuser5", "keyuser6", "keyuser7", "keyuser8",
+        "department", "customattribute1", "customattribute2",
+        "customattribute3", "lineratio", "colourext", "customerext",
+        "departmentext", "customattribute1ext", "customattribute2ext",
+        "customattribute3ext", "vendor name", "final destination",
+        "ship to", "report_date", "seller name", "original po number",
+        "po category", "product category", "sku #", "collaboration status",
+        "order status", "item status", "original latest date",
+        "customs code", "destination name", "upc/ean number", "cost", "sell",
+    }
+    if normalized in exact_ignore:
+        return True
+    if normalized.startswith("findfield_") or normalized.startswith("udf-"):
+        return True
+    if re.match(r"^po[\-_]?\d{4,}$", normalized, re.IGNORECASE):
+        return True
+    if re.match(r"^\d{5,}$", normalized):
+        return True
+    return False
+
+
+def _detect_pivot_format(headers_by_col: dict[int, str], col_map: dict[str, int]) -> dict[str, Any]:
+    fixed_cols = sorted({
+        col for key, col in col_map.items()
+        if col and key not in {"size"}
+    })
+    max_fixed = max(fixed_cols) if fixed_cols else 0
+    pivot_cols: list[tuple[int, str]] = []
+    for col, header in sorted(headers_by_col.items()):
+        if col <= max_fixed:
+            continue
+        if not header.strip():
+            continue
+        normalized = _normalize_header(header)
+        if any(_header_matches(normalized, alias) for aliases in HEADER_ALIASES.values() for alias in aliases):
+            continue
+        if _should_silently_ignore_header(header):
+            continue
+        pivot_cols.append((col, header))
+    has_required_fixed = (("product" in col_map or "product_alt" in col_map) and ("season" in col_map))
+    return {
+        "is_pivot": bool(pivot_cols and has_required_fixed),
+        "pivot_cols": pivot_cols,
+        "fixed_cols": fixed_cols,
+    }
+
+
 def _header_matches(header: str, alias: str) -> bool:
     if not header or not alias:
         return False
@@ -919,8 +1221,11 @@ def _normalize_po(value: Any) -> str:
 
 # Numeric factory codes → resolved supplier name
 FACTORY_CODE_MAP: dict[str, str] = {
-    "508582":  "PT. UWU JUMP INDONESIA",
-    "1002436": "PT. UWU JUMP INDONESIA",
+    "508582":   "PT. UWU JUMP INDONESIA",
+    "1002436":  "PT. UWU JUMP INDONESIA",
+    "8668:puj": "PT. UWU JUMP INDONESIA",  # 511 Tactical
+    # Obermeyer — different factory
+    "hangzhou u-jump arts and crafts": "Hangzhou U-Jump Arts and Crafts",
 }
 
 
@@ -1211,11 +1516,12 @@ def _validate_output_slices(
 def _detect_layout(
     ws,
     required_keys: set[str] | None = None,
-) -> tuple[int, dict[str, int], str, int, int, set[str]]:
+) -> tuple[int, dict[str, int], str, int, int, set[str], dict[str, Any]]:
     best_row = 14
     best_map: dict[str, int] = {}
     best_score = -1
     best_nonempty_po_rows = 0
+    best_pivot_info: dict[str, Any] = {"is_pivot": False, "pivot_cols": [], "fixed_cols": []}
 
     for row_idx in range(1, min(81, ws.max_row + 1)):
         headers_by_col: dict[int, str] = {}
@@ -1229,16 +1535,48 @@ def _detect_layout(
 
         # Headers that must never be mapped to product_alt (e.g. "Unique" = JDE+Color concat)
         PRODUCT_ALT_EXCLUDED_HEADERS = {"unique"}
+        # Headers that must never be mapped to product (line sequence numbers, not style codes)
+        PRODUCT_EXCLUDED_HEADERS = {"item number of purchasing document", "sales order item"}
+        # Headers that must never be mapped to orig_ex_fac (often blank, wrong date source)
+        ORIG_EX_FAC_EXCLUDED_HEADERS = {"so requested delivery date"}
+        # Headers that must never be mapped to vendor_name (distributor name, not actual supplier)
+        # Fox Racing col 3 = "Vendor Name" (Madison 88 distributor); col 5 = "Goods Supplier Name" (actual supplier)
+        VENDOR_NAME_EXCLUDED_HEADERS = {"vendor name"}
+        # Headers that must never be mapped to transport_location (internal DC codes, not country names)
+        TRANSPORT_LOCATION_EXCLUDED_HEADERS = {"final destination"}  # Burton internal DC codes
+        # Headers that must never be mapped to anything (full address strings, not fields)
+        GLOBALLY_IGNORED_HEADERS = {"ship to"}  # prAna: full warehouse address
 
         col_map: dict[str, int] = {}
         for key, aliases in HEADER_ALIASES.items():
             for col, hdr in headers_by_col.items():
                 if key == "product_alt" and hdr in PRODUCT_ALT_EXCLUDED_HEADERS:
                     continue
+                if key == "product" and hdr in PRODUCT_EXCLUDED_HEADERS:
+                    continue
+                if key == "orig_ex_fac" and hdr in ORIG_EX_FAC_EXCLUDED_HEADERS:
+                    continue
+                if key == "vendor_name" and hdr in VENDOR_NAME_EXCLUDED_HEADERS:
+                    continue
+                if key == "transport_location" and hdr in TRANSPORT_LOCATION_EXCLUDED_HEADERS:
+                    continue
+                if hdr in GLOBALLY_IGNORED_HEADERS:
+                    continue
                 if any(_header_matches(hdr, alias) for alias in aliases):
                     col_map[key] = col
                     break
 
+        # Detect pre-computed NG PO in last column (ON AG, Cotopaxi, 66North, Hunter, Obermeyer, etc.)
+        # Pattern: last column header is "PO002924" or similar — the NG PO number itself.
+        # Values in that column are the full pre-built PO strings (e.g. "PO002924-SWITZERLAND-ZRH-MKT").
+        # Override the "po" mapping to point at this column so the pre-built value is used directly.
+        if headers_by_col:
+            last_col = max(headers_by_col.keys())
+            last_hdr = headers_by_col[last_col]
+            if re.match(r'^po\d{4,}$', last_hdr, re.IGNORECASE):
+                col_map["po"] = last_col
+
+        pivot_info = _detect_pivot_format(headers_by_col, col_map)
         required_keys = required_keys or {"po", "qty", "product"}
         # Require at minimum: required keys with special handling for product field
         has_required = True
@@ -1247,6 +1585,8 @@ def _detect_layout(
                 if not (("product" in col_map) or ("product_alt" in col_map)):
                     has_required = False
                     break
+            elif key in {"po", "qty"} and pivot_info.get("is_pivot"):
+                continue
             elif key not in col_map:
                 has_required = False
                 break
@@ -1271,6 +1611,7 @@ def _detect_layout(
             best_nonempty_po_rows = nonempty_po_rows
             best_row = row_idx
             best_map = col_map
+            best_pivot_info = pivot_info
 
     if best_score >= 3:
         mode = f"auto-detected headers on row {best_row}"
@@ -1278,10 +1619,10 @@ def _detect_layout(
         # AND only when the default column index has a sensible header in this file.
         # This prevents COL-specific fixed positions from polluting other brand files.
         merged_map = dict(best_map)  # start from detected keys only
-        return best_row + 1, merged_map, mode, best_score, best_nonempty_po_rows, set(best_map.keys())
+        return best_row + 1, merged_map, mode, best_score, best_nonempty_po_rows, set(best_map.keys()), best_pivot_info
 
     # Legacy fallback: headers row 14, data row 15
-    return 15, DEFAULT_COL_MAP.copy(), "fallback fixed-column layout", 0, 0, set(DEFAULT_COL_MAP.keys())
+    return 15, DEFAULT_COL_MAP.copy(), "fallback fixed-column layout", 0, 0, set(DEFAULT_COL_MAP.keys()), {"is_pivot": False, "pivot_cols": [], "fixed_cols": []}
 
 
 def _pick_source_sheet(
@@ -1303,14 +1644,16 @@ def _pick_source_sheet(
     best_score = -1
     best_nonempty = -1
     best_detected: set[str] = set()
+    best_pivot_info: dict[str, Any] = {"is_pivot": False, "pivot_cols": [], "fixed_cols": []}
 
     for ws in wb.worksheets:
-        data_start, col_map, layout_mode, score, nonempty, detected = _detect_layout(ws, required_keys)
+        data_start, col_map, layout_mode, score, nonempty, detected, pivot_info = _detect_layout(ws, required_keys)
         if (score > best_score) or (score == best_score and nonempty > best_nonempty):
             best_ws, best_data_start, best_col_map = ws, data_start, col_map
             best_layout_mode, best_score, best_nonempty, best_detected = layout_mode, score, nonempty, detected
+            best_pivot_info = pivot_info
 
-    return best_ws, best_data_start, best_col_map, best_layout_mode, best_score, best_nonempty, best_detected
+    return best_ws, best_data_start, best_col_map, best_layout_mode, best_score, best_nonempty, best_detected, best_pivot_info
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1322,6 +1665,8 @@ def generate_templates(
     output_dir: Path,
     sheet_name: str | None = None,
     customer_fallback: str = DEFAULT_CUSTOMER,
+    manual_customer: str | None = None,
+    manual_brand: str | None = None,
     strict: bool = False,
     manual_po: str | None = None,
     manual_destination: str | None = None,
@@ -1337,6 +1682,9 @@ def generate_templates(
     manual_destination = (manual_destination or "").strip() or ""
     manual_template = (manual_template or "").strip() or ""
     manual_keydate = (manual_keydate or "").strip() or ""
+    # manual_customer overrides customer for every row (e.g. 511 Tactical has no customer column)
+    if manual_customer:
+        customer_fallback = manual_customer.strip()
     default_qty_if_missing = bool(manual_po_norm)
 
     product_sheet_map: dict[str, list[dict[str, Any]]] = {}
@@ -1352,7 +1700,7 @@ def generate_templates(
     if not default_qty_if_missing:
         required_keys.add("qty")
 
-    src, data_start_row, col_map, layout_mode, layout_score, probed_po_rows, detected_keys = \
+    src, data_start_row, col_map, layout_mode, layout_score, probed_po_rows, detected_keys, pivot_info = \
         _pick_source_sheet(wb, sheet_name, required_keys)
 
     orders_wb, lines_wb, sizes_wb = Workbook(), Workbook(), Workbook()
@@ -1391,13 +1739,13 @@ def generate_templates(
     if "product" not in detected_keys and "product_alt" not in detected_keys:
         msg = "Missing required column mapping for 'product' (header not detected)."
         (add_error if strict else add_warning)(msg)
-    if not manual_po_norm and "po" not in detected_keys:
+    if not manual_po_norm and "po" not in detected_keys and not pivot_info.get("is_pivot"):
         msg = "Missing required column mapping for 'po' (header not detected)."
         (add_error if strict else add_warning)(msg)
     if not manual_product_range and "season" not in detected_keys:
         msg = "Missing required column mapping for 'season' (header not detected)."
         (add_error if strict else add_warning)(msg)
-    if not default_qty_if_missing and "qty" not in detected_keys:
+    if not default_qty_if_missing and "qty" not in detected_keys and not pivot_info.get("is_pivot"):
         msg = "Missing required column mapping for 'qty' (header not detected)."
         (add_error if strict else add_warning)(msg)
 
@@ -1410,23 +1758,50 @@ def generate_templates(
             return None
         return src.cell(row=row_idx, column=col_idx).value
 
-    for row_idx in range(data_start_row, src.max_row + 1):
-        raw_po_val = _cell(row_idx, "po")
-        po = manual_po_norm or _normalize_po(raw_po_val)
-        if not po:
-            skipped_empty_po += 1
-            if len(skipped_empty_po_samples) < 10:
-                skipped_empty_po_samples.append((
-                    row_idx,
-                    _as_text(src.cell(row=row_idx, column=1).value),
-                    _as_text(src.cell(row=row_idx, column=2).value),
-                    _as_text(src.cell(row=row_idx, column=3).value),
-                    _as_text(raw_po_val),
-                ))
-            continue
+    warned_empty_plant_destination: set[str] = set()
 
-        # ── Core fields ──────────────────────────────────────────────────────
-        product = _as_text(_cell(row_idx, "product")) or _as_text(_cell(row_idx, "product_alt"))
+    for row_idx in range(data_start_row, src.max_row + 1):
+        pivot_expansions = [{"pivot_col": None, "pivot_header": "", "pivot_qty": None}]
+        if pivot_info.get("is_pivot"):
+            pivot_expansions = []
+            for pivot_col, pivot_header in pivot_info.get("pivot_cols", []):
+                pivot_qty = _to_int_quantity(src.cell(row=row_idx, column=pivot_col).value)
+                if pivot_qty > 0:
+                    pivot_expansions.append({
+                        "pivot_col": pivot_col,
+                        "pivot_header": pivot_header,
+                        "pivot_qty": pivot_qty,
+                    })
+            if not pivot_expansions:
+                continue
+
+        for pivot_expansion in pivot_expansions:
+            def _row_cell(key: str) -> Any:
+                if pivot_expansion["pivot_col"] is not None:
+                    if key == "qty":
+                        return pivot_expansion["pivot_qty"]
+                    if key == "po" and not manual_po_norm:
+                        return pivot_expansion["pivot_header"]
+                    if key == "transport_location" and not manual_destination and "transport_location" not in col_map:
+                        return pivot_expansion["pivot_header"]
+                return _cell(row_idx, key)
+
+            raw_po_val = _row_cell("po")
+            po = manual_po_norm or _normalize_po(raw_po_val)
+            if not po:
+                skipped_empty_po += 1
+                if len(skipped_empty_po_samples) < 10:
+                    skipped_empty_po_samples.append((
+                        row_idx,
+                        _as_text(src.cell(row=row_idx, column=1).value),
+                        _as_text(src.cell(row=row_idx, column=2).value),
+                        _as_text(src.cell(row=row_idx, column=3).value),
+                        _as_text(raw_po_val),
+                    ))
+                continue
+
+            # ── Core fields ──────────────────────────────────────────────────────
+            product = _as_text(_row_cell("product")) or _as_text(_row_cell("product_alt"))
         if not product and not product_sheet_map:
             add_warning(f"Row {row_idx} PO {po}: product is empty; row skipped.")
             continue
@@ -1457,7 +1832,7 @@ def generate_templates(
             add_warning(f"Row {row_idx} PO {po}: season/range is empty; row skipped.")
             continue
         template_raw = _as_text(_cell(row_idx, "template"))
-        brand_value  = _as_text(_cell(row_idx, "brand"))
+        brand_value  = _as_text(_cell(row_idx, "brand")) or (manual_brand or "")
         customer_raw = _as_text(_cell(row_idx, "customer"))
         size_raw     = _as_text(_cell(row_idx, "size"))
         vendor_code  = _as_text(_cell(row_idx, "vendor_code"))
@@ -1477,6 +1852,11 @@ def generate_templates(
             colour_key = _normalize_colour_key(colour)
             jde_style_raw = _as_text(_cell(row_idx, "product_alt"))
             jde_style = _normalize_style_key(jde_style_raw)
+            # Fall back to product field when product_alt (JDE Style) is absent
+            # e.g. ON AG INFOR uses Buyer Item # as product, no separate JDE Style column
+            if not jde_style:
+                product_raw = _as_text(_cell(row_idx, "product"))
+                jde_style = _normalize_style_key(product_raw)
             if not jde_style:
                 add_warning(f"Row {row_idx} PO {po}: JDE Style missing; PLM fields left blank.")
                 plm_missing = True
@@ -1485,6 +1865,31 @@ def generate_templates(
             # If multiple matches, use the first (exact buyer_style_number matches are inserted first)
             if len(matches) > 1:
                 matches = [matches[0]]
+            # Prefix match: PLM Buyer Style Number may be a prefix of the buy file style key
+            # e.g. PLM has "2UF1067", buy file has "2UF10674959" — try all PLM keys where
+            # the style portion is a prefix of jde_style
+            # Also handles colour key mismatch via contains check (e.g. "espresso" in "on 003 espresso")
+            if len(matches) == 0 and jde_style and colour_key:
+                for plm_key, plm_entries in product_sheet_map.items():
+                    if "|" not in plm_key:
+                        continue
+                    plm_style, plm_colour = plm_key.rsplit("|", 1)
+                    if not plm_style:
+                        continue
+                    style_ok = (jde_style.upper().startswith(plm_style.upper()) or
+                                plm_style.upper().startswith(jde_style.upper()))
+                    if not style_ok:
+                        continue
+                    colour_ok = (plm_colour == colour_key or
+                                 plm_colour in colour_key or colour_key in plm_colour)
+                    if not colour_ok and plm_entries:
+                        # Raw colour word match (e.g. "espresso" in "on 003 espresso")
+                        plm_colour_raw = _as_text(plm_entries[0].get("colour")).lower()
+                        colour_ok = (colour.lower() in plm_colour_raw or
+                                     plm_colour_raw in colour.lower())
+                    if colour_ok:
+                        matches = plm_entries[:1]
+                        break
             if len(matches) == 0 and not plm_missing:
                 add_warning(f"Row {row_idx} PO {po}: JDE {jde_style} color {colour} not found in PLM sheet; PLM fields left blank.")
                 plm_missing = True
@@ -1504,6 +1909,10 @@ def generate_templates(
         # colour_out is PLM Color Name if found, else raw Material value — Longtext (colour_display) is NOT used as colour output
 
         # Build PO suffix: ManualPO-PlantCode-PlantName (M88) or ManualPO-Plant-Dest (other files)
+        # Skip suffix building if PO came from the pre-computed last column (already fully formed,
+        # e.g. ON AG "PO002924-SWITZERLAND-ZRH-MKT", Cotopaxi "PO002864", Hunter "PO002933-UKSOS")
+        po_col_idx = col_map.get("po")
+        po_is_precomputed = (po_col_idx is not None and po_col_idx == src.max_column)
         plant_value = _as_text(_cell(row_idx, "plant"))
         plant_name_value = _as_text(_cell(row_idx, "plant_name"))
         # Derive transport location: explicit column → plant name map → plant code map
@@ -1513,11 +1922,12 @@ def generate_templates(
         )
         dest_country_raw = manual_destination or _as_text(_cell(row_idx, "transport_location")) or plant_derived_country
         dest_country = COUNTRY_NAME_MAP.get(dest_country_raw.strip().upper(), dest_country_raw) if dest_country_raw else ""
-        if plant_name_value:
-            # M88 format: ManualPO-PlantCode-PlantName
-            po = "-".join([po] + [p for p in [plant_value, plant_name_value] if p])
-        elif plant_value or dest_country:
-            po = "-".join([po] + [p for p in [plant_value, dest_country] if p])
+        if not po_is_precomputed:
+            if plant_name_value:
+                # M88 format: ManualPO-PlantCode-PlantName
+                po = "-".join([po] + [p for p in [plant_value, plant_name_value] if p])
+            elif plant_value or dest_country:
+                po = "-".join([po] + [p for p in [plant_value, dest_country] if p])
         suffix_source = _as_text(plm_entry.get("customer_name")) if plm_entry else ""
         suffix = _customer_suffix(suffix_source or customer_raw or brand_value)
         if suffix and not po.lower().endswith(f" {suffix.lower()}"):
@@ -1540,6 +1950,31 @@ def generate_templates(
             _vname_lower = (vendor_name or "").strip().lower()
             if "uwu jump" in _vname_lower or "madison 88" in _vname_lower:
                 brand_lookup = "tnf"
+        # Customer name → brand inference for files with no explicit brand column
+        if not brand_value and customer_raw:
+            _cust_lower = customer_raw.strip().lower()
+            if "haglofs" in _cust_lower or "häglofs" in _cust_lower:
+                brand_lookup = "haglofs"
+            elif "fox racing" in _cust_lower or "fox" in _cust_lower:
+                brand_lookup = "fox racing"
+            elif "511 tactical" in _cust_lower or "511tactical" in _cust_lower:
+                brand_lookup = "511 tactical"
+            elif "obermeyer" in _cust_lower:
+                brand_lookup = "obermeyer"
+            elif "on ag" in _cust_lower or "on running" in _cust_lower:
+                brand_lookup = "on ag"
+            elif "66 degrees north" in _cust_lower or "66north" in _cust_lower:
+                brand_lookup = "66 degrees north"
+            elif "peak performance" in _cust_lower:
+                brand_lookup = "peak performance"
+            elif "prana" in _cust_lower:
+                brand_lookup = "prana"
+            elif "burton" in _cust_lower:
+                brand_lookup = "burton"
+            elif "cotopaxi" in _cust_lower:
+                brand_lookup = "cotopaxi"
+            elif "hunter" in _cust_lower:
+                brand_lookup = "hunter"
         brand_config       = _get_brand_config(brand_lookup)
         # When customer_raw is empty (e.g. NF0 rows with plm_missing), use brand map instead of raw customer_fallback
         _cust_raw_for_resolve = customer_raw or (BRAND_CUSTOMER_MAP.get((brand_lookup or "").strip().lower(), "") if brand_lookup else "")
@@ -1647,7 +2082,8 @@ def generate_templates(
         # Fix #3: KeyDate per line from DeliveryDate
         key_date_line = delivery_date
         buyer_po_number_out = (
-            buyer_po_number_raw if buyer_po_number_raw not in (None, "") else ""
+            buyer_po_number_raw if buyer_po_number_raw not in (None, "")
+            else _normalize_po(raw_po_val) or ""
         )
         _append_row(lines_ws, [
             po, line_item, product_range, product, customer_value,
@@ -1854,10 +2290,16 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", dest="output_dir",       default=".")
     parser.add_argument("--sheet",      dest="sheet_name",       default=None)
     parser.add_argument("--customer",   dest="customer_fallback", default=DEFAULT_CUSTOMER)
+    parser.add_argument("--manual-customer", dest="manual_customer", default=None,
+                        help="Force customer name for every row (use for files with no customer column, e.g. 511 Tactical)")
+    parser.add_argument("--manual-brand", dest="manual_brand", default=None,
+                        help="Fallback brand when file has no brand column (file-level brand takes priority)")
     parser.add_argument("--strict",     dest="strict",           action="store_true")
     parser.add_argument("--po",         dest="manual_po",        default=None)
     parser.add_argument("--destination", dest="manual_destination", default=None)
     parser.add_argument("--product-range", dest="manual_product_range", default=None)
+    parser.add_argument("--season",     dest="manual_season",    default=None,
+                        help="Alias for --product-range (e.g. FH:2026)")
     parser.add_argument("--template",   dest="manual_template",  default=None)
     parser.add_argument("--keydate",    dest="manual_keydate",   default=None)
     parser.add_argument("--product-sheet", dest="product_sheet", default=None)
@@ -1887,9 +2329,11 @@ if __name__ == "__main__":
         strict            = args.strict,
         manual_po         = args.manual_po,
         manual_destination = args.manual_destination,
-        manual_product_range = args.manual_product_range,
+        manual_product_range = args.manual_product_range or args.manual_season,
         manual_template   = args.manual_template,
         manual_keydate    = args.manual_keydate,
         product_sheet_path = product_sheet_path,
         validate_sizes    = args.validate_sizes,
+        manual_customer   = args.manual_customer,
+        manual_brand      = args.manual_brand,
     )

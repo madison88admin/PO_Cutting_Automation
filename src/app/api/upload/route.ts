@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ExcelEngine, ProcessedPO, POLine, ValidationError } from "@/lib/excel-engine";
+import { ExcelEngine, ProcessedPO, POLine, ValidationError, FormatDetection } from "@/lib/excel-engine";
 import { logEvent } from "@/lib/audit";
 import { createRun, updateRun } from "@/lib/db/runHistory";
 
@@ -79,6 +79,9 @@ export async function POST(req: NextRequest) {
         const manualKeyUser3 = (formData.get("manualKeyUser3")?.toString() || "").trim();
         const manualKeyUser4 = (formData.get("manualKeyUser4")?.toString() || "").trim();
         const manualKeyUser5 = (formData.get("manualKeyUser5")?.toString() || "").trim();
+        const manualSeason = (formData.get("manualSeason")?.toString() || "").trim();
+        const manualCustomer = (formData.get("manualCustomer")?.toString() || "").trim();
+        const manualBrand = (formData.get("manualBrand")?.toString() || "").trim();
 
         if (!files || files.length === 0) {
             return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
@@ -130,6 +133,7 @@ export async function POST(req: NextRequest) {
         const fileSummaries: Array<{ filename: string; orders: number; lines: number; sizes: number; errors: number; warnings: number; brands: string[]; }> = [];
         const perFileExports: Record<string, { orders: string; lines: string; sizes: string }> = {};
         const poMap = new Map<string, string>();
+        const perFileFormatDetection: Record<string, FormatDetection> = {};
 
         let productSheetMap: Record<string, any> = {};
         const buyFiles: Array<{ file: File; buffer: Buffer }> = [];
@@ -146,7 +150,7 @@ export async function POST(req: NextRequest) {
         for (const entry of buyFiles) {
             const { file, buffer } = entry;
             const engine = new ExcelEngine(runId || undefined, userId);
-            const { data, errors } = await engine.processBuyFile(buffer, {
+            const { data, errors, formatDetection } = await engine.processBuyFile(buffer, {
                 manualPurchaseOrder: manualPo || undefined,
                 manualDestination: manualDestination || undefined,
                 manualProductRange: manualProductRange || undefined,
@@ -159,22 +163,25 @@ export async function POST(req: NextRequest) {
                 manualKeyUser3: manualKeyUser3 || undefined,
                 manualKeyUser4: manualKeyUser4 || undefined,
                 manualKeyUser5: manualKeyUser5 || undefined,
+                manualSeason: manualSeason || undefined,
+                manualCustomer: manualCustomer || undefined,
+                manualBrand: manualBrand || undefined,
                 defaultQuantityIfMissing: !!manualPo,
                 productSheetMap,
             });
 
             let allSizes = 0;
             let allLines = 0;
-            data.forEach(po => {
+            data.forEach((po: ProcessedPO) => {
                 allLines += po.lines.length;
                 allSizes += Object.values(po.sizes).reduce((acc, s) => acc + s.length, 0);
             });
 
-            const criticalCount = errors.filter(e => e.severity === 'CRITICAL').length;
-            const warningCount = errors.filter(e => e.severity === 'WARNING').length;
+            const criticalCount = errors.filter((e: ValidationError) => e.severity === 'CRITICAL').length;
+            const warningCount = errors.filter((e: ValidationError) => e.severity === 'WARNING').length;
 
             const brandSet = new Set<string>();
-            data.forEach(po => {
+            data.forEach((po: ProcessedPO) => {
                 const label = (po.header?.customer || '').trim();
                 if (label) brandSet.add(label);
             });
@@ -210,7 +217,7 @@ export async function POST(req: NextRequest) {
                 }
             }
 
-            errors.forEach(e => {
+            errors.forEach((e: ValidationError) => {
                 const copy: ValidationError = { ...e, message: `[${file.name}] ${e.message}` };
                 allErrors.push(copy);
             });
@@ -221,6 +228,9 @@ export async function POST(req: NextRequest) {
                 lines: Buffer.from(exported.lines as any).toString('base64'),
                 sizes: Buffer.from(exported.sizes as any).toString('base64'),
             };
+            if (formatDetection) {
+                perFileFormatDetection[file.name] = formatDetection;
+            }
         }
 
         const mergedData = Array.from(mergedPOsMap.values());
@@ -271,6 +281,7 @@ export async function POST(req: NextRequest) {
                 warnings: allErrors.filter(e => e.severity === 'WARNING').length,
             },
             fileOutputs: perFileExports,
+            formatDetection: perFileFormatDetection,
         });
 
     } catch (error: any) {

@@ -29,6 +29,10 @@ export default function Workflow() {
     const [manualKeyUser3, setManualKeyUser3] = useState("");
     const [manualKeyUser4, setManualKeyUser4] = useState("");
     const [manualKeyUser5, setManualKeyUser5] = useState("");
+    const [manualSeason, setManualSeason] = useState("");
+    const [manualCustomer, setManualCustomer] = useState("");
+    const [manualBrand, setManualBrand] = useState("");
+    const [manualDestination, setManualDestination] = useState("");
     const applyTheme = (nextTheme: "dark" | "light") => {
       document.documentElement.classList.remove("light", "dark");
       document.documentElement.classList.add(nextTheme);
@@ -75,6 +79,10 @@ export default function Workflow() {
         if (manualKeyUser3.trim()) formData.append("manualKeyUser3", manualKeyUser3.trim());
         if (manualKeyUser4.trim()) formData.append("manualKeyUser4", manualKeyUser4.trim());
         if (manualKeyUser5.trim()) formData.append("manualKeyUser5", manualKeyUser5.trim());
+        if (manualSeason.trim()) formData.append("manualSeason", manualSeason.trim());
+        if (manualCustomer.trim()) formData.append("manualCustomer", manualCustomer.trim());
+        if (manualBrand.trim()) formData.append("manualBrand", manualBrand.trim());
+        if (manualDestination.trim()) formData.append("manualDestination", manualDestination.trim());
 
         try {
             const res = await fetch("/api/upload", {
@@ -411,6 +419,42 @@ export default function Workflow() {
                                         className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
                                     />
                                 </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Season Override <span className="text-slate-600 normal-case font-normal">(for files with no season column)</span></label>
+                                    <input
+                                        value={manualSeason}
+                                        onChange={(e) => setManualSeason(e.target.value)}
+                                        placeholder="FH:2026"
+                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Customer Override <span className="text-slate-600 normal-case font-normal">(for files with no customer column)</span></label>
+                                    <input
+                                        value={manualCustomer}
+                                        onChange={(e) => setManualCustomer(e.target.value)}
+                                        placeholder="511 Tactical"
+                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Brand Override <span className="text-slate-600 normal-case font-normal">(when file has no brand column)</span></label>
+                                    <input
+                                        value={manualBrand}
+                                        onChange={(e) => setManualBrand(e.target.value)}
+                                        placeholder="haglofs"
+                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Destination Override <span className="text-slate-600 normal-case font-normal">(when file has no destination column)</span></label>
+                                    <input
+                                        value={manualDestination}
+                                        onChange={(e) => setManualDestination(e.target.value)}
+                                        placeholder="Sweden"
+                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                    />
+                                </div>
                             </div>
 
                             <div className="flex flex-col items-center gap-6">
@@ -515,6 +559,29 @@ export default function Workflow() {
                             </div>
 
                             <div className="glass-card rounded-[32px] overflow-hidden flex-1 border-white/5 bg-slate-950/40 relative">
+                                {/* Format Detection Panel */}
+                                {uploadData?.formatDetection && Object.keys(uploadData.formatDetection).length > 0 && (
+                                    <div className="px-10 py-6 border-b border-white/5 space-y-3">
+                                        {Object.entries(uploadData.formatDetection as Record<string, { detectedCustomer: string; detectedFormat: string; unmappedColumns: string[] }>).map(([filename, fd]) => (
+                                            <div key={filename} className="flex flex-col gap-2">
+                                                <div className="flex items-center gap-3">
+                                                    <span className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">{filename}</span>
+                                                    <span className="text-[10px] font-black uppercase tracking-[0.3em] text-blue-400 bg-blue-500/10 border border-blue-500/20 px-3 py-1 rounded-lg">{fd.detectedFormat}</span>
+                                                </div>
+                                                {fd.unmappedColumns.length > 0 ? (
+                                                    <div className="flex flex-wrap gap-2 items-center">
+                                                        <span className="text-[9px] font-black uppercase tracking-widest text-amber-500">Unmapped columns:</span>
+                                                        {fd.unmappedColumns.map((col: string, colIdx: number) => (
+                                                            <span key={`${col}-${colIdx}`} className="text-[9px] font-mono bg-amber-500/10 border border-amber-500/20 text-amber-400 px-2 py-0.5 rounded">{col}</span>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <span className="text-[9px] font-black uppercase tracking-widest text-emerald-500">All columns mapped</span>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                                 <div className="overflow-x-auto">
                                     <table className="w-full text-left border-collapse">
                                         <thead>
