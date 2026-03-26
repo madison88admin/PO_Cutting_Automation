@@ -366,6 +366,9 @@ const COUNTRY_NAME_MAP: Record<string, string> = {
     TW: "Taiwan",
     UK: "UK",
     US: "USA",
+    "US WHOLESALE 3PL": "USA",
+    "US RETAIL 3PL": "USA",
+    "US ECOMM": "USA",
     "UNITED KINGDOM": "UK",
     "UNITED ARAB EMIRATES": "UAE",
     "UNITED STATES": "USA",
@@ -428,6 +431,7 @@ const BRAND_KEYUSER_MAP: Record<string, KeyUsers> = {
     "helly hansen": { k1: "Angelah", k2: "Mariane", k3: "", k4: "Angelah", k5: "Jenica", k6: "", k7: "", k8: "" },
     "jack wolfskin": { k1: "Via", k2: "Mary", k3: "", k4: "Via", k5: "Elaine Sanchez", k6: "", k7: "", k8: "" },
     dynafit: { k1: "Patrick", k2: "Sarah Jane", k3: "", k4: "Patrick", k5: "Edbert Suan", k6: "", k7: "", k8: "" },
+    vuori: { k1: "Patrick", k2: "Mary", k3: "", k4: "Patrick", k5: "Elaine Sanchez", k6: "", k7: "", k8: "" },
     "ll bean": { k1: "", k2: "", k3: "", k4: "", k5: "", k6: "", k7: "", k8: "" },
     "l.l.bean": { k1: "", k2: "", k3: "", k4: "", k5: "", k6: "", k7: "", k8: "" },
     marmot: { k1: "", k2: "", k3: "", k4: "", k5: "", k6: "", k7: "", k8: "" },
@@ -439,6 +443,7 @@ const FACTORY_CODE_MAP: Record<string, string> = {
     '508582':   'PT. UWU JUMP INDONESIA',
     '1002436':  'PT. UWU JUMP INDONESIA',
     '8668:puj': 'PT. UWU JUMP INDONESIA',
+    'mad001':   'PT. UWU JUMP INDONESIA',
 };
 
 const BRAND_ORDERS_TEMPLATE_MAP: Record<string, string> = {
@@ -453,6 +458,7 @@ const BRAND_ORDERS_TEMPLATE_MAP: Record<string, string> = {
     "helly hansen":  "Major Brand Bulk",
     "jack wolfskin":  "Major Brand Bulk",
     dynafit:          "SMS PO Header",
+    vuori:            "Major Brand Bulk",
     evo:              "BULK",
     "511 tactical":   "BULK",
     haglofs:          "BULK",
@@ -474,6 +480,7 @@ const BRAND_LINES_TEMPLATE_MAP: Record<string, string> = {
     "helly hansen":  "FOB Bulk EDI PO (New)",
     "jack wolfskin":  "FOB Bulk EDI PO (New)",
     dynafit:          "SMS Non EDI (New)",
+    vuori:            "FOB Bulk Non EDI PO (New)",
     evo:              "BULK",
     "511 tactical":   "BULK",
     haglofs:          "BULK",
@@ -909,6 +916,7 @@ export class ExcelEngine {
         if (!size) return 'One Size';
         if (size.toLowerCase() === 'os') return 'One Size';
         if (size.toLowerCase() === 'o/s') return 'One Size';
+        if (size.toLowerCase() === 'ons') return 'One Size';
         if (/^one\s*size$/i.test(size) || /^onesize$/i.test(size)) return 'One Size';
         if ((brand || '').trim().toLowerCase() === 'on ag') return 'One Size';
         if ((brand || '').trim().toLowerCase() === 'vans' && /^one\s*size$/i.test(size)) return 'One Size';
@@ -1028,6 +1036,8 @@ export class ExcelEngine {
         const normalized = this.stripBrackets(season || '').trim();
         const fhMatch = normalized.match(/^FH(\d{2})$/i);
         if (fhMatch) return `FH:20${fhMatch[1]}`;
+        const faMatch = normalized.match(/^(\d{2})FA$/i);
+        if (faMatch) return `FH:20${faMatch[1]}`;
         const m = normalized.match(/^([FS])(?:W|S)?(\d{2})$/i);
         if (m) return `${m[1].toUpperCase()}H:20${m[2]}`;
         const altMatch = normalized.match(/^(AW|FW|AH)(\d{2})$/i);
@@ -1532,6 +1542,7 @@ export class ExcelEngine {
                 detectedCustomer = mappedCustomer;
             }
         });
+        if (sourceNameHint.includes('mammut')) detectedCustomer = 'Mammut';
         if (sourceNameHint.includes('vuori') || sourceNameHint.includes('podetails')) detectedCustomer = 'Vuori';
         if (sourceNameHint.includes('marmot')) detectedCustomer = 'Marmot';
 
@@ -1576,6 +1587,7 @@ export class ExcelEngine {
             && headerKeysInRow.has('product name')
             && headerKeysInRow.has('warehouse name');
         if (looksLikeVuoriBuy) detectedCustomer = 'Vuori';
+        if (sourceNameHint.includes('mammut')) detectedCustomer = 'Mammut';
         if (sourceNameHint.includes('vuori') || sourceNameHint.includes('podetails')) detectedCustomer = 'Vuori';
         if (sourceNameHint.includes('marmot')) detectedCustomer = 'Marmot';
 
@@ -1844,6 +1856,7 @@ export class ExcelEngine {
                 if (sourceName.includes('marmot')) return 'marmot';
                 if (sourceName.includes('burton')) return 'burton';
                 if (sourceName.includes('dynafit')) return 'dynafit';
+                if (sourceName.includes('mammut')) return 'mammut';
                 if (sourceName.includes('fox racing')) return 'fox racing';
                 if (sourceName.includes('511 tactical')) return '511 tactical';
                 if (sourceName.includes('evo')) return 'evo';
@@ -1863,6 +1876,7 @@ export class ExcelEngine {
                 if (custRaw.includes('ll bean') || custRaw.includes('l.l.bean') || custRaw.startsWith('llb')) return 'll bean';
                 if (custRaw.includes('marmot')) return 'marmot';
                 if (custRaw.includes('fox racing') || custRaw === 'fox') return 'fox racing';
+                if (custRaw.includes('mammut')) return 'mammut';
                 if (custRaw.includes('511 tactical')) return '511 tactical';
                 if (custRaw.includes('evo')) return 'evo';
                 if (custRaw.includes('haglofs')) return 'haglofs';
@@ -1892,6 +1906,7 @@ export class ExcelEngine {
                 if (custRaw.includes('ll bean') || custRaw.includes('l.l.bean') || custRaw.startsWith('llb')) return 'll bean';
                 if (custRaw.includes('marmot')) return 'marmot';
                 if (custRaw.includes('fox racing') || custRaw === 'fox') return 'fox racing';
+                if (custRaw.includes('mammut')) return 'mammut';
                 if (custRaw.includes('511 tactical')) return '511 tactical';
                 if (custRaw.includes('evo')) return 'evo';
                 if (custRaw.includes('haglofs')) return 'haglofs';
@@ -2047,7 +2062,9 @@ export class ExcelEngine {
             const ourReference = this.stripBrackets(getVal('ourReference') || '').trim();
             const inlineFactory = this.stripBrackets(getVal('inlineFactory') || '').trim();
             const rawColour = this.stripBrackets(getVal('colour') || '').trim();
-            const colour = isHHBrand
+            const colour = brandKey === 'vuori'
+                ? (inlineColorDescription || rawColour)
+                : isHHBrand
                 ? (inlineColorDescription || inlineColorName || inlineStyleColor || rawColour)
                 : rawColour;
             if (!colour) { this.errors.push({ field: 'colour', row: rowNumber, message: `Row ${rowNumber} PO ${poNumber}: colour is empty; line/size skipped.`, severity: 'WARNING' }); return; }
@@ -2176,7 +2193,7 @@ export class ExcelEngine {
             } else if (brandKey === 'jack wolfskin') {
                 styleNumber = this.stripBrackets(productMatch?.productName || matchedStyleKey || getVal('product') || getVal('jdeStyle') || getVal('productCustomerRef') || getVal('productExternalRef') || '');
             } else if (brandKey === 'vuori') {
-                styleNumber = this.stripBrackets(getVal('product') || productMatch?.productName || getVal('productCustomerRef') || getVal('jdeStyle') || matchedStyleKey || '');
+                styleNumber = this.stripBrackets(productMatch?.productName || getVal('productCustomerRef') || getVal('jdeStyle') || matchedStyleKey || getVal('product') || '');
             } else if (brandKey === 'dynafit') {
                 styleNumber = this.stripBrackets(productMatch?.productName || matchedStyleKey || getVal('product') || getVal('jdeStyle') || getVal('productCustomerRef') || '');
             } else if (brandKey === 'll bean') {
@@ -2898,8 +2915,8 @@ export class ExcelEngine {
                             purchaseUOM: '', sellingUOM: '', udfBuyerPoNumber: isDynafit
                                 ? (line.buyerPoNumber?.toString?.() || '')
                                 : (line.buyerPoNumber?.toString?.() || line.buyerPoNumber || ''),
-                            udfStartDate: isHH ? hhDeliveryDate : (isLlBean ? llbDeliveryDate : (isDynafit ? dynafitDeliveryDate : (isJackWolfskin ? jwsDeliveryDate : ''))),
-                            udfCanelDate: isHH ? hhDeliveryDate : (isLlBean ? llbDeliveryDate : (isDynafit ? dynafitDeliveryDate : (isJackWolfskin ? jwsDeliveryDate : ''))),
+                            udfStartDate: isHH ? hhDeliveryDate : (isLlBean ? llbDeliveryDate : (isDynafit ? dynafitDeliveryDate : (isJackWolfskin ? jwsDeliveryDate : (brandKey === 'vuori' ? exportDeliveryDate : '')))),
+                            udfCanelDate: isHH ? hhDeliveryDate : (isLlBean ? llbDeliveryDate : (isDynafit ? dynafitDeliveryDate : (isJackWolfskin ? jwsDeliveryDate : (brandKey === 'vuori' ? exportDeliveryDate : '')))),
                             udfInspectionResult: '', udfReportType: '', udfInspector: '', udfApprovalStatus: '',
                             udfSubmittedInspectionDate: '', findField_Product: '',
                         }).commit();

@@ -104,6 +104,7 @@ export async function POST(req: NextRequest) {
         const effectiveManualProductRange = manualProductRange || manualSeason;
         const manualCustomer = (formData.get("manualCustomer")?.toString() || "").trim();
         const manualBrand = (formData.get("manualBrand")?.toString() || "").trim();
+        const inferredManualCustomer = manualCustomer || (files.some((f) => /vuori/i.test(f.name)) ? "Vuori" : "");
 
         if (!files || files.length === 0) {
             return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
@@ -194,7 +195,7 @@ export async function POST(req: NextRequest) {
                 manualKeyUser4: manualKeyUser4 || undefined,
                 manualKeyUser5: manualKeyUser5 || undefined,
                 manualSeason: manualSeason || undefined,
-                manualCustomer: manualCustomer || undefined,
+                manualCustomer: inferredManualCustomer || undefined,
                 manualBrand: manualBrand || undefined,
                 defaultQuantityIfMissing: !!manualPo,
                 productSheetMap,

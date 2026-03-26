@@ -7,7 +7,7 @@ from pathlib import Path
 import json
 import os
 import re
-from typing import Any
+from typing import Any, cast, TYPE_CHECKING
 
 from openpyxl import Workbook, load_workbook
 from urllib.error import URLError, HTTPError
@@ -109,6 +109,9 @@ COUNTRY_NAME_MAP = {
     "TW": "Taiwan",
     "UK": "UK",
     "US": "USA",
+    "US WHOLESALE 3PL": "USA",
+    "US RETAIL 3PL": "USA",
+    "US ECOMM": "USA",
     "UNITED KINGDOM": "UK",
     "UNITED ARAB EMIRATES": "UAE",
     "UNITED STATES": "USA",
@@ -251,6 +254,7 @@ BRAND_SUPPLIER_MAP: dict[str, str] = {
     "fox racing": "PT. UWU JUMP INDONESIA",
     "511 tactical": "PT. UWU JUMP INDONESIA",
     "haglofs": "PT. UWU JUMP INDONESIA",
+    "mammut": "PT. UWU JUMP INDONESIA",
     "obermeyer": "Hangzhou U-Jump Arts and Crafts",
     "on running": "PT. UWU JUMP INDONESIA",
     "on ag": "PT. UWU JUMP INDONESIA",
@@ -281,6 +285,7 @@ BRAND_CUSTOMER_MAP: dict[str, str] = {
     "burton": "Burton",
     "cotopaxi": "Cotopaxi",
     "fox racing": "Fox Racing",
+    "mammut": "Mammut",
     "rossignol": "Rossignol",
     "vans": "Vans",
     "south ontario dc": "Vans",
@@ -391,6 +396,16 @@ BRAND_KEYUSER_MAP: dict[str, dict[str, str]] = {
         "KeyUser7": "",
         "KeyUser8": "",
     },
+    "vuori": {
+        "KeyUser1": "Patrick",
+        "KeyUser2": "Mary",
+        "KeyUser3": "",
+        "KeyUser4": "Patrick",
+        "KeyUser5": "Elaine Sanchez",
+        "KeyUser6": "",
+        "KeyUser7": "",
+        "KeyUser8": "",
+    },
 }
 
 # Default KeyUser block (all blank) used when brand not found in map.
@@ -415,6 +430,7 @@ BRAND_ORDERS_TEMPLATE_MAP: dict[str, str] = {
     "arcteryx":       "BULK",
     "arc'teryx":      "BULK",
     "rossignol":      "Major Brand Bulk",
+    "vuori":          "Major Brand Bulk",
 }
 
 BRAND_LINES_TEMPLATE_MAP: dict[str, str] = {
@@ -425,6 +441,7 @@ BRAND_LINES_TEMPLATE_MAP: dict[str, str] = {
     "arcteryx":       "BULK",
     "arc'teryx":      "BULK",
     "rossignol":      "FOB Bulk EDI PO (New)",
+    "vuori":          "FOB Bulk Non EDI PO (New)",
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -898,12 +915,12 @@ def _normalize_style_key(value: Any) -> str:
     if not raw:
         return ""
     upper = raw.upper()
-    if upper.startswith("NF0A") and len(upper) >= 5:
-        return upper[-5:]
+    if isinstance(upper, str) and upper.startswith("NF0A") and len(upper) >= 5:
+        return upper[-5:]  # type: ignore
     return raw
 
 
-def _detect_product_sheet(ws) -> tuple[bool, int]:
+def _detect_product_sheet(ws: Any) -> tuple[bool, int]:
     header_row = 1
     best_score = -1
     buy_headers = {
@@ -928,7 +945,8 @@ def _detect_product_sheet(ws) -> tuple[bool, int]:
     if best_score < 3:
         return False, header_row
     # Re-check buy_score at the detected header row
-    header_vals = [_as_text(cell.value).lower().strip() for cell in ws[header_row]]
+    header_row_tuple = cast(tuple[Any, ...], ws[header_row])
+    header_vals = [_as_text(cell.value).lower().strip() for cell in header_row_tuple]
     final_header_buy_score = len([v for v in header_vals if v in buy_headers])
     
     if final_header_buy_score >= 2:
@@ -936,19 +954,25 @@ def _detect_product_sheet(ws) -> tuple[bool, int]:
     return True, header_row
 
 
-def _extract_product_sheet_map_from_wb(wb) -> dict[str, list[dict[str, Any]]]:
-    result: dict[str, list[dict[str, Any]]] = defaultdict(list)
+def _extract_product_sheet_map_from_wb(wb: Any) -> dict[str, list[dict[str, Any]]]:
+    result: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
     seen_entries: set[tuple] = set()  # deduplicate across worksheets
     for ws in wb.worksheets:
         is_product, header_row = _detect_product_sheet(ws)
         if not is_product:
             continue
         header_map: dict[str, int] = {}
-        for cell in ws[header_row]:
-            key = _as_text(cell.value).lower().strip()
+        header_row_tuple = cast(tuple[Any, ...], ws[header_row])
+        for cell in header_row_tuple:
+            if cell is None: continue
+            val = cell.value
+            if val is None: continue
+            key = _as_text(val).lower().strip()
             mapped = PRODUCT_SHEET_ALIASES.get(key)
             if mapped and mapped not in header_map:
-                header_map[mapped] = cell.column
+                col_val = cell.column
+                if col_val is not None:
+                    header_map[mapped] = col_val
         if "colour" not in header_map:
             continue
         for r in range(header_row + 1, ws.max_row + 1):
@@ -992,9 +1016,9 @@ def _extract_product_sheet_map_from_wb(wb) -> dict[str, list[dict[str, Any]]]:
                     continue
                 seen_entries.add(dedup_key)
                 if is_exact:
-                    result[lk_key].insert(0, entry)  # exact match goes first
+                    result[lk_key].insert(0, entry)  # type: ignore
                 else:
-                    result[lk_key].append(entry)
+                    result[lk_key].append(entry) # type: ignore
     return dict(result)
 
 
@@ -1134,6 +1158,9 @@ def _format_product_range(season: str) -> str:
         normalized = normalized.split("_")[0].strip()
     # Handle FW26→FH:2026, SS26→SH:2026, AW27→FH:2027, F26→FH:2026
     # A/AW (Autumn/Winter) maps to Fall half (FH), same as F/FW
+    match = re.match(r"^(\d{2})FA$", normalized, flags=re.IGNORECASE)
+    if match:
+        return f"FH:20{match.group(1)}"
     match = re.match(r"^([FSA])(?:W|S)?(\d{2})$", normalized, flags=re.IGNORECASE)
     if match:
         half = "S" if match.group(1).upper() == "S" else "F"
@@ -1320,6 +1347,7 @@ FACTORY_CODE_MAP: dict[str, str] = {
     "508582":   "PT. UWU JUMP INDONESIA",
     "1002436":  "PT. UWU JUMP INDONESIA",
     "8668:puj": "PT. UWU JUMP INDONESIA",  # 511 Tactical
+    "mad001":   "PT. UWU JUMP INDONESIA",
     # Obermeyer — different factory
     "hangzhou u-jump arts and crafts": "Hangzhou U-Jump Arts and Crafts",
 }
@@ -1482,27 +1510,27 @@ def _validate_output_slices(
         orders_keys = list(zip(orders_pos, orders_customers))
         dupes = [k for k, c in Counter(orders_keys).items() if c > 1]
         if dupes:
-            issues.append(("ERROR", f"ORDERS has duplicate PO+Customer keys: {dupes[:5]}"))
+            issues.append(("ERROR", f"ORDERS has duplicate PO+Customer keys: {dupes[:5]}"))  # type: ignore
     else:
         dupes = [p for p, c in Counter(orders_pos).items() if c > 1]
         if dupes:
-            issues.append(("ERROR", f"ORDERS has duplicate POs: {dupes[:5]}"))
+            issues.append(("ERROR", f"ORDERS has duplicate POs: {dupes[:5]}"))  # type: ignore
 
     if orders_po_set != lines_po_set:
         only_orders = orders_po_set - lines_po_set
         only_lines  = lines_po_set - orders_po_set
         if only_orders:
-            issues.append(("ERROR", f"POs in ORDERS but not LINES: {list(only_orders)[:5]}"))
+            issues.append(("ERROR", f"POs in ORDERS but not LINES: {list(only_orders)[:5]}"))  # type: ignore
         if only_lines:
-            issues.append(("ERROR", f"POs in LINES but not ORDERS: {list(only_lines)[:5]}"))
+            issues.append(("ERROR", f"POs in LINES but not ORDERS: {list(only_lines)[:5]}"))  # type: ignore
 
     if validate_sizes and orders_po_set != sizes_po_set:
         only_orders = orders_po_set - sizes_po_set
         only_sizes  = sizes_po_set - orders_po_set
         if only_orders:
-            issues.append(("ERROR", f"POs in ORDERS but not ORDER_SIZES: {list(only_orders)[:5]}"))
+            issues.append(("ERROR", f"POs in ORDERS but not ORDER_SIZES: {list(only_orders)[:5]}"))  # type: ignore
         if only_sizes:
-            issues.append(("ERROR", f"POs in ORDER_SIZES but not ORDERS: {list(only_sizes)[:5]}"))
+            issues.append(("ERROR", f"POs in ORDER_SIZES but not ORDERS: {list(only_sizes)[:5]}"))  # type: ignore
 
     # 5. Qty total (optional)
     if validate_sizes:
@@ -1546,7 +1574,7 @@ def _validate_output_slices(
             issues.append((
                 "ERROR",
                 f"{label} has {len(blank_rows)} blank Customer value(s) "
-                f"(first 5 rows: {blank_rows[:5]})."
+                f"(first 5 rows: {blank_rows[:5]})."  # type: ignore
             ))
 
     # 8. Status = Confirmed
@@ -1593,13 +1621,13 @@ def _validate_output_slices(
             issues.append((
                 "ERROR",
                 f"(PO, LineItem) keys in LINES but not ORDER_SIZES: "
-                f"{sorted(only_lines_keys)[:5]}"
+                f"{sorted(only_lines_keys)[:5]}"  # type: ignore
             ))
         if only_sizes_keys:
             issues.append((
                 "ERROR",
                 f"(PO, LineItem) keys in ORDER_SIZES but not LINES: "
-                f"{sorted(only_sizes_keys)[:5]}"
+                f"{sorted(only_sizes_keys)[:5]}"  # type: ignore
             ))
 
     return issues
@@ -1679,10 +1707,11 @@ def _detect_layout(
                 col_map["po"] = last_col
 
         pivot_info = _detect_pivot_format(headers_by_col, col_map)
-        required_keys = required_keys or {"po", "qty", "product"}
+        # Ensure required_keys is a set for iteration
+        keys_to_check = required_keys if required_keys is not None else {"po", "qty", "product"}
         # Require at minimum: required keys with special handling for product field
         has_required = True
-        for key in required_keys:
+        for key in cast(set[str], keys_to_check):
             if key == "product":
                 if not (("product" in col_map) or ("product_alt" in col_map)):
                     has_required = False
@@ -1721,7 +1750,7 @@ def _detect_layout(
         # AND only when the default column index has a sensible header in this file.
         # This prevents COL-specific fixed positions from polluting other brand files.
         merged_map = dict(best_map)  # start from detected keys only
-        return best_row + 1, merged_map, mode, best_score, best_nonempty_po_rows, set(best_map.keys()), best_pivot_info
+        return best_row + 1, merged_map, mode, best_score, best_nonempty_po_rows, set(best_map.keys()), best_pivot_info # type: ignore
 
     # Legacy fallback: headers row 14, data row 15
     return 15, DEFAULT_COL_MAP.copy(), "fallback fixed-column layout", 0, 0, set(DEFAULT_COL_MAP.keys()), {"is_pivot": False, "pivot_cols": [], "fixed_cols": []}
@@ -1779,6 +1808,7 @@ def generate_templates(
     validate_sizes: bool = True,
 ) -> None:
     wb = load_workbook(input_path, data_only=True)
+    source_name = input_path.name.lower()
     manual_po_norm = _normalize_po(manual_po) if manual_po else ""
     manual_product_range = (manual_product_range or "").strip() or ""
     manual_destination = (manual_destination or "").strip() or ""
@@ -1787,6 +1817,8 @@ def generate_templates(
     # manual_customer overrides customer for every row (e.g. 511 Tactical has no customer column)
     if manual_customer:
         customer_fallback = manual_customer.strip()
+    elif "vuori" in source_name:
+        customer_fallback = "Vuori"
     default_qty_if_missing = bool(manual_po_norm)
 
     product_sheet_map: dict[str, list[dict[str, Any]]] = {}
@@ -1855,21 +1887,22 @@ def generate_templates(
         add_warning("Missing column mapping for 'brand' (comments will use fallback brand value).")
 
     def _cell(row_idx: int, key: str) -> Any:
-        col_idx = col_map.get(key)
+        col_idx = col_map.get(key) # type: ignore
         if not col_idx:
             return None
-        return src.cell(row=row_idx, column=col_idx).value
+        return src.cell(row=row_idx, column=col_idx).value # type: ignore
 
     warned_empty_plant_destination: set[str] = set()
 
-    for row_idx in range(data_start_row, src.max_row + 1):
+    assert src.max_row is not None
+    for row_idx in range(data_start_row, src.max_row + 1): # type: ignore
         pivot_expansions = [{"pivot_col": None, "pivot_header": "", "pivot_qty": None}]
         if pivot_info.get("is_pivot"):
             pivot_expansions = []
-            for pivot_col, pivot_header in pivot_info.get("pivot_cols", []):
-                pivot_qty = _to_int_quantity(src.cell(row=row_idx, column=pivot_col).value)
+            for pivot_col, pivot_header in pivot_info.get("pivot_cols", []):  # type: ignore
+                pivot_qty = _to_int_quantity(src.cell(row=row_idx, column=pivot_col).value) # type: ignore
                 if pivot_qty > 0:
-                    pivot_expansions.append({
+                    pivot_expansions.append({  # type: ignore
                         "pivot_col": pivot_col,
                         "pivot_header": pivot_header,
                         "pivot_qty": pivot_qty,
@@ -1891,11 +1924,11 @@ def generate_templates(
             raw_po_val = _row_cell("po")
             po = manual_po_norm or _normalize_po(raw_po_val)
             if not po:
-                skipped_empty_po += 1
+                skipped_empty_po += 1 # type: ignore
                 if len(skipped_empty_po_samples) < 10:
                     skipped_empty_po_samples.append((
                         row_idx,
-                        _as_text(src.cell(row=row_idx, column=1).value),
+                        _as_text(src.cell(row=row_idx, column=1).value), # type: ignore
                         _as_text(src.cell(row=row_idx, column=2).value),
                         _as_text(src.cell(row=row_idx, column=3).value),
                         _as_text(raw_po_val),
@@ -1911,8 +1944,13 @@ def generate_templates(
             product = ""
         product_external_ref = _as_text(_cell(row_idx, "product_external_ref"))
         product_customer_ref = _as_text(_cell(row_idx, "product_customer_ref"))
+        brand_value  = _as_text(_cell(row_idx, "brand")) or (manual_brand or "")
+        if not brand_value and "vuori" in source_name:
+            brand_value = "vuori"
         colour  = _as_text(_cell(row_idx, "colour"))
         colour_display = _as_text(_cell(row_idx, "colour_display"))  # Longtext: human-readable name
+        if (brand_value or "").strip().lower() == "vuori" and colour_display:
+            colour = colour_display
         qty_cell = _cell(row_idx, "qty")
         if qty_cell is None and default_qty_if_missing:
             qty = 1
@@ -1937,7 +1975,6 @@ def generate_templates(
             add_warning(f"Row {row_idx} PO {po}: season/range is empty; row skipped.")
             continue
         template_raw = _as_text(_cell(row_idx, "template"))
-        brand_value  = _as_text(_cell(row_idx, "brand")) or (manual_brand or "")
         customer_raw = _as_text(_cell(row_idx, "customer"))
         if not brand_value and customer_raw:
             customer_key = customer_raw.strip().lower()
@@ -1970,14 +2007,14 @@ def generate_templates(
                 add_warning(f"Row {row_idx} PO {po}: JDE Style missing; PLM fields left blank.")
                 plm_missing = True
             lookup_key = f"{jde_style}|{colour_key}" if jde_style else ""
-            matches = product_sheet_map.get(lookup_key, []) if lookup_key else []
+            matches = product_sheet_map.get(lookup_key, []) if lookup_key else [] # type: ignore
             # If multiple matches, use the first (exact buyer_style_number matches are inserted first)
             if len(matches) > 1:
                 matches = [matches[0]]
             if len(matches) == 0 and jde_style:
                 style_colour_code = _extract_style_colour_code(jde_style)
                 fallback_key = f"{jde_style}|{style_colour_code}" if style_colour_code else ""
-                matches = product_sheet_map.get(fallback_key, []) if fallback_key else []
+                matches = product_sheet_map.get(fallback_key, []) if fallback_key else [] # type: ignore
                 if len(matches) > 1:
                     matches = [matches[0]]
             # Prefix match: PLM Buyer Style Number may be a prefix of the buy file style key
@@ -2003,7 +2040,7 @@ def generate_templates(
                         colour_ok = (colour.lower() in plm_colour_raw or
                                      plm_colour_raw in colour.lower())
                     if colour_ok:
-                        matches = plm_entries[:1]
+                        matches = plm_entries[:1]  # type: ignore
                         break
             if len(matches) == 0 and not plm_missing:
                 add_warning(f"Row {row_idx} PO {po}: JDE {jde_style} color {colour} not found in PLM sheet; PLM fields left blank.")
@@ -2015,11 +2052,12 @@ def generate_templates(
                 add_warning(f"Row {row_idx} PO {po}: PLM Color Name is 'Not Set'; line/size skipped.")
                 continue
 
-            if plm_entry and brand_value.strip().lower() != "vans" and _as_text(plm_entry.get("product_name")):
+            bv_lower = brand_value.strip().lower() if brand_value else ""
+            if plm_entry and bv_lower != "vans" and _as_text(plm_entry.get("product_name")):
                 product = _as_text(plm_entry.get("product_name"))
             if plm_entry and _as_text(plm_entry.get("factory")):
                 vendor_code = _as_text(plm_entry.get("factory"))
-            if plm_entry and brand_value.strip().lower() != "vans" and _as_text(plm_entry.get("colour")):
+            if plm_entry and bv_lower != "vans" and _as_text(plm_entry.get("colour")): # type: ignore
                 colour_out = _as_text(plm_entry.get("colour"))
         # colour_out is PLM Color Name if found, else raw Material value — Longtext (colour_display) is NOT used as colour output
 
@@ -2027,7 +2065,7 @@ def generate_templates(
         # Skip suffix building if PO came from the pre-computed last column (already fully formed,
         # e.g. ON AG "PO002924-SWITZERLAND-ZRH-MKT", Cotopaxi "PO002864", Hunter "PO002933-UKSOS")
         po_col_idx = col_map.get("po")
-        po_is_precomputed = (po_col_idx is not None and po_col_idx == src.max_column)
+        po_is_precomputed = (po_col_idx is not None and po_col_idx == src.max_column) # type: ignore
         brand_key_for_row = (brand_value or "").strip().lower()
         plant_value_raw = _as_text(_cell(row_idx, "plant"))
         plant_value = _normalize_vans_plant_code(plant_value_raw) if brand_key_for_row == "vans" else plant_value_raw
@@ -2084,6 +2122,8 @@ def generate_templates(
                 brand_lookup = "haglofs"
             elif "fox racing" in _cust_lower or "fox" in _cust_lower:
                 brand_lookup = "fox racing"
+            elif "vuori" in _cust_lower:
+                brand_lookup = "vuori"
             elif "511 tactical" in _cust_lower or "511tactical" in _cust_lower:
                 brand_lookup = "511 tactical"
             elif "obermeyer" in _cust_lower:
@@ -2105,9 +2145,9 @@ def generate_templates(
         brand_config       = _get_brand_config(brand_lookup)
         # When customer_raw is empty (e.g. NF0 rows with plm_missing), use brand map instead of raw customer_fallback
         _cust_raw_for_resolve = customer_raw or (BRAND_CUSTOMER_MAP.get((brand_lookup or "").strip().lower(), "") if brand_lookup else "")
-        customer_value     = _resolve_customer_subtype(_cust_raw_for_resolve, brand_value, customer_fallback)
+        customer_value     = _resolve_customer_subtype(_cust_raw_for_resolve, str(brand_value), customer_fallback)
         supplier_value     = _resolve_supplier(vendor_code, vendor_name, brand_lookup)
-        size_value         = "One Size" if (not size_raw or size_raw.strip().lower() == "os" or size_raw.strip().lower() == "one size") else size_raw
+        size_value         = "One Size" if (not size_raw or size_raw.strip().lower() in {"os", "ons", "one size"}) else size_raw
         if brand_lookup.strip().lower() in {"vans", "rossignol"}:
             product = _as_text(_cell(row_idx, "product_alt")) or product
         product_range      = _format_product_range(season_value)
@@ -2135,7 +2175,7 @@ def generate_templates(
             # colour_out stays as Color from buy file (already set above)
             # vendor_code stays as buy file value (already set above)
             # customer_value: fall back to brand map instead of blanking
-            customer_value = _resolve_customer_subtype(_cust_raw_for_resolve, brand_value, customer_fallback)
+            customer_value = _resolve_customer_subtype(_cust_raw_for_resolve, str(brand_value), customer_fallback)
 
         if brand_config and isinstance(brand_config.get("keyusers"), dict):
             cfg_keyusers = brand_config.get("keyusers") or {}
@@ -2151,7 +2191,7 @@ def generate_templates(
             }
         valid_statuses = []
         if brand_config and isinstance(brand_config.get("valid_statuses"), list):
-            valid_statuses = [str(s).strip().lower() for s in brand_config.get("valid_statuses") if s]
+            valid_statuses = [str(s).strip().lower() for s in brand_config.get("valid_statuses") if s]  # type: ignore
 
         # ── Row-level validation warnings ────────────────────────────────────
         for field_name, field_val, fallback_desc in [
@@ -2202,7 +2242,7 @@ def generate_templates(
             continue
 
         # ── LINES row (one per buy file row) ─────────────────────────────────
-        line_item_counter[po] += 1
+        line_item_counter[po] += 1 # type: ignore
         line_item = line_item_counter[po]
 
         # Fix #2: Map TransportLocation from source for LINES (with plant-derived fallback for M88)
@@ -2242,14 +2282,14 @@ def generate_templates(
     # ── Post-processing integrity checks ─────────────────────────────────────
     unique_order_count = len(seen_orders)
     unique_po_count = len({po for po, _ in seen_orders})
-    orders_count    = orders_ws.max_row - 1
+    orders_count    = orders_ws.max_row - 1 # type: ignore
 
     if orders_count != unique_order_count:
         raise ValueError(
             f"ORDERS row count mismatch. Expected {unique_order_count}, got {orders_count}."
         )
 
-    if total_lines_rows != total_buy_rows - skipped_no_colour:
+    if total_lines_rows != total_buy_rows - skipped_no_colour: # type: ignore
         raise ValueError(
             f"LINES row count mismatch. Expected {total_buy_rows - skipped_no_colour}, got {total_lines_rows}."
         )
