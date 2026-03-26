@@ -24,28 +24,49 @@ function mergePOs(primary: ProcessedPO, secondary: ProcessedPO): ProcessedPO {
         header: primary.header,
         lines: [...primary.lines],
         sizes: { ...primary.sizes },
+        orderKeys: [...(primary.orderKeys || [])],
     };
 
     const lineMap = new Map<number, POLine>();
     primary.lines.forEach(line => lineMap.set(line.lineItem, line));
-    secondary.lines.forEach(line => {
-        const existing = lineMap.get(line.lineItem);
-        if (!existing) {
-            merged.lines.push(line);
-            lineMap.set(line.lineItem, line);
-        } else {
-            if (!existing.styleNumber && line.styleNumber) existing.styleNumber = line.styleNumber;
-            if (existing.colour === "" && line.colour) existing.colour = line.colour;
-            if ((existing.cost === undefined || existing.cost === "") && line.cost !== undefined && line.cost !== "") {
-                existing.cost = line.cost;
+        secondary.lines.forEach(line => {
+            const existing = lineMap.get(line.lineItem);
+            if (!existing) {
+                merged.lines.push(line);
+                lineMap.set(line.lineItem, line);
+            } else {
+                if (!existing.styleNumber && line.styleNumber) existing.styleNumber = line.styleNumber;
+                if (existing.colour === "" && line.colour) existing.colour = line.colour;
+                if (!existing.styleColor && line.styleColor) existing.styleColor = line.styleColor;
+                if (!existing.ourReference && line.ourReference) existing.ourReference = line.ourReference;
+                if (!existing.startDate && line.startDate) existing.startDate = line.startDate;
+                if (!existing.cancelDate && line.cancelDate) existing.cancelDate = line.cancelDate;
+                if (!existing.hhStartDate && line.hhStartDate) existing.hhStartDate = line.hhStartDate;
+                if (!existing.hhCancelDate && line.hhCancelDate) existing.hhCancelDate = line.hhCancelDate;
+                if (!existing.hhConfirmedDeliveryDate && line.hhConfirmedDeliveryDate) existing.hhConfirmedDeliveryDate = line.hhConfirmedDeliveryDate;
+                if (!existing.transportLocation && line.transportLocation) existing.transportLocation = line.transportLocation;
+                if ((existing.cost === undefined || existing.cost === "") && line.cost !== undefined && line.cost !== "") {
+                    existing.cost = line.cost;
+                }
             }
-        }
-    });
+        });
 
     for (const [lineItem, szs] of Object.entries(secondary.sizes)) {
         const idx = Number(lineItem);
         if (!merged.sizes[idx]) merged.sizes[idx] = [];
         merged.sizes[idx] = [...merged.sizes[idx], ...szs];
+    }
+
+    if (secondary.orderKeys && secondary.orderKeys.length > 0) {
+        const existingKeys = new Set((merged.orderKeys || []).map(k => `${k.purchaseOrder}||${k.customer}||${k.transportLocation}`));
+        secondary.orderKeys.forEach(key => {
+            const signature = `${key.purchaseOrder}||${key.customer}||${key.transportLocation}`;
+            if (!existingKeys.has(signature)) {
+                merged.orderKeys = merged.orderKeys || [];
+                merged.orderKeys.push(key);
+                existingKeys.add(signature);
+            }
+        });
     }
 
     return merged;
@@ -80,6 +101,7 @@ export async function POST(req: NextRequest) {
         const manualKeyUser4 = (formData.get("manualKeyUser4")?.toString() || "").trim();
         const manualKeyUser5 = (formData.get("manualKeyUser5")?.toString() || "").trim();
         const manualSeason = (formData.get("manualSeason")?.toString() || "").trim();
+        const effectiveManualProductRange = manualProductRange || manualSeason;
         const manualCustomer = (formData.get("manualCustomer")?.toString() || "").trim();
         const manualBrand = (formData.get("manualBrand")?.toString() || "").trim();
 
@@ -110,6 +132,7 @@ export async function POST(req: NextRequest) {
         });
 
         const fileBuffers: Array<{ file: File; buffer: Buffer }> = [];
+        const referenceSizesBuffers: Buffer[] = [];
         for (const file of files) {
             await logEvent({
                 eventName: "BUY_FILE_UPLOADED",
@@ -119,6 +142,10 @@ export async function POST(req: NextRequest) {
             });
             const buffer = Buffer.from(await file.arrayBuffer());
             fileBuffers.push({ file, buffer });
+            const lowerName = file.name.toLowerCase();
+            if (lowerName.includes('sizes') && !lowerName.includes('buy') && !lowerName.includes('product shi')) {
+                referenceSizesBuffers.push(buffer);
+            }
         }
 
         await logEvent({
@@ -142,7 +169,10 @@ export async function POST(req: NextRequest) {
             const engine = new ExcelEngine(runId || undefined, userId);
             const analysis = await engine.analyzeWorkbook(entry.buffer);
             productSheetMap = { ...productSheetMap, ...analysis.productSheetMap };
-            if (analysis.hasBuySheet) {
+            const lowerName = entry.file.name.toLowerCase();
+            const isProductShiReference = lowerName.includes('product shi');
+            const isReferenceSizes = lowerName.includes('sizes') && !lowerName.includes('buy') && !lowerName.includes('product shi');
+            if (analysis.hasBuySheet && !isReferenceSizes && !isProductShiReference) {
                 buyFiles.push(entry);
             }
         }
@@ -153,7 +183,7 @@ export async function POST(req: NextRequest) {
             const { data, errors, formatDetection } = await engine.processBuyFile(buffer, {
                 manualPurchaseOrder: manualPo || undefined,
                 manualDestination: manualDestination || undefined,
-                manualProductRange: manualProductRange || undefined,
+                manualProductRange: effectiveManualProductRange || undefined,
                 manualTemplate: manualTemplate || undefined,
                 manualLinesTemplate: manualLinesTemplate || undefined,
                 manualComments: manualComments || undefined,
@@ -168,6 +198,8 @@ export async function POST(req: NextRequest) {
                 manualBrand: manualBrand || undefined,
                 defaultQuantityIfMissing: !!manualPo,
                 productSheetMap,
+                llBeanReferenceSizesBuffer: referenceSizesBuffers[0],
+                sourceFilename: file.name,
             });
 
             let allSizes = 0;

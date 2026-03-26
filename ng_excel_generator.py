@@ -19,6 +19,7 @@ TRANSPORT_MAP = {
     "ocean": "Sea",
     "air": "Air",
     "sea": "Sea",
+    "vessel": "Sea",
     # Arcteryx-specific transport codes
     "s1 - seafreight": "Sea",
     "s1": "Sea",
@@ -219,6 +220,19 @@ PLANT_COUNTRY_MAP: dict[str, str] = {
     # 511 Tactical WH codes
     "3020": "Sweden",   # SE.PO- prefix confirms Sweden
     "5001": "Hong Kong",  # HK.PO- prefix confirms Hong Kong
+    # Vans DC Plant codes
+    "1023": "USA",
+    "d010": "Czech Republic",
+    "vd10": "UAE",
+    "d00028": "UAE",
+    # Vans DC Plant name patterns
+    "south ontario dc": "USA",
+    "canada brampton dc": "Canada",
+    "vf prague dc cz": "Czech Republic",
+    "vf northern europe": "UK",
+    "vf northern europe(uk)": "UK",
+    "sun and sand sports": "UAE",
+    "sun and sand sports llc": "UAE",
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -246,6 +260,7 @@ BRAND_SUPPLIER_MAP: dict[str, str] = {
     "burton": "PT. UWU JUMP INDONESIA",
     "cotopaxi": "PT. UWU JUMP INDONESIA",
     "hunter": "PT. UWU JUMP INDONESIA",
+    "rossignol": "PT. UWU JUMP INDONESIA",
 }
 
 # Brand → friendly customer name used in output files.
@@ -266,6 +281,15 @@ BRAND_CUSTOMER_MAP: dict[str, str] = {
     "burton": "Burton",
     "cotopaxi": "Cotopaxi",
     "fox racing": "Fox Racing",
+    "rossignol": "Rossignol",
+    "vans": "Vans",
+    "south ontario dc": "Vans",
+    "canada brampton dc": "Vans",
+    "vf prague dc cz": "Vans",
+    "vf northern europe": "Vans",
+    "vf northern europe(uk)": "Vans",
+    "sun and sand sports": "Vans",
+    "sun and sand sports llc": "Vans",
     # Hunter: customer name in file is "Batra Group" — pass through raw, no override
     # "hunter": "Hunter",
     # Fox Racing: multiple distributors in file — customer passes through raw from file, no override
@@ -357,6 +381,16 @@ BRAND_KEYUSER_MAP: dict[str, dict[str, str]] = {
         "KeyUser7": "",
         "KeyUser8": "",
     },
+    "rossignol": {
+        "KeyUser1": "Via",
+        "KeyUser2": "April Joy",
+        "KeyUser3": "",
+        "KeyUser4": "Via",
+        "KeyUser5": "Elaine Sanchez",
+        "KeyUser6": "",
+        "KeyUser7": "",
+        "KeyUser8": "",
+    },
 }
 
 # Default KeyUser block (all blank) used when brand not found in map.
@@ -380,6 +414,7 @@ BRAND_ORDERS_TEMPLATE_MAP: dict[str, str] = {
     "columbia":       "BULK",
     "arcteryx":       "BULK",
     "arc'teryx":      "BULK",
+    "rossignol":      "Major Brand Bulk",
 }
 
 BRAND_LINES_TEMPLATE_MAP: dict[str, str] = {
@@ -389,6 +424,7 @@ BRAND_LINES_TEMPLATE_MAP: dict[str, str] = {
     "columbia":       "BULK",
     "arcteryx":       "BULK",
     "arc'teryx":      "BULK",
+    "rossignol":      "FOB Bulk EDI PO (New)",
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -453,19 +489,23 @@ HEADER_ALIASES: dict[str, list[str]] = {
             # Cotopaxi raw INFOR export (2-letter country code column)
             "country",
             # Req 1: expanded transportLocation aliases
-            "ship to country", "destination name",
+            "ship to country",
         ],
     "plant": [
-        "plant", "plant code",
+        "plant", "plant code", "dc plant",
         # 511 Tactical
         "wh",
+        # Vans
+        "jde plant", "jde_plant", "dc plant",
     ],
     "plant_name": [
         # Madison88/TNF buy file
-        "plant name",
+        "plant name", "ship-to party name",
+        # Vans
+        "destination name", "destination", "plant_name",
     ],
     "po": [
-        "po #", "po#", "po", "pono",
+        "po #", "po#", "po", "pono", "po_number", "ponumber", "buyer po", "buyer po number",
         "purchase order", "purchaseorder",
         "extraction po #", "extraction po#",
         # Arcteryx – per-shipment tracking code used as PO key
@@ -483,7 +523,7 @@ HEADER_ALIASES: dict[str, list[str]] = {
     "buyer_po_number": [
         "master po#", "master po #",
         # Req 1: expanded buyerPoNumber aliases
-        "buyer po", "buyer po #", "customer po",
+        "buyer po", "buyer po #", "customer po", "po#",
     ],
     "product": [
         "material style", "product", "style number", "style no", "style no.",
@@ -507,6 +547,7 @@ HEADER_ALIASES: dict[str, list[str]] = {
     ],
     "product_alt": [
         "jde style",
+        "m88 ref",
         # Arcteryx model = base style without colour suffix
         "model",
         # Madison88/TNF buy file base style
@@ -611,7 +652,7 @@ HEADER_ALIASES: dict[str, list[str]] = {
         # Hunter
         "colour code",
         # Req 1: expanded colour aliases
-        "colour desc", "colour description", "color desc",
+        "colour desc", "colour description", "color desc", "color description",
     ],
     "colour_display": [
         # Madison88/TNF buy file human-readable colour name (output only, not PLM lookup key)
@@ -621,6 +662,7 @@ HEADER_ALIASES: dict[str, list[str]] = {
     ],
     "qty": [
         "ordered qty", "quantity", "qty",
+        "sum of order total qty", "sum of qty (lum)", "sum of qty (lum)2",
         "open qty (pcs/prs)",
         # Arcteryx
         "requested qty",
@@ -659,7 +701,13 @@ HEADER_ALIASES: dict[str, list[str]] = {
         "ship window end date",
         # Req 1: expanded exFtyDate aliases
         "ship date", "ship window", "planned ship date",
-        "in-dc date", "in dc date", "dc arrival date",
+        "in-dc date", "in dc date", "dc arrival date", "shipping date",
+    ],
+    "brand_requested_crd": [
+        "brand requested crd",
+    ],
+    "vans_confirmed_vendor_crd": [
+        "confirmed crd dt (vendor) -(vendor confirmed crd dt)",
     ],
     "confirmed_ex_fac": [
         "confirmed fty ex fac", "confirmed ex fac", "fty ex fac",
@@ -674,6 +722,7 @@ HEADER_ALIASES: dict[str, list[str]] = {
         "transport mode",
         # Madison88/TNF buy file
         "shipment mode", "transportation mode description",
+        "transportation mode",
         # Fox Racing / Hunter
         "shipping instructions",
         # Burton
@@ -808,6 +857,9 @@ def _normalize_colour_key(value: Any) -> str:
     raw = _as_text(value).strip()
     if not raw:
         return ""
+    m = re.search(r"^[A-Z]{2,5}\s*-\s*([A-Z0-9]{2,5})\b", raw.upper())
+    if m:
+        return m.group(1)
     upper = raw.upper()
     compact = re.sub(r"\s*-\s*", "-", upper)
     compact = re.sub(r"\s+", "", compact)
@@ -835,6 +887,12 @@ def _normalize_colour_key(value: Any) -> str:
     return raw_l
 
 
+def _extract_style_colour_code(value: Any) -> str:
+    upper = _as_text(value).strip().upper()
+    m = re.search(r"([A-Z0-9]{3})$", upper)
+    return m.group(1) if m else ""
+
+
 def _normalize_style_key(value: Any) -> str:
     raw = _as_text(value).strip()
     if not raw:
@@ -851,30 +909,29 @@ def _detect_product_sheet(ws) -> tuple[bool, int]:
     buy_headers = {
         "po #", "pono", "purchase order", "purchaseorder", "line #s",
         "lineitem", "ordered qty", "qty", "quantity", "season", "brand",
+        "dc plant", "ship-to party name",
+        "sum of order total qty", "sum of qty (lum)2",
     }
     for r in range(1, min(50, ws.max_row) + 1):
-        row = ws[r]
-        score = 0
-        buy_score = 0
-        for cell in row:
-            val = _as_text(cell.value).lower().strip()
-            if val in PRODUCT_SHEET_ALIASES:
-                score += 1
-            if val in buy_headers:
-                buy_score += 1
-        if score > best_score:
-            best_score = score
+        row_cells = [cell for cell in ws[r]]
+        row_vals = [_as_text(c.value).lower().strip() for c in row_cells]
+        
+        row_product_score = len([v for v in row_vals if v in PRODUCT_SHEET_ALIASES])
+        row_buy_score = len([v for v in row_vals if v in buy_headers])
+        
+        if row_buy_score >= 2:
+            continue
+        if row_product_score > best_score:
+            best_score = row_product_score
             header_row = r
     # Exclude sheets that look like buy sheets (high buy_score means it's a buy file sheet)
     if best_score < 3:
         return False, header_row
     # Re-check buy_score at the detected header row
-    final_buy_score = 0
-    for cell in ws[header_row]:
-        val = _as_text(cell.value).lower().strip()
-        if val in buy_headers:
-            final_buy_score += 1
-    if final_buy_score >= 2:
+    header_vals = [_as_text(cell.value).lower().strip() for cell in ws[header_row]]
+    final_header_buy_score = len([v for v in header_vals if v in buy_headers])
+    
+    if final_header_buy_score >= 2:
         return False, header_row
     return True, header_row
 
@@ -1029,6 +1086,45 @@ def _customer_suffix(raw_customer: str) -> str:
     if "outlet" in text:
         return "Outlet"
     return ""
+
+
+def _normalize_vans_po_suffix(raw_customer: str) -> str:
+    text = _strip_brackets(_as_text(raw_customer)).strip()
+    key = text.lower()
+    if not key:
+        return ""
+    if "south ontario" in key:
+        return "South Ontario"
+    if "brampton" in key:
+        return "Brampton"
+    if "sun and sand sports" in key:
+        return "Sun and Sand Sports"
+    if "vf prague" in key:
+        return "VF Prague DC CZ"
+    if "vf northern europe" in key:
+        return "VF Northern Europe (UK)"
+    return re.sub(r"\s+dc$", "", text, flags=re.IGNORECASE).strip()
+
+
+def _normalize_vans_plant_code(raw_plant: str) -> str:
+    plant = _strip_brackets(_as_text(raw_plant)).strip()
+    if not plant:
+        return ""
+    if plant.lower() == "d00028":
+        return "VD10"
+    return plant.upper()
+
+
+def _normalize_vans_line_status(po_value: str, status_value: str) -> str:
+    return ""
+
+
+def _normalize_status(raw_status: str, brand: str) -> str:
+    status = _strip_brackets(_as_text(raw_status)).strip()
+    brand_key = _strip_brackets(_as_text(brand)).strip().lower()
+    if brand_key == "vans" and (not status or status.lower() == "converted"):
+        return "Confirmed"
+    return status or "Confirmed"
 
 
 def _format_product_range(season: str) -> str:
@@ -1566,6 +1662,12 @@ def _detect_layout(
                     col_map[key] = col
                     break
 
+        dc_plant_cols = [col for col, hdr in headers_by_col.items() if _header_matches(hdr, "dc plant")]
+        if dc_plant_cols:
+            col_map.setdefault("plant", dc_plant_cols[0])
+            if len(dc_plant_cols) > 1:
+                col_map.setdefault("plant_name", dc_plant_cols[1])
+
         # Detect pre-computed NG PO in last column (ON AG, Cotopaxi, 66North, Hunter, Obermeyer, etc.)
         # Pattern: last column header is "PO002924" or similar — the NG PO number itself.
         # Values in that column are the full pre-built PO strings (e.g. "PO002924-SWITZERLAND-ZRH-MKT").
@@ -1821,7 +1923,10 @@ def generate_templates(
             qty = _to_int_quantity(qty_cell)
 
         buyer_po_number_raw = _cell(row_idx, "buyer_po_number")
-        orig_ex_fac  = _cell(row_idx, "orig_ex_fac") or _cell(row_idx, "confirmed_ex_fac")
+        vans_confirmed_vendor_crd = _cell(row_idx, "vans_confirmed_vendor_crd")
+        brand_requested_crd = _cell(row_idx, "brand_requested_crd")
+        is_vans_row = _as_text(_cell(row_idx, "brand")).strip().lower() == "vans" or BRAND_CUSTOMER_MAP.get(_as_text(_cell(row_idx, "customer")).strip().lower()) == "Vans"
+        orig_ex_fac  = (vans_confirmed_vendor_crd or brand_requested_crd or _cell(row_idx, "orig_ex_fac") or _cell(row_idx, "confirmed_ex_fac")) if is_vans_row else (_cell(row_idx, "orig_ex_fac") or _cell(row_idx, "confirmed_ex_fac"))
         buy_date     = _cell(row_idx, "buy_date")
         trans_cond   = _cell(row_idx, "trans_cond")
         cancel_date_raw = _cell(row_idx, "cancel_date")
@@ -1834,6 +1939,10 @@ def generate_templates(
         template_raw = _as_text(_cell(row_idx, "template"))
         brand_value  = _as_text(_cell(row_idx, "brand")) or (manual_brand or "")
         customer_raw = _as_text(_cell(row_idx, "customer"))
+        if not brand_value and customer_raw:
+            customer_key = customer_raw.strip().lower()
+            if BRAND_CUSTOMER_MAP.get(customer_key) == "Vans" or "vans" in customer_key:
+                brand_value = "vans"
         size_raw     = _as_text(_cell(row_idx, "size"))
         vendor_code  = _as_text(_cell(row_idx, "vendor_code"))
         vendor_name  = _as_text(_cell(row_idx, "vendor_name"))
@@ -1865,6 +1974,12 @@ def generate_templates(
             # If multiple matches, use the first (exact buyer_style_number matches are inserted first)
             if len(matches) > 1:
                 matches = [matches[0]]
+            if len(matches) == 0 and jde_style:
+                style_colour_code = _extract_style_colour_code(jde_style)
+                fallback_key = f"{jde_style}|{style_colour_code}" if style_colour_code else ""
+                matches = product_sheet_map.get(fallback_key, []) if fallback_key else []
+                if len(matches) > 1:
+                    matches = [matches[0]]
             # Prefix match: PLM Buyer Style Number may be a prefix of the buy file style key
             # e.g. PLM has "2UF1067", buy file has "2UF10674959" — try all PLM keys where
             # the style portion is a prefix of jde_style
@@ -1900,11 +2015,11 @@ def generate_templates(
                 add_warning(f"Row {row_idx} PO {po}: PLM Color Name is 'Not Set'; line/size skipped.")
                 continue
 
-            if plm_entry and _as_text(plm_entry.get("product_name")):
+            if plm_entry and brand_value.strip().lower() != "vans" and _as_text(plm_entry.get("product_name")):
                 product = _as_text(plm_entry.get("product_name"))
             if plm_entry and _as_text(plm_entry.get("factory")):
                 vendor_code = _as_text(plm_entry.get("factory"))
-            if plm_entry and _as_text(plm_entry.get("colour")):
+            if plm_entry and brand_value.strip().lower() != "vans" and _as_text(plm_entry.get("colour")):
                 colour_out = _as_text(plm_entry.get("colour"))
         # colour_out is PLM Color Name if found, else raw Material value — Longtext (colour_display) is NOT used as colour output
 
@@ -1913,17 +2028,27 @@ def generate_templates(
         # e.g. ON AG "PO002924-SWITZERLAND-ZRH-MKT", Cotopaxi "PO002864", Hunter "PO002933-UKSOS")
         po_col_idx = col_map.get("po")
         po_is_precomputed = (po_col_idx is not None and po_col_idx == src.max_column)
-        plant_value = _as_text(_cell(row_idx, "plant"))
+        brand_key_for_row = (brand_value or "").strip().lower()
+        plant_value_raw = _as_text(_cell(row_idx, "plant"))
+        plant_value = _normalize_vans_plant_code(plant_value_raw) if brand_key_for_row == "vans" else plant_value_raw
         plant_name_value = _as_text(_cell(row_idx, "plant_name"))
+        vans_po_suffix = _normalize_vans_po_suffix(customer_raw) if brand_key_for_row == "vans" else ""
         # Derive transport location: explicit column → plant name map → plant code map
         plant_derived_country = (
-            PLANT_COUNTRY_MAP.get(plant_name_value.strip().lower(), "")
+            PLANT_COUNTRY_MAP.get(plant_value_raw.strip().lower(), "")
             or PLANT_COUNTRY_MAP.get(plant_value.strip().lower(), "")
+            or PLANT_COUNTRY_MAP.get(plant_name_value.strip().lower(), "")
         )
-        dest_country_raw = manual_destination or _as_text(_cell(row_idx, "transport_location")) or plant_derived_country
+        rossignol_destination = manual_destination or _as_text(_cell(row_idx, "transport_location")) or plant_derived_country
+        dest_country_raw = (
+            (manual_destination or plant_derived_country or _as_text(_cell(row_idx, "transport_location"))) if brand_key_for_row == "vans"
+            else ("France" if brand_key_for_row == "rossignol" and _as_text(rossignol_destination).strip().upper() == "EU" else rossignol_destination)
+        )
         dest_country = COUNTRY_NAME_MAP.get(dest_country_raw.strip().upper(), dest_country_raw) if dest_country_raw else ""
         if not po_is_precomputed:
-            if plant_name_value:
+            if brand_key_for_row == "vans" and (plant_value or vans_po_suffix or plant_name_value):
+                po = "-".join([po] + [p for p in [plant_value, vans_po_suffix or plant_name_value] if p])
+            elif plant_name_value:
                 # M88 format: ManualPO-PlantCode-PlantName
                 po = "-".join([po] + [p for p in [plant_value, plant_name_value] if p])
             elif plant_value or dest_country:
@@ -1950,6 +2075,8 @@ def generate_templates(
             _vname_lower = (vendor_name or "").strip().lower()
             if "uwu jump" in _vname_lower or "madison 88" in _vname_lower:
                 brand_lookup = "tnf"
+        if not brand_lookup and re.match(r"^RL[A-Z0-9]", _as_text(_cell(row_idx, "product")).strip(), flags=re.IGNORECASE):
+            brand_lookup = "rossignol"
         # Customer name → brand inference for files with no explicit brand column
         if not brand_value and customer_raw:
             _cust_lower = customer_raw.strip().lower()
@@ -1980,7 +2107,9 @@ def generate_templates(
         _cust_raw_for_resolve = customer_raw or (BRAND_CUSTOMER_MAP.get((brand_lookup or "").strip().lower(), "") if brand_lookup else "")
         customer_value     = _resolve_customer_subtype(_cust_raw_for_resolve, brand_value, customer_fallback)
         supplier_value     = _resolve_supplier(vendor_code, vendor_name, brand_lookup)
-        size_value         = size_raw or "One Size"
+        size_value         = "One Size" if (not size_raw or size_raw.strip().lower() == "os" or size_raw.strip().lower() == "one size") else size_raw
+        if brand_lookup.strip().lower() in {"vans", "rossignol"}:
+            product = _as_text(_cell(row_idx, "product_alt")) or product
         product_range      = _format_product_range(season_value)
         if manual_template:
             orders_template = manual_template
@@ -1988,7 +2117,7 @@ def generate_templates(
         else:
             orders_template = _resolve_orders_template(brand_lookup, template_raw, brand_config)
             lines_template  = _resolve_lines_template(brand_lookup, template_raw, brand_config)
-        status_value       = status_raw if status_raw else "Confirmed"
+        status_value       = _normalize_status(status_raw, brand_lookup)
         comments_value     = _build_comments(
             brand_lookup, product_range, buy_date, orders_template, buy_round
         )
@@ -2052,7 +2181,8 @@ def generate_templates(
             seen_orders.add(order_key)
             # Fix #2: Map TransportLocation from source (with plant-derived fallback for M88)
             transport_location = _format_transport_location(
-                manual_destination or _cell(row_idx, "transport_location") or plant_derived_country
+                (manual_destination or plant_derived_country or _cell(row_idx, "transport_location")) if brand_key_for_row == "vans"
+                else ("France" if brand_key_for_row == "rossignol" and _as_text(manual_destination or _cell(row_idx, "transport_location") or plant_derived_country).strip().upper() == "EU" else (manual_destination or _cell(row_idx, "transport_location") or plant_derived_country))
             )
             _append_row(orders_ws, [
                 po, supplier_value, status_value, customer_value,
@@ -2077,7 +2207,8 @@ def generate_templates(
 
         # Fix #2: Map TransportLocation from source for LINES (with plant-derived fallback for M88)
         transport_location = _format_transport_location(
-            manual_destination or _cell(row_idx, "transport_location") or plant_derived_country
+            (manual_destination or plant_derived_country or _cell(row_idx, "transport_location")) if brand_key_for_row == "vans"
+            else ("France" if brand_key_for_row == "rossignol" and _as_text(manual_destination or _cell(row_idx, "transport_location") or plant_derived_country).strip().upper() == "EU" else (manual_destination or _cell(row_idx, "transport_location") or plant_derived_country))
         )
         # Fix #3: KeyDate per line from DeliveryDate
         key_date_line = delivery_date
@@ -2087,7 +2218,7 @@ def generate_templates(
         )
         _append_row(lines_ws, [
             po, line_item, product_range, product, customer_value,
-            delivery_date, trans_method, transport_location, status_value, purchase_price, "",
+            delivery_date, trans_method, transport_location, _normalize_vans_line_status(po, status_value), purchase_price, "",
             lines_template, key_date_line, SUPPLIER_PROFILE,
             "", "", CURRENCY, "", product_external_ref, product_customer_ref, "", "",
             buyer_po_number_out,

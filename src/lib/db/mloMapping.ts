@@ -41,6 +41,32 @@ const MOCK_MLO: MloMapping[] = [
         valid_statuses: ['Confirmed'],
         updated_by: 'mock',
         updated_at: '',
+    },
+    {
+        id: '3',
+        brand: 'Helly Hansen',
+        keyuser1: 'Angelah',
+        keyuser2: 'Mariane',
+        keyuser4: 'Angelah',
+        keyuser5: 'Jenica',
+        orders_template: 'Major Brand Bulk',
+        lines_template: 'FOB Bulk EDI PO (New)',
+        valid_statuses: ['Confirmed'],
+        updated_by: 'mock',
+        updated_at: '',
+    },
+    {
+        id: '4',
+        brand: 'Marmot',
+        keyuser1: 'Angelah',
+        keyuser2: 'Maricon Alvarez',
+        keyuser4: 'Angelah',
+        keyuser5: 'Liane Joy Sevilla',
+        orders_template: 'Major Brand Bulk',
+        lines_template: 'FOB Bulk EDI PO (New)',
+        valid_statuses: ['Confirmed'],
+        updated_by: 'mock',
+        updated_at: '',
     }
 ];
 
