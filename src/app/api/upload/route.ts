@@ -75,13 +75,16 @@ function mergePOs(primary: ProcessedPO, secondary: ProcessedPO): ProcessedPO {
 
 export async function POST(req: NextRequest) {
     let runId: string | null = null;
+    let stage = "start";
     try {
+        stage = "auth";
         // Simple auth guard (skipped if no UPLOAD_API_KEY is configured)
         const apiKey = req.headers.get('x-api-key') || '';
         if (process.env.UPLOAD_API_KEY && (!apiKey || apiKey !== process.env.UPLOAD_API_KEY)) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
+        stage = "rate_limit";
         const userIdHeader = req.headers.get('x-user-id') || '';
         const userId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(userIdHeader)
             ? userIdHeader
@@ -90,6 +93,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
         }
 
+        stage = "form_data";
         const formData = await req.formData();
         const files = formData.getAll("file") as File[];
         const manualPo = (formData.get("manualPo")?.toString() || "").trim();
@@ -109,6 +113,14 @@ export async function POST(req: NextRequest) {
         const manualCustomer = (formData.get("manualCustomer")?.toString() || "").trim();
         const manualBrand = (formData.get("manualBrand")?.toString() || "").trim();
         const inferredManualCustomer = manualCustomer || (files.some((f) => /vuori/i.test(f.name)) ? "Vuori" : "");
+
+        console.log("[upload] received request", {
+            userId,
+            fileCount: files?.length || 0,
+            filenames: files.map((f) => f.name),
+            hasManualPo: Boolean(manualPo),
+            hasProductSheet: files.some((f) => /product shi/i.test(f.name)),
+        });
 
         if (!files || files.length === 0) {
             return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
@@ -130,14 +142,17 @@ export async function POST(req: NextRequest) {
         }
 
         // Create run history record for this upload
+        stage = "create_run";
         runId = await createRun({
             user_id: userId,
             filename: files.map((f) => f.name).join(", "),
             status: 'Processing'
         });
+        console.log("[upload] run created", { runId });
 
         const fileBuffers: Array<{ file: File; buffer: Buffer }> = [];
         const referenceSizesBuffers: Buffer[] = [];
+        stage = "buffer_files";
         for (const file of files) {
             await logEvent({
                 eventName: "BUY_FILE_UPLOADED",
@@ -153,6 +168,7 @@ export async function POST(req: NextRequest) {
             }
         }
 
+        stage = "workflow_started";
         await logEvent({
             eventName: "WORKFLOW_STARTED",
             userId,
@@ -170,9 +186,15 @@ export async function POST(req: NextRequest) {
         let productSheetMap: Record<string, any> = {};
         const buyFiles: Array<{ file: File; buffer: Buffer }> = [];
 
+        stage = "analysis";
         for (const entry of fileBuffers) {
             const engine = new ExcelEngine(runId || undefined, userId);
             const analysis = await engine.analyzeWorkbook(entry.buffer);
+            console.log("[upload] analysis", {
+                filename: entry.file.name,
+                hasBuySheet: analysis.hasBuySheet,
+                productSheetKeys: Object.keys(analysis.productSheetMap || {}).length,
+            });
             productSheetMap = { ...productSheetMap, ...analysis.productSheetMap };
             const lowerName = entry.file.name.toLowerCase();
             const isProductShiReference = lowerName.includes('product shi');
@@ -182,9 +204,14 @@ export async function POST(req: NextRequest) {
             }
         }
 
+        stage = "process_buy";
         for (const entry of buyFiles) {
             const { file, buffer } = entry;
             const engine = new ExcelEngine(runId || undefined, userId);
+            console.log("[upload] processing buy file", {
+                filename: file.name,
+                mergedProductSheetKeys: Object.keys(productSheetMap || {}).length,
+            });
             const { data, errors, formatDetection } = await engine.processBuyFile(buffer, {
                 manualPurchaseOrder: manualPo || undefined,
                 manualDestination: manualDestination || undefined,
@@ -270,6 +297,7 @@ export async function POST(req: NextRequest) {
             }
         }
 
+        stage = "generate_outputs";
         const mergedData = Array.from(mergedPOsMap.values());
         const engine = new ExcelEngine(runId || undefined, userId);
         const outputs = await engine.generateOutputs(mergedData);
@@ -322,7 +350,15 @@ export async function POST(req: NextRequest) {
         });
 
     } catch (error: any) {
-        console.error("Upload error:", error);
+        console.error("Upload error:", {
+            stage,
+            message: error?.message,
+            code: error?.code,
+            details: error?.details,
+            hint: error?.hint,
+            name: error?.name,
+            stack: error?.stack,
+        });
         if (runId) {
             await updateRun(runId, {
                 status: 'Validation Failed',
@@ -331,6 +367,10 @@ export async function POST(req: NextRequest) {
                 completed_at: new Date().toISOString(),
             });
         }
-        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+        return NextResponse.json({
+            stage,
+            error: error?.message || "Internal Server Error",
+            details: error?.code || error?.hint || error?.details || null,
+        }, { status: 500 });
     }
 }
