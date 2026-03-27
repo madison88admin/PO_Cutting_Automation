@@ -54,6 +54,25 @@ export async function listUsers(): Promise<User[]> {
     return data || [];
 }
 
+export async function getDefaultWorkflowUserId(): Promise<string | null> {
+    if (isMock) return MOCK_ADMIN.id;
+
+    const { data, error } = await supabaseAdmin
+        .from('users')
+        .select('id')
+        .eq('is_active', true)
+        .order('role', { ascending: true })
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .single();
+
+    if (error || !data?.id) {
+        return null;
+    }
+
+    return data.id;
+}
+
 export async function createUser(user: Partial<User>): Promise<User | null> {
     if (isMock) return { ...MOCK_ADMIN, ...user } as User;
     const { data, error } = await supabaseAdmin
