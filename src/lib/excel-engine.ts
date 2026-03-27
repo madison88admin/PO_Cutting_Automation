@@ -3053,15 +3053,17 @@ export class ExcelEngine {
                         const manualLineKeyDate = po.manualKeyDate || '';
                         const exportDeliveryDate = isOnAg
                             ? this.formatDateString(this.shiftDate(line.startDate, -1) || line.startDate)
-                            : (isHH
+                            : isHH
                                 ? hhDeliveryDate
-                                : (isLlBean
+                                : isLlBean
                                     ? llbDeliveryDate
-                                : (isJackWolfskin
-                                    ? jwsDeliveryDate
-                                    : (isDynafit
-                            ? (this.formatDateString(line.cancelDate) || this.formatDateString(line.startDate) || dynafitDeliveryDate)
-                                        : this.formatDateString(line.startDate)))));
+                                    : isJackWolfskin
+                                        ? jwsDeliveryDate
+                                        : isDynafit
+                                            ? (this.formatDateString(line.cancelDate) || this.formatDateString(line.startDate) || dynafitDeliveryDate)
+                                            : (brandKey === '66 degrees north'
+                                                ? (this.formatDateString(line.cancelDate) || this.formatDateString(line.startDate) || '')
+                                                : this.formatDateString(line.startDate));
                         const lineKeyDate = isOnAg
                             ? (this.shiftDate(line.startDate, -1) || line.startDate)
                             : (manualLineKeyDate || (isDynafit ? dynafitLineKeyDate : line.startDate));
@@ -3077,8 +3079,8 @@ export class ExcelEngine {
                             purchaseUOM: '', sellingUOM: '', udfBuyerPoNumber: isDynafit
                                 ? (line.buyerPoNumber?.toString?.() || '')
                                 : (line.buyerPoNumber?.toString?.() || line.buyerPoNumber || ''),
-                            udfStartDate: isHH ? hhDeliveryDate : (isLlBean ? llbDeliveryDate : (isDynafit ? dynafitDeliveryDate : (isJackWolfskin ? jwsDeliveryDate : (brandKey === 'vuori' ? exportDeliveryDate : '')))),
-                            udfCanelDate: isHH ? hhDeliveryDate : (isLlBean ? llbDeliveryDate : (isDynafit ? dynafitDeliveryDate : (isJackWolfskin ? jwsDeliveryDate : (brandKey === 'vuori' ? exportDeliveryDate : '')))),
+                            udfStartDate: isHH ? hhDeliveryDate : (isLlBean ? llbDeliveryDate : (isDynafit ? dynafitDeliveryDate : (isJackWolfskin ? jwsDeliveryDate : ((brandKey === 'vuori' || brandKey === '66 degrees north') ? exportDeliveryDate : '')))),
+                            udfCanelDate: isHH ? hhDeliveryDate : (isLlBean ? llbDeliveryDate : (isDynafit ? dynafitDeliveryDate : (isJackWolfskin ? jwsDeliveryDate : ((brandKey === 'vuori' || brandKey === '66 degrees north') ? exportDeliveryDate : '')))),
                             udfInspectionResult: '', udfReportType: '', udfInspector: '', udfApprovalStatus: '',
                             udfSubmittedInspectionDate: '', findField_Product: '',
                         }).commit();
