@@ -8,6 +8,7 @@ const MAX_UPLOADS_PER_MINUTE = 10;
 const MAX_FILE_COUNT = 5;
 const MAX_FILE_SIZE = 30 * 1024 * 1024; // 30 MB per file
 const ALLOWED_MIME = new Set(["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]);
+const FALLBACK_USER_ID = "00000000-0000-0000-0000-000000000001";
 
 function checkRateLimit(userId: string): boolean {
     const now = Date.now();
@@ -81,7 +82,10 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
-        const userId = req.headers.get('x-user-id') || 'public-workflow-user';
+        const userIdHeader = req.headers.get('x-user-id') || '';
+        const userId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(userIdHeader)
+            ? userIdHeader
+            : FALLBACK_USER_ID;
         if (!checkRateLimit(userId)) {
             return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
         }
