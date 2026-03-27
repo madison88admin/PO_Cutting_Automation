@@ -623,14 +623,14 @@ HEADER_ALIASES: dict[str, list[str]] = {
         "final vendor name",  # Madison88/TNF buy file
         # Fox Racing
         "goods supplier name",
-        # 511 Tactical
-        "updated fty",
         # Peak Performance
         "production supplier name",
     ],
     "vendor_code": [
         "vendor code", "vendorcode", "vendor", "supplier",
         "product supplier", "productsupplier",
+        # 511 Tactical
+        "updated fty",
         # Madison88/TNF buy file
         "final vendor", "final factory",
         # Req 1: expanded productSupplier aliases
@@ -687,6 +687,7 @@ HEADER_ALIASES: dict[str, list[str]] = {
         "final qty", "revised qty",
         # Fox Racing
         "order qty",
+        "sum of order qty",
         # Peak Performance
         "final po qty",
         # EVO
@@ -1263,6 +1264,79 @@ def _strip_brackets(value: str) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
+def _extract_evo_ex_fty(raw_df: Any) -> str:
+    """Extract the EVO ex-factory date from the sheet header area."""
+    try:
+        max_rows = min(10, raw_df.max_row)
+        max_cols = min(10, raw_df.max_column)
+        for r in range(1, max_rows + 1):
+            for c in range(1, max_cols + 1):
+                label = _normalize_header(raw_df.cell(row=r, column=c).value)
+                if label == "ex factory date":
+                    candidate = raw_df.cell(row=r, column=min(c + 1, max_cols)).value
+                    formatted = _format_date(candidate, "%m/%d/%Y")
+                    return formatted or _as_text(candidate).strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _detect_evo_pivot_cols(header_series: Any) -> list[int]:
+    """Return EVO destination columns from the pivot header row."""
+    fixed_headers = {
+        "style #", "sku", "upc", "name", "color", "size", "lifecycle", "jpy", "bulk qty",
+    }
+    pivot_cols: list[int] = []
+    for col_idx, value in enumerate(header_series, start=1):
+        hdr = _normalize_header(_as_text(value))
+        if not hdr or hdr in fixed_headers:
+            continue
+        pivot_cols.append(col_idx)
+    return pivot_cols
+
+
+def _process_evo_pivot_row(
+    raw_df: Any,
+    row_idx: int,
+    header_row_idx: int,
+    destination_row_idx: int,
+    or_row_idx: int,
+    pivot_cols: list[int],
+) -> list[dict[str, Any]]:
+    """Explode one EVO source row into per-destination entries."""
+    entries: list[dict[str, Any]] = []
+    for col_idx in pivot_cols:
+        qty = _to_int_quantity(raw_df.cell(row=row_idx, column=col_idx).value)
+        if qty <= 0:
+            continue
+        dest_label = _strip_brackets(_as_text(raw_df.cell(row=destination_row_idx, column=col_idx).value)).strip()
+        or_number = _strip_brackets(_as_text(raw_df.cell(row=or_row_idx, column=col_idx).value)).strip()
+        if not or_number and not dest_label:
+            continue
+        if or_number.lower() == "or-xxx":
+            continue
+        entries.append({
+            "qty": qty,
+            "destination_label": dest_label,
+            "or_number": or_number,
+            "column": col_idx,
+            "header_row_idx": header_row_idx,
+        })
+    return entries
+
+
+def _extract_fox_bracketed_colour(value: str) -> str:
+    text = _strip_brackets(_as_text(value)).strip()
+    if not text:
+        return ""
+    matches = re.findall(r"\[([^\]]+)\]", _as_text(value))
+    if matches:
+        bracketed = matches[-1].strip()
+        if bracketed:
+            return bracketed
+    return text
+
+
 def _should_silently_ignore_header(header: str) -> bool:
     normalized = _normalize_header(header)
     exact_ignore = {
@@ -1640,6 +1714,7 @@ def _validate_output_slices(
 def _detect_layout(
     ws,
     required_keys: set[str] | None = None,
+    source_name: str | None = None,
 ) -> tuple[int, dict[str, int], str, int, int, set[str], dict[str, Any]]:
     best_row = 14
     best_map: dict[str, int] = {}
@@ -1724,6 +1799,18 @@ def _detect_layout(
         if not has_required:
             continue
 
+        source_name_lower = (source_name or "").lower()
+        if source_name_lower and "511 tactical" in source_name_lower and "quantity" not in col_map:
+            for col, hdr in headers_by_col.items():
+                if hdr == "total":
+                    col_map["quantity"] = col
+                    break
+        if source_name_lower and "fox racing" in source_name_lower and "quantity" not in col_map:
+            for col, hdr in headers_by_col.items():
+                if hdr == "sum of order qty":
+                    col_map["quantity"] = col
+                    break
+
         score = len(col_map)
 
         # Probe how many rows below actually have PO data (if PO exists)
@@ -1760,13 +1847,14 @@ def _pick_source_sheet(
     wb,
     requested_sheet: str | None,
     required_keys: set[str] | None = None,
+    source_name: str | None = None,
 ):
     if requested_sheet:
         if requested_sheet not in wb.sheetnames:
             available = ", ".join(wb.sheetnames)
             raise ValueError(f"Sheet '{requested_sheet}' not found. Available: {available}")
         ws = wb[requested_sheet]
-        return (ws,) + _detect_layout(ws, required_keys)
+        return (ws,) + _detect_layout(ws, required_keys, source_name)
 
     best_ws = wb.active
     best_data_start = 15
@@ -1778,7 +1866,7 @@ def _pick_source_sheet(
     best_pivot_info: dict[str, Any] = {"is_pivot": False, "pivot_cols": [], "fixed_cols": []}
 
     for ws in wb.worksheets:
-        data_start, col_map, layout_mode, score, nonempty, detected, pivot_info = _detect_layout(ws, required_keys)
+        data_start, col_map, layout_mode, score, nonempty, detected, pivot_info = _detect_layout(ws, required_keys, source_name)
         if (score > best_score) or (score == best_score and nonempty > best_nonempty):
             best_ws, best_data_start, best_col_map = ws, data_start, col_map
             best_layout_mode, best_score, best_nonempty, best_detected = layout_mode, score, nonempty, detected
@@ -1835,7 +1923,8 @@ def generate_templates(
         required_keys.add("qty")
 
     src, data_start_row, col_map, layout_mode, layout_score, probed_po_rows, detected_keys, pivot_info = \
-        _pick_source_sheet(wb, sheet_name, required_keys)
+        _pick_source_sheet(wb, sheet_name, required_keys, source_name)
+    evo_ex_fty = _extract_evo_ex_fty(src) if "evo" in source_name else ""
 
     orders_wb, lines_wb, sizes_wb = Workbook(), Workbook(), Workbook()
     orders_ws = orders_wb.active
@@ -1947,10 +2036,18 @@ def generate_templates(
         brand_value  = _as_text(_cell(row_idx, "brand")) or (manual_brand or "")
         if not brand_value and "vuori" in source_name:
             brand_value = "vuori"
+        if not brand_value and "evo" in source_name:
+            brand_value = "evo"
         colour  = _as_text(_cell(row_idx, "colour"))
         colour_display = _as_text(_cell(row_idx, "colour_display"))  # Longtext: human-readable name
         if (brand_value or "").strip().lower() == "vuori" and colour_display:
             colour = colour_display
+        if (brand_value or "").strip().lower() == "fox racing":
+            fox_colour = _extract_fox_bracketed_colour(colour)
+            if fox_colour:
+                colour = fox_colour
+        if (brand_value or "").strip().lower() == "evo" and evo_ex_fty:
+            orig_ex_fac = evo_ex_fty
         qty_cell = _cell(row_idx, "qty")
         if qty_cell is None and default_qty_if_missing:
             qty = 1
@@ -2215,6 +2312,79 @@ def generate_templates(
                 )
 
         # ── ORDERS row (one per unique PO) ───────────────────────────────────
+        if brand_lookup.strip().lower() == "evo" and pivot_info.get("is_pivot"):
+            evo_header_row_idx = max(1, data_start_row - 1)
+            evo_destination_row_idx = max(1, evo_header_row_idx - 2)
+            evo_or_row_idx = max(1, evo_header_row_idx - 1)
+            evo_header_series = [cell.value for cell in src[evo_header_row_idx]]  # type: ignore
+            evo_pivot_cols = _detect_evo_pivot_cols(evo_header_series)
+            if not evo_pivot_cols and pivot_info.get("pivot_cols"):
+                evo_pivot_cols = [int(col) for col, _ in pivot_info.get("pivot_cols", [])]  # type: ignore
+            evo_entries = _process_evo_pivot_row(
+                src,
+                row_idx,
+                evo_header_row_idx,
+                evo_destination_row_idx,
+                evo_or_row_idx,
+                evo_pivot_cols,
+            )
+            if not evo_entries:
+                total_buy_rows -= 1
+                continue
+            if len(evo_entries) > 1:
+                total_buy_rows += len(evo_entries) - 1
+
+            evo_order_customer_key = customer_value or customer_fallback
+            for entry in evo_entries:
+                evo_po = _normalize_po(entry.get("or_number")) or po
+                if not evo_po:
+                    continue
+                evo_destination = _format_transport_location(
+                    entry.get("destination_label")
+                    or manual_destination
+                    or plant_derived_country
+                    or _cell(row_idx, "transport_location")
+                    or ""
+                )
+                evo_order_key = (evo_po, f"{evo_order_customer_key}||{evo_destination}")
+                if evo_order_key not in seen_orders:
+                    seen_orders.add(evo_order_key)
+                    _append_row(orders_ws, [
+                        evo_po, supplier_value, status_value, customer_value,
+                        trans_method, evo_destination, "", orders_template,
+                        key_date_orders,
+                        "", "", comments_value, CURRENCY,
+                        keyusers["KeyUser1"], keyusers["KeyUser2"], keyusers["KeyUser3"],
+                        keyusers["KeyUser4"], keyusers["KeyUser5"], keyusers["KeyUser6"],
+                        keyusers["KeyUser7"], keyusers["KeyUser8"],
+                        "", "", "", "", "",
+                    ])
+
+                line_item_counter[evo_po] += 1 # type: ignore
+                line_item = line_item_counter[evo_po]
+                _append_row(lines_ws, [
+                    evo_po, line_item, product_range, product, customer_value,
+                    delivery_date, trans_method, evo_destination, _normalize_vans_line_status(evo_po, status_value), purchase_price, "",
+                    lines_template, delivery_date, SUPPLIER_PROFILE,
+                    "", "", CURRENCY, "", product_external_ref, product_customer_ref, "", "",
+                    evo_po,
+                    delivery_date, cancel_date,
+                    "", "", "", "", "", "",
+                ])
+                po_to_lines[evo_po].append(line_item)
+                total_lines_rows += 1
+
+                _append_row(sizes_ws, [
+                    evo_po, line_item, product_range, product,
+                    size_value, size_value, entry["qty"], colour_out,
+                    "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+                    "", "", "", "", "", "", "",
+                ])
+                po_to_nonzero_lines[evo_po].append(line_item)
+                po_to_sizes[evo_po].append(line_item)
+                total_sizes_rows += 1
+            continue
+
         order_customer_key = customer_value or customer_fallback
         order_key = (po, order_customer_key)
         if order_key not in seen_orders:

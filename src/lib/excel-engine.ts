@@ -629,6 +629,17 @@ export class ExcelEngine {
         return raw;
     }
 
+    private extractFoxBracketedColour(value: string): string {
+        const text = this.stripBrackets(value || '').trim();
+        if (!text) return '';
+        const matches = [...text.matchAll(/\[([^\]]+)\]/g)];
+        if (matches.length > 0) {
+            const bracketed = matches[matches.length - 1][1].trim();
+            if (bracketed) return bracketed;
+        }
+        return text;
+    }
+
     private normalizeVuoriColourKey(value: string): string {
         const raw = this.stripBrackets(value || '').toLowerCase().trim();
         if (!raw) return '';
@@ -1774,6 +1785,14 @@ export class ExcelEngine {
         if (!headerMap['product'] && headerMap['foxMaterialCode'] && sourceNameKey.includes('fox racing')) {
             headerMap['product'] = headerMap['foxMaterialCode'];
         }
+        if (sourceNameKey.includes('511 tactical') && !headerMap['quantity']) {
+            headerRow.eachCell((cell, colNumber) => {
+                const headerKey = normalizeHeaderText(cell.value?.toString().trim() || '');
+                if (headerKey === 'total' && !headerMap['quantity']) {
+                    headerMap['quantity'] = colNumber;
+                }
+            });
+        }
 
         // Detect pre-computed NG PO in last column (ON AG INFOR, etc.)
         // If a manual PO was supplied, keep the real file PO column intact for buyer PO extraction.
@@ -2098,6 +2117,8 @@ export class ExcelEngine {
             const colourNameRaw = this.stripBrackets(getVal('colourName') || '').trim();
             const colour = brandKey === 'vuori'
                 ? (inlineColorDescription || colourNameRaw || rawColour)
+                : brandKey === 'fox racing'
+                ? (this.extractFoxBracketedColour(rawColour) || rawColour)
                 : isHHBrand
                 ? (inlineColorDescription || inlineColorName || inlineStyleColor || rawColour)
                 : rawColour;
@@ -2450,7 +2471,8 @@ export class ExcelEngine {
             if (brandKey === 'vans' || brandKey === 'rossignol') {
                 resolvedColour = colour;
             } else if (brandKey === 'fox racing') {
-                resolvedColour = foxMaterialDescription || (plmMissing ? colour : (productMatch?.colour || colour));
+                const foxColourFromDesc = this.extractFoxBracketedColour(foxMaterialDescription || colour);
+                resolvedColour = foxColourFromDesc || (plmMissing ? colour : (productMatch?.colour || colour));
             } else if (brandKey === 'arcteryx') {
                 resolvedColour = plmMissing ? (inlineColorName || colour) : (inlineColorName || productMatch?.colour || colour);
             } else if (brandKey === 'burton') {
@@ -2530,6 +2552,101 @@ export class ExcelEngine {
             const validStatuses = Array.isArray(brandConfig?.valid_statuses) ? brandConfig!.valid_statuses!.map((s: string) => s.toLowerCase()) : [];
             if (transportMethod && !VALID_TRANSPORT_VALUES.has(transportMethod)) {
                 this.errors.push({ field: 'TransportMethod', row: rowNumber, message: `Row ${rowNumber} PO ${poNumber}: unmapped transport "${transportMethod}" — expected Sea, Air, or Courier.`, severity: 'WARNING' });
+            }
+
+            if (brandKey === 'evo' && effectivePivotFormat.isPivotFormat) {
+                const evoDestinationRow = Math.max(1, headerRowNumber - 2);
+                const evoOrRow = Math.max(1, headerRowNumber - 1);
+                const evoEntries = effectivePivotFormat.pivotColumns
+                    .map(({ colNumber }) => {
+                        const rawQty = this.getCellValue(row.getCell(colNumber));
+                        const qtyValue = this.parseLooseNumber(rawQty?.toString().trim() || row.getCell(colNumber).text || '0');
+                        const destinationLabel = this.stripBrackets(this.getCellValue(worksheet.getRow(evoDestinationRow).getCell(colNumber))?.toString() || '').trim();
+                        const orNumber = this.stripBrackets(this.getCellValue(worksheet.getRow(evoOrRow).getCell(colNumber))?.toString() || '').trim();
+                        return { qtyValue, destinationLabel, orNumber };
+                    })
+                    .filter(entry => Number.isFinite(entry.qtyValue) && entry.qtyValue > 0);
+
+                if (evoEntries.length === 0) {
+                    return;
+                }
+
+                for (const entry of evoEntries) {
+                    const evoPoNumber = entry.orNumber || poNumberRaw || poNumber;
+                    const evoCustomerKey = customerName || customerNameRaw || detectedCustomer;
+                    const evoOrderKey = `${evoPoNumber}||${evoCustomerKey}||${entry.destinationLabel || ''}`;
+                    const evoTransportLocation = entry.destinationLabel || effectiveTransportLocation || destinationFromFile || plantDerivedCountry || '';
+                    const evoKeyUsers = this.resolveKeyUsers(inferredBrand || brand, manualKeyUser1, manualKeyUser2, manualKeyUser3, manualKeyUser4, manualKeyUser5, getVal('keyUser1'), getVal('keyUser2'), getVal('keyUser4'), getVal('keyUser5'), brandConfig);
+
+                    if (!results.has(evoPoNumber)) {
+                        results.set(evoPoNumber, {
+                            header: {
+                                purchaseOrder: evoPoNumber,
+                                brandKey,
+                                productSupplier,
+                                status: statusRaw,
+                                customer: customerName,
+                                transportMethod,
+                                transportLocation: evoTransportLocation,
+                                ordersTemplate,
+                                linesTemplate,
+                                keyDate,
+                                keyDateFormat,
+                                comments: manualComments || this.buildComments(commentBrand, productRange, commentBuyRound, buyDate, ordersTemplate),
+                                currency: 'USD',
+                                keyUser1: evoKeyUsers.k1,
+                                keyUser2: evoKeyUsers.k2,
+                                keyUser3: evoKeyUsers.k3,
+                                keyUser4: evoKeyUsers.k4,
+                                keyUser5: evoKeyUsers.k5,
+                                keyUser6: evoKeyUsers.k6,
+                                keyUser7: evoKeyUsers.k7,
+                                keyUser8: evoKeyUsers.k8,
+                            },
+                            lines: [],
+                            sizes: {},
+                            orderKeys: [],
+                            manualKeyDate: manualKeyDate || undefined,
+                        });
+                    }
+
+                    const evoPo = results.get(evoPoNumber)!;
+                    if (!seenOrderKeys.has(evoOrderKey)) {
+                        seenOrderKeys.add(evoOrderKey);
+                        if (!evoPo.orderKeys) evoPo.orderKeys = [];
+                        evoPo.orderKeys.push({
+                            purchaseOrder: evoPoNumber,
+                            customer: evoCustomerKey,
+                            customerName: customerName || customerNameRaw,
+                            transportLocation: evoTransportLocation,
+                            transportMethod,
+                            ordersTemplate,
+                        });
+                    }
+
+                    const evoLineItem = (evoPo.lines.length > 0 ? Math.max(...evoPo.lines.map(l => l.lineItem)) : 0) + 1;
+                    evoPo.lines.push({
+                        lineItem: evoLineItem,
+                        productRange,
+                        styleNumber: styleNumber || '',
+                        supplierProfile: 'DEFAULT_PROFILE',
+                        buyerPoNumber: evoPoNumber,
+                        startDate: exFtyDate || '',
+                        cancelDate: cancelDate || '',
+                        transportLocation: evoTransportLocation,
+                        styleColor: inlineStyleColor || undefined,
+                        rawColour: colour || undefined,
+                        ourReference: ourReference || undefined,
+                        cost: undefined,
+                        colour: productMatch?.colour || colour,
+                        productExternalRef,
+                        productCustomerRef,
+                    } as POLine);
+
+                    evoPo.sizes[evoLineItem] = [{ productSize: size || 'One Size', quantity: entry.qtyValue }];
+                }
+
+                return;
             }
 
             const missingData: string[] = [];
