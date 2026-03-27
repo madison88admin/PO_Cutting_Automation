@@ -66,6 +66,7 @@ export interface POSize {
 
 interface ProductSheetRow {
     colour: string;
+    colourName?: string;
     factory?: string;
     cost?: string | number;
     customerName?: string;
@@ -510,6 +511,7 @@ export class ExcelEngine {
             'requested qty', 'ex-factory', 'vendor confirmed crd', 'transport mode',
             'qty', 'quantity', 'size', 'colour',
             'product name', 'buyer style number', 'buyer style name', 'customer name', 'factory',
+            'warehouse name', 'item',
             // Rossignol / bulk buy layouts with title rows above the real header row
             'destination', 'product code', 'sku', 'shipping date', 'tot qty', 'm88 ref', 'color name', 'size name',
         ].map(h => normalizeHeaderText(h)));
@@ -539,7 +541,7 @@ export class ExcelEngine {
 
     private getProductSheetAliases(): Record<string, string> {
         return {
-            'color name': 'colour', 'colour name': 'colour', 'color': 'colour', 'colour': 'colour',
+            'color name': 'colourName', 'colour name': 'colourName', 'color': 'colour', 'colour': 'colour',
             'factory': 'factory', 'vendor code': 'factory', 'vendorcode': 'factory',
             'cost': 'cost', 'customer name': 'customerName', 'customer': 'customerName', 'cust': 'customerName',
             'product name': 'productName', 'style name': 'productName', 'ng style name': 'productName', 'product': 'productName',
@@ -547,6 +549,7 @@ export class ExcelEngine {
             'style': 'buyerStyleNumber',
             'buyer style number': 'buyerStyleNumber', 'buyer style no': 'buyerStyleNumber',
             'buyer style #': 'buyerStyleNumber', 'buyer style': 'buyerStyleNumber',
+            'style nr': 'buyerStyleNumber', 'style number': 'buyerStyleNumber',
             'season': 'season',
             'crd': 'crd',
             'ex. factory': 'exFactory',
@@ -590,8 +593,15 @@ export class ExcelEngine {
             if (buyHeaders.has(val)) buyScore++;
             if (strongBuyHeaders.has(val)) strongBuyScore++;
         });
-        if (strongBuyScore >= 2) return { isProductSheet: false, headerRow };
-        return { isProductSheet: productScore >= 3 && buyScore <= 1, headerRow };
+        const headerVals = new Set<string>();
+        header.eachCell(cell => {
+            const val = normalizeHeaderText(cell.value?.toString() || '');
+            if (val) headerVals.add(val);
+        });
+        const looksLikeVuoriProductSheet = ['style nr', 'product name', 'color name', 'customer name'].every(h => headerVals.has(h));
+        if (looksLikeVuoriProductSheet) productScore += 5;
+        if (strongBuyScore >= 2 && !looksLikeVuoriProductSheet) return { isProductSheet: false, headerRow };
+        return { isProductSheet: productScore >= 3 && (buyScore <= 1 || looksLikeVuoriProductSheet), headerRow };
     }
 
     private normalizeColourKey(value: string): string {
@@ -617,6 +627,16 @@ export class ExcelEngine {
             return normalized || '0';
         }
         return raw;
+    }
+
+    private normalizeVuoriColourKey(value: string): string {
+        const raw = this.stripBrackets(value || '').toLowerCase().trim();
+        if (!raw) return '';
+        return raw
+            .replace(/^(?:vuo(?:ri)?)\s*-\s*/i, '')
+            .replace(/^(?:vuo(?:ri)?)\s+/i, '')
+            .replace(/\s{2,}/g, ' ')
+            .trim();
     }
 
     private normalizeJackWolfskinColourKey(value: string): string {
@@ -763,10 +783,15 @@ export class ExcelEngine {
                     return this.getCellValue(row.getCell(col));
                 };
                 const colourRaw = getRaw('colour')?.toString().trim() || '';
-                const isLlBeanCustomer = (getRaw('customerName')?.toString().trim().toLowerCase().includes('ll bean'));
-                const colourKey = isLlBeanCustomer ? this.normalizeLlBeanColourKey(colourRaw) : this.normalizeColourKey(colourRaw);
+                const colourNameRaw = getRaw('colourName')?.toString().trim() || '';
+                const customerNameRaw = getRaw('customerName')?.toString().trim() || '';
+                const isVuoriCustomer = customerNameRaw.toLowerCase().includes('vuori');
+                const isLlBeanCustomer = customerNameRaw.toLowerCase().includes('ll bean');
+                const colourKey = isVuoriCustomer
+                    ? this.normalizeVuoriColourKey(colourNameRaw || colourRaw)
+                    : (isLlBeanCustomer ? this.normalizeLlBeanColourKey(colourRaw) : this.normalizeColourKey(colourRaw));
                 const cotopaxiColourKey = this.normalizeCotopaxiColourText(colourRaw);
-                const jwsColourKey = (getRaw('customerName')?.toString().trim().toLowerCase().includes('jack wolfskin'))
+                const jwsColourKey = (customerNameRaw.toLowerCase().includes('jack wolfskin'))
                     ? this.normalizeJackWolfskinColourKey(colourRaw)
                     : '';
                 const llbColourKey = isLlBeanCustomer ? this.normalizeLlBeanColourKey(colourRaw) : '';
@@ -774,6 +799,7 @@ export class ExcelEngine {
                 if (!colourKey || !buyerStyleNumber) return;
                 const entry: ProductSheetRow = {
                     colour: colourRaw,
+                    colourName: getRaw('colourName')?.toString().trim() || '',
                     factory: getRaw('factory')?.toString().trim() || '',
                     cost: (() => { const c = getRaw('cost'); return typeof c === 'number' ? c : c?.toString().trim(); })(),
                     customerName: getRaw('customerName')?.toString().trim() || '',
@@ -1620,6 +1646,9 @@ export class ExcelEngine {
             if (headerKey === 'product name' && headerMap['product'] && !headerMap['inlineProductName']) {
                 headerMap['inlineProductName'] = colNumber;
             }
+            if (headerKey === 'item' && !headerMap['productAlt']) {
+                headerMap['productAlt'] = colNumber;
+            }
             if (headerKey === 'color name' && headerMap['colour'] && !headerMap['inlineColorName']) {
                 headerMap['inlineColorName'] = colNumber;
             }
@@ -1655,6 +1684,9 @@ export class ExcelEngine {
             }
             if (headerKey === 'whs' && !headerMap['plantName']) {
                 headerMap['plantName'] = colNumber;
+            }
+            if (headerKey === 'warehouse name' && !headerMap['warehouseName']) {
+                headerMap['warehouseName'] = colNumber;
             }
             if (headerKey === 'po company name' && !headerMap['hhCompanyName']) {
                 headerMap['hhCompanyName'] = colNumber;
@@ -1921,6 +1953,7 @@ export class ExcelEngine {
             const rawPlant = this.stripBrackets(getVal('plant') || '');
             const plant = brandKey === 'vans' ? this.normalizeVansPlantCode(rawPlant) : rawPlant;
             const plantName = this.stripBrackets(getVal('plantName') || '');
+            const warehouseName = this.stripBrackets(getVal('warehouseName') || '');
             const whsCode = this.stripBrackets(getVal('whs') || '');
             const customerNameRaw = getVal('customerName');
             const manualCustomerName = this.stripBrackets(manualCustomer || '');
@@ -2062,15 +2095,18 @@ export class ExcelEngine {
             const ourReference = this.stripBrackets(getVal('ourReference') || '').trim();
             const inlineFactory = this.stripBrackets(getVal('inlineFactory') || '').trim();
             const rawColour = this.stripBrackets(getVal('colour') || '').trim();
+            const colourNameRaw = this.stripBrackets(getVal('colourName') || '').trim();
             const colour = brandKey === 'vuori'
-                ? (inlineColorDescription || rawColour)
+                ? (inlineColorDescription || colourNameRaw || rawColour)
                 : isHHBrand
                 ? (inlineColorDescription || inlineColorName || inlineStyleColor || rawColour)
                 : rawColour;
             if (!colour) { this.errors.push({ field: 'colour', row: rowNumber, message: `Row ${rowNumber} PO ${poNumber}: colour is empty; line/size skipped.`, severity: 'WARNING' }); return; }
             if (colour.trim().toLowerCase() === 'not set') { this.errors.push({ field: 'colour', row: rowNumber, message: `Row ${rowNumber} PO ${poNumber}: colour is "Not Set"; line/size skipped.`, severity: 'WARNING' }); return; }
 
-            const colourKey = brandKey === 'jack wolfskin'
+            const colourKey = brandKey === 'vuori'
+                ? this.normalizeVuoriColourKey(colour)
+                : brandKey === 'jack wolfskin'
                 ? (this.normalizeJackWolfskinColourKey(colour) || this.normalizeColourKey(colour))
                 : (brandKey === 'll bean'
                 ? this.normalizeLlBeanColourKey(colour)
@@ -2089,7 +2125,9 @@ export class ExcelEngine {
                     getVal('inlineStyleColor') || getVal('inlineFactory') || getVal('productCustomerRef') || getVal('jdeStyle') || getVal('product') || ''
                 ) || productCustomerRef || jdeStyle || productField;
             } else if (brandKey === 'vuori') {
-                effectiveStyle = productCustomerRef || productField || jdeStyle;
+                // Vuori buy files can expose the M-series in Item and the human style name in Product.
+                // Prefer Item via productAlt so PLM matching resolves to the M-series code.
+                effectiveStyle = productAltField || productCustomerRef || jdeStyle || productField;
             } else if (brandKey === 'll bean') {
                 effectiveStyle = productCustomerRef || jdeStyle || productField;
             } else if (brandKey === 'fox racing') {
@@ -2109,7 +2147,7 @@ export class ExcelEngine {
                 if (matches.length > 0) { productMatches = matches; matchedStyleKey = candidate; break; }
             }
 
-            if (productMatches.length === 0 && styleKeyCandidates.length > 0) {
+            if (productMatches.length === 0 && styleKeyCandidates.length > 0 && brandKey !== 'vuori') {
                 for (const candidate of styleKeyCandidates) {
                     const styleColourCode = this.extractStyleColourCode(candidate);
                     const lk = candidate && styleColourCode ? `${candidate}|${styleColourCode}` : '';
@@ -2118,7 +2156,7 @@ export class ExcelEngine {
                 }
             }
 
-            if (productMatches.length === 0 && colourKey && styleKeyCandidates.length > 0) {
+            if (productMatches.length === 0 && colourKey && styleKeyCandidates.length > 0 && brandKey !== 'vuori') {
                 for (const candidate of styleKeyCandidates) {
                     const allForStyle = Object.entries(productSheetMap).filter(([k]) => k.startsWith(`${candidate}|`)).flatMap(([, v]) => v);
                     if (allForStyle.length > 0) {
@@ -2193,7 +2231,7 @@ export class ExcelEngine {
             } else if (brandKey === 'jack wolfskin') {
                 styleNumber = this.stripBrackets(productMatch?.productName || matchedStyleKey || getVal('product') || getVal('jdeStyle') || getVal('productCustomerRef') || getVal('productExternalRef') || '');
             } else if (brandKey === 'vuori') {
-                styleNumber = this.stripBrackets(productMatch?.productName || getVal('productCustomerRef') || getVal('jdeStyle') || matchedStyleKey || getVal('product') || '');
+                styleNumber = this.stripBrackets(productMatch?.productName || getVal('product') || getVal('productCustomerRef') || getVal('jdeStyle') || matchedStyleKey || '');
             } else if (brandKey === 'dynafit') {
                 styleNumber = this.stripBrackets(productMatch?.productName || matchedStyleKey || getVal('product') || getVal('jdeStyle') || getVal('productCustomerRef') || '');
             } else if (brandKey === 'll bean') {
@@ -2424,7 +2462,7 @@ export class ExcelEngine {
             } else if (brandKey === 'jack wolfskin') {
                 resolvedColour = productMatch?.colour || colour;
             } else if (brandKey === 'vuori') {
-                resolvedColour = productMatch?.colour || colour;
+                resolvedColour = productMatch?.colourName || productMatch?.colour || colour;
             } else if (brandKey === 'll bean') {
                 resolvedColour = productMatch?.colour || colour;
             } else if (brandKey === 'dynafit') {
@@ -2480,7 +2518,14 @@ export class ExcelEngine {
             const customerSubtype = (brandKey === 'burton' || isHHBrand)
                 ? undefined
                 : this.detectCustomerSubtype(productMatch?.customerName || getVal('customerName') || getVal('brand') || detectedCustomer || '');
-            if (customerSubtype && !poNumber.toLowerCase().endsWith(` ${customerSubtype.toLowerCase()}`)) poNumber = `${poNumber} ${customerSubtype}`;
+            if (brandKey === 'vuori') {
+                const vuoriSuffix = warehouseName || plantName || this.stripBrackets(customerNameRaw || customerName || '').trim();
+                if (vuoriSuffix && !poNumber.toLowerCase().endsWith(`-${vuoriSuffix.toLowerCase()}`)) {
+                    poNumber = `${poNumber}-${vuoriSuffix}`;
+                }
+            } else if (customerSubtype && !poNumber.toLowerCase().endsWith(` ${customerSubtype.toLowerCase()}`)) {
+                poNumber = `${poNumber} ${customerSubtype}`;
+            }
 
             const validStatuses = Array.isArray(brandConfig?.valid_statuses) ? brandConfig!.valid_statuses!.map((s: string) => s.toLowerCase()) : [];
             if (transportMethod && !VALID_TRANSPORT_VALUES.has(transportMethod)) {
