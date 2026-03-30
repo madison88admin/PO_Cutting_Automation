@@ -118,6 +118,10 @@ export async function POST(req: NextRequest) {
         const manualBrand = (formData.get("manualBrand")?.toString() || "").trim();
         const inferredManualCustomer = manualCustomer || (files.some((f) => /vuori/i.test(f.name)) ? "Vuori" : "");
 
+        if (!manualPo) {
+            return NextResponse.json({ error: "Manual PO is required." }, { status: 400 });
+        }
+
         console.log("[upload] received request", {
             userId,
             fileCount: files?.length || 0,
@@ -250,8 +254,13 @@ export async function POST(req: NextRequest) {
 
             const brandSet = new Set<string>();
             data.forEach((po: ProcessedPO) => {
-                const label = (po.header?.customer || '').trim();
-                if (label) brandSet.add(label);
+                const brandLabel = (po.header?.brandKey || '').trim();
+                const customerLabel = (po.header?.customer || '').trim();
+                const label = brandLabel || customerLabel;
+                if (label) {
+                    const displayLabel = label.toLowerCase() === 'peak performance' ? 'Peak Performance' : label;
+                    brandSet.add(displayLabel);
+                }
             });
 
             fileSummaries.push({

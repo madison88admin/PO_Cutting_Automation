@@ -212,6 +212,7 @@ PLANT_COUNTRY_MAP: dict[str, str] = {
     # Fox Racing plant codes — file uses no leading zeros (10, 11, 40, 50, 60)
     "0010": "",         # TODO: confirm destination
     "0011": "",         # TODO: confirm destination
+    "120":  "Iceland",  # 66 Degrees North warehouse code
     "0040": "",         # TODO: confirm destination
     "0050": "",         # TODO: confirm destination
     "0060": "",         # TODO: confirm destination
@@ -245,8 +246,8 @@ PLANT_COUNTRY_MAP: dict[str, str] = {
 # Keys are lowercase brand identifiers found in the buy file.
 # ─────────────────────────────────────────────────────────────────────────────
 BRAND_SUPPLIER_MAP: dict[str, str] = {
-    "col": "MSO",
-    "columbia": "MSO",
+    "col": "",
+    "columbia": "",
     "tnf": "PT. UWU JUMP INDONESIA",
     "the north face": "PT. UWU JUMP INDONESIA",
     "arcteryx": "PT. UWU JUMP INDONESIA",
@@ -494,20 +495,43 @@ DEFAULT_COL_MAP = {
     "template": 8,
 }
 
+# Marmot fixed positions for Sheet1-style buy files (1-based Excel columns)
+MARMOT_FIXED_COL_MAP = {
+    "po": 2,
+    "product": 8,
+    "product_alt": 9,
+    "size": 11,
+    "colour": 10,
+    "marmot_short_text": 10,
+    "marmot_style": 9,
+    "qty": 12,
+    "orig_ex_fac": 14,
+    "confirmed_ex_fac": 15,
+    "trans_cond": 16,
+    "buy_date": 1,
+    "customer": 5,
+    "brand": 6,
+    "season": 22,
+    "template": 16,
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # HEADER_ALIASES  –  extended to cover Arcteryx/Madison88, COL/INFOR, TNF
 # ─────────────────────────────────────────────────────────────────────────────
 HEADER_ALIASES: dict[str, list[str]] = {
-        "transport_location": [
-            "transportlocation", "transport location",
-            "destination", "dest country", "ult. destination",
-            # ON Running / Burton
-            "country/region",
-            # Cotopaxi raw INFOR export (2-letter country code column)
-            "country",
-            # Req 1: expanded transportLocation aliases
-            "ship to country",
-        ],
+    "transport_location": [
+        "transportlocation", "transport location",
+        "destination", "dest country", "ult. destination",
+        # ON Running / Burton
+        "country/region",
+        # Cotopaxi raw INFOR export (2-letter country code column)
+        "country",
+        # Req 1: expanded transportLocation aliases
+        "ship to country",
+    ],
+    "hunter_packing_split": [
+        "packing splits", "packing split",
+    ],
     "plant": [
         "plant", "plant code", "dc plant",
         # 511 Tactical
@@ -524,6 +548,7 @@ HEADER_ALIASES: dict[str, list[str]] = {
     "po": [
         "po #", "po#", "po", "pono", "po_number", "ponumber", "buyer po", "buyer po number",
         "purchase order", "purchaseorder",
+        "purchasing document",
         "extraction po #", "extraction po#",
         # Arcteryx – per-shipment tracking code used as PO key
         "tracking number",
@@ -591,6 +616,7 @@ HEADER_ALIASES: dict[str, list[str]] = {
         "product customer ref",
     ],
     "product_name": [
+        "product name",
         "model description", "article name", "sku description",
         "material name", "description",
         "buyer style name",
@@ -677,6 +703,9 @@ HEADER_ALIASES: dict[str, list[str]] = {
         # prAna / Hunter
         "color", "colour description",
     ],
+    "marmot_short_text": [
+        "short text",
+    ],
     "qty": [
         "ordered qty", "quantity", "qty",
         "sum of order total qty", "sum of qty (lum)", "sum of qty (lum)2",
@@ -688,6 +717,7 @@ HEADER_ALIASES: dict[str, list[str]] = {
         # Fox Racing
         "order qty",
         "sum of order qty",
+        "scheduled quantity",
         # Peak Performance
         "final po qty",
         # EVO
@@ -733,6 +763,8 @@ HEADER_ALIASES: dict[str, list[str]] = {
         "confirmed x-fty",
         # 66 Degrees North
         "delivery date",
+        # Jack Wolfskin
+        "vendor confirmed etd", "etd",
     ],
     "trans_cond": [
         "trans cond", "transport method", "transportmethod",
@@ -905,6 +937,59 @@ def _normalize_colour_key(value: Any) -> str:
     return raw_l
 
 
+def _normalize_cotopaxi_colour_text(value: Any) -> str:
+    raw = _as_text(value).strip().lower()
+    if not raw:
+        return ""
+    raw = re.sub(r"^cotopaxi\s*-\s*", "", raw)
+    raw = re.sub(r"^\d+(?:\s*\/\s*\d+)*(?:\s*-\s*)?", "", raw)
+    raw = raw.replace("/", " ")
+    raw = re.sub(r"\band\b", " ", raw)
+    raw = re.sub(r"[^a-z0-9]+", " ", raw)
+    return re.sub(r"\s+", " ", raw).strip()
+
+
+def _normalize_marmot_colour_key(value: Any) -> str:
+    raw = _as_text(value).strip()
+    if not raw:
+        return ""
+    suffix = raw.split("-")[-1].strip() if "-" in raw else raw
+    tokens = [t for t in re.split(r"[\/\s]+", suffix) if t]
+    token_map = {
+        "blk": "black",
+        "blck": "black",
+        "blcknd": "blackened",
+        "blcrnt": "blue currant",
+        "dskh": "desert khaki",
+        "sltsrm": "sleet storm",
+        "pnfrst": "pine forest",
+        "glcrstrm": "glacier stream",
+        "csmsrd": "cosmos red",
+        "hzybl": "hazy blue",
+        "papy": "papyrus",
+        "actny": "arctic navy",
+        "da": "dark azure",
+        "olvgr": "olive grove",
+        "dkaz": "dark azure",
+        "dksp": "dark spice",
+        "gnbrd": "gingerbread",
+        "shgr": "shale grey",
+        "stlo": "steel onyx",
+        "thhd": "thunderhead",
+        "clsthtr": "coal heather",
+        "blkplm": "black plum",
+        "brhwht": "birch white",
+        "dkspcmrd": "dark spice cardamom red",
+        "hckrntmrd": "huckleberry nutmeg red",
+        "ngtflnvmrd": "nightfall navy marled",
+        "gryh": "grey heather",
+        "rtkhk": "rustic khaki",
+        "nflnv": "nightfall navy",
+    }
+    normalized = " ".join(token_map.get(token.lower(), token.lower()) for token in tokens).strip()
+    return normalized or suffix.lower()
+
+
 def _extract_style_colour_code(value: Any) -> str:
     upper = _as_text(value).strip().upper()
     m = re.search(r"([A-Z0-9]{3})$", upper)
@@ -978,7 +1063,10 @@ def _extract_product_sheet_map_from_wb(wb: Any) -> dict[str, list[dict[str, Any]
             continue
         for r in range(header_row + 1, ws.max_row + 1):
             colour_raw = _as_text(ws.cell(row=r, column=header_map["colour"]).value)
-            colour_key = _normalize_colour_key(colour_raw)
+            customer_name = _as_text(ws.cell(row=r, column=header_map.get("customer_name", 0)).value) if header_map.get("customer_name") else ""
+            is_marmot_row = "marmot" in customer_name.lower() or _as_text(colour_raw).lower().startswith("mar-")
+            colour_key = _normalize_marmot_colour_key(colour_raw) if is_marmot_row else _normalize_colour_key(colour_raw)
+            cotopaxi_colour_key = _normalize_cotopaxi_colour_text(colour_raw)
             buyer_style_number = _as_text(ws.cell(row=r, column=header_map.get("buyer_style_number", 0)).value) \
                 if header_map.get("buyer_style_number") else ""
             if not colour_key or not buyer_style_number:
@@ -990,8 +1078,7 @@ def _extract_product_sheet_map_from_wb(wb: Any) -> dict[str, list[dict[str, Any]
                 if header_map.get("factory") else "",
                 "cost": ws.cell(row=r, column=header_map.get("cost", 0)).value
                 if header_map.get("cost") else "",
-                "customer_name": _as_text(ws.cell(row=r, column=header_map.get("customer_name", 0)).value)
-                if header_map.get("customer_name") else "",
+                "customer_name": customer_name,
                 "product_name": _as_text(ws.cell(row=r, column=header_map.get("product_name", 0)).value)
                 if header_map.get("product_name") else "",
                 "buyer_style_number": buyer_style_number,
@@ -1020,6 +1107,29 @@ def _extract_product_sheet_map_from_wb(wb: Any) -> dict[str, list[dict[str, Any]
                     result[lk_key].insert(0, entry)  # type: ignore
                 else:
                     result[lk_key].append(entry) # type: ignore
+                if cotopaxi_colour_key and cotopaxi_colour_key != colour_key:
+                    cotopaxi_key = f"{lk}|{cotopaxi_colour_key}"
+                    cotopaxi_dedup = (cotopaxi_key, entry["colour"], entry["factory"], entry["product_name"], entry["customer_name"])
+                    if cotopaxi_dedup not in seen_entries:
+                        seen_entries.add(cotopaxi_dedup)
+                        if cotopaxi_key not in result:
+                            result[cotopaxi_key] = []
+                        if is_exact:
+                            result[cotopaxi_key].insert(0, entry)  # type: ignore
+                        else:
+                            result[cotopaxi_key].append(entry) # type: ignore
+                marmot_colour_key = _normalize_marmot_colour_key(colour_raw) if is_marmot_row else ""
+                if marmot_colour_key and marmot_colour_key != colour_key:
+                    marmot_key = f"{lk}|{marmot_colour_key}"
+                    marmot_dedup = (marmot_key, entry["colour"], entry["factory"], entry["product_name"], entry["customer_name"])
+                    if marmot_dedup not in seen_entries:
+                        seen_entries.add(marmot_dedup)
+                        if marmot_key not in result:
+                            result[marmot_key] = []
+                        if is_exact:
+                            result[marmot_key].insert(0, entry)  # type: ignore
+                        else:
+                            result[marmot_key].append(entry) # type: ignore
     return dict(result)
 
 
@@ -1100,6 +1210,31 @@ def _format_transport_location(value: Any) -> str:
         return ""
     key = raw.strip().upper()
     return COUNTRY_NAME_MAP.get(key, raw.strip())
+
+
+def _normalize_hunter_transport_location(raw: Any, packing_split: Any, purchase_order_raw: Any) -> str:
+    normalized = _format_transport_location(raw)
+    if normalized and normalized.strip().upper() != "TBC":
+        return normalized
+    token = (_as_text(packing_split) or _as_text(purchase_order_raw) or "").upper()
+    if not token:
+        return normalized
+    if any(marker in token for marker in ("UKSOS", "SOS", "GOLDSEAL", "ECOM", "DTE")):
+        return "Great Britain"
+    if re.search(r"(^|[-\s])DE($|[-\s])", token) or "ZALANDO" in token:
+        return "Germany"
+    return normalized
+
+
+def _normalize_hunter_order_transport_location(packing_split: Any, purchase_order_raw: Any) -> str:
+    token = (_as_text(packing_split) or _as_text(purchase_order_raw) or "").upper()
+    if not token:
+        return ""
+    if any(marker in token for marker in ("UKSOS", "SOS", "GOLDSEAL", "ECOM", "DTE")):
+        return "Great Britain"
+    if re.search(r"(^|[-\s])DE($|[-\s])", token) or "ZALANDO" in token:
+        return "Germany"
+    return ""
 
 
 def _customer_suffix(raw_customer: str) -> str:
@@ -1310,7 +1445,7 @@ def _process_evo_pivot_row(
         if qty <= 0:
             continue
         dest_label = _strip_brackets(_as_text(raw_df.cell(row=destination_row_idx, column=col_idx).value)).strip()
-        or_number = _strip_brackets(_as_text(raw_df.cell(row=or_row_idx, column=col_idx).value)).strip()
+        or_number = _strip_brackets(_as_text(raw_df.cell(row=or_row
         if not or_number and not dest_label:
             continue
         if or_number.lower() == "or-xxx":
@@ -1414,6 +1549,40 @@ def _normalize_po(value: Any) -> str:
     # (some PO numbers like "F  164860 OG" have intentional double spaces)
     candidate = str(value).strip()
     return candidate
+
+
+def _format_purchase_order(base_po: Any, plant_part: Any, destination_part: Any) -> str:
+    base = _as_text(base_po).strip()
+    suffix_parts = [
+        _as_text(plant_part).strip(),
+        _as_text(destination_part).strip(),
+    ]
+    suffix_parts = [part for part in suffix_parts if part]
+    unique_suffix_parts: list[str] = []
+    for part in suffix_parts:
+        if part.lower() not in [p.lower() for p in unique_suffix_parts]:
+            unique_suffix_parts.append(part)
+    if not base:
+        return " - ".join(unique_suffix_parts)
+    if not unique_suffix_parts:
+        return base
+    lowered = base.lower()
+    if all(part.lower() in lowered for part in unique_suffix_parts):
+        return base
+    return " - ".join([base] + unique_suffix_parts)
+
+
+def _is_likely_destination_country(value: Any, plant_part: Any) -> bool:
+    text = _as_text(value).strip()
+    if not text or text.isdigit():
+        return False
+    plant = _as_text(plant_part).strip().lower()
+    lowered = text.lower()
+    if plant and lowered == plant:
+        return False
+    if plant and plant in lowered:
+        return False
+    return True
 
 
 # Numeric factory codes → resolved supplier name
@@ -1781,6 +1950,18 @@ def _detect_layout(
             if re.match(r'^po\d{4,}$', last_hdr, re.IGNORECASE):
                 col_map["po"] = last_col
 
+        if source_name and "marmot" in source_name.lower():
+            for col, hdr in headers_by_col.items():
+                if hdr == "purchasing document":
+                    col_map["po"] = col
+                elif hdr == "scheduled quantity":
+                    col_map["qty"] = col
+                elif hdr == "short text":
+                    col_map["colour"] = col
+                    col_map["marmot_short_text"] = col
+                elif hdr == "style":
+                    col_map["marmot_style"] = col
+
         pivot_info = _detect_pivot_format(headers_by_col, col_map)
         # Ensure required_keys is a set for iteration
         keys_to_check = required_keys if required_keys is not None else {"po", "qty", "product"}
@@ -1840,6 +2021,8 @@ def _detect_layout(
         return best_row + 1, merged_map, mode, best_score, best_nonempty_po_rows, set(best_map.keys()), best_pivot_info # type: ignore
 
     # Legacy fallback: headers row 14, data row 15
+    if source_name and "marmot" in source_name.lower():
+        return 15, MARMOT_FIXED_COL_MAP.copy(), "marmot fixed-column layout", 0, 0, set(MARMOT_FIXED_COL_MAP.keys()), {"is_pivot": False, "pivot_cols": [], "fixed_cols": []}
     return 15, DEFAULT_COL_MAP.copy(), "fallback fixed-column layout", 0, 0, set(DEFAULT_COL_MAP.keys()), {"is_pivot": False, "pivot_cols": [], "fixed_cols": []}
 
 
@@ -2026,481 +2209,518 @@ def generate_templates(
 
             # ── Core fields ──────────────────────────────────────────────────────
             product = _as_text(_row_cell("product")) or _as_text(_row_cell("product_alt"))
-        if not product and not product_sheet_map:
-            add_warning(f"Row {row_idx} PO {po}: product is empty; row skipped.")
-            continue
-        if not product and product_sheet_map:
-            product = ""
-        product_external_ref = _as_text(_cell(row_idx, "product_external_ref"))
-        product_customer_ref = _as_text(_cell(row_idx, "product_customer_ref"))
-        brand_value  = _as_text(_cell(row_idx, "brand")) or (manual_brand or "")
-        if not brand_value and "vuori" in source_name:
-            brand_value = "vuori"
-        if not brand_value and "evo" in source_name:
-            brand_value = "evo"
-        colour  = _as_text(_cell(row_idx, "colour"))
-        colour_display = _as_text(_cell(row_idx, "colour_display"))  # Longtext: human-readable name
-        if (brand_value or "").strip().lower() == "vuori" and colour_display:
-            colour = colour_display
-        if (brand_value or "").strip().lower() == "fox racing":
-            fox_colour = _extract_fox_bracketed_colour(colour)
-            if fox_colour:
-                colour = fox_colour
-        if (brand_value or "").strip().lower() == "evo" and evo_ex_fty:
-            orig_ex_fac = evo_ex_fty
-        qty_cell = _cell(row_idx, "qty")
-        if qty_cell is None and default_qty_if_missing:
-            qty = 1
-            if not qty_default_warned:
-                add_warning("Quantity column missing; defaulting Quantity=1 for all rows.")
-                qty_default_warned = True
-        else:
-            qty = _to_int_quantity(qty_cell)
-
-        buyer_po_number_raw = _cell(row_idx, "buyer_po_number")
-        vans_confirmed_vendor_crd = _cell(row_idx, "vans_confirmed_vendor_crd")
-        brand_requested_crd = _cell(row_idx, "brand_requested_crd")
-        is_vans_row = _as_text(_cell(row_idx, "brand")).strip().lower() == "vans" or BRAND_CUSTOMER_MAP.get(_as_text(_cell(row_idx, "customer")).strip().lower()) == "Vans"
-        orig_ex_fac  = (vans_confirmed_vendor_crd or brand_requested_crd or _cell(row_idx, "orig_ex_fac") or _cell(row_idx, "confirmed_ex_fac")) if is_vans_row else (_cell(row_idx, "orig_ex_fac") or _cell(row_idx, "confirmed_ex_fac"))
-        buy_date     = _cell(row_idx, "buy_date")
-        trans_cond   = _cell(row_idx, "trans_cond")
-        cancel_date_raw = _cell(row_idx, "cancel_date")
-        # Fix #1: Use actual season/range value, raise error if missing
-        season_raw = _as_text(_cell(row_idx, "season"))
-        season_value = manual_product_range or season_raw
-        if not season_value:
-            add_warning(f"Row {row_idx} PO {po}: season/range is empty; row skipped.")
-            continue
-        template_raw = _as_text(_cell(row_idx, "template"))
-        customer_raw = _as_text(_cell(row_idx, "customer"))
-        if not brand_value and customer_raw:
-            customer_key = customer_raw.strip().lower()
-            if BRAND_CUSTOMER_MAP.get(customer_key) == "Vans" or "vans" in customer_key:
-                brand_value = "vans"
-        size_raw     = _as_text(_cell(row_idx, "size"))
-        vendor_code  = _as_text(_cell(row_idx, "vendor_code"))
-        vendor_name  = _as_text(_cell(row_idx, "vendor_name"))
-        buy_round    = _as_text(_cell(row_idx, "submit_buy"))
-        status_raw   = _as_text(_cell(row_idx, "status"))
-
-        if not colour or colour.strip().lower() == "not set":
-            skipped_no_colour += 1
-            add_warning(f"Row {row_idx} PO {po}: colour is empty or 'Not Set'; line/size skipped.")
-            continue
-
-        plm_entry = None
-        colour_out = colour
-        plm_missing = False
-        if product_sheet_map:
-            colour_key = _normalize_colour_key(colour)
-            jde_style_raw = _as_text(_cell(row_idx, "product_alt"))
-            jde_style = _normalize_style_key(jde_style_raw)
-            # Fall back to product field when product_alt (JDE Style) is absent
-            # e.g. ON AG INFOR uses Buyer Item # as product, no separate JDE Style column
-            if not jde_style:
-                product_raw = _as_text(_cell(row_idx, "product"))
-                jde_style = _normalize_style_key(product_raw)
-            if not jde_style:
-                add_warning(f"Row {row_idx} PO {po}: JDE Style missing; PLM fields left blank.")
-                plm_missing = True
-            lookup_key = f"{jde_style}|{colour_key}" if jde_style else ""
-            matches = product_sheet_map.get(lookup_key, []) if lookup_key else [] # type: ignore
-            # If multiple matches, use the first (exact buyer_style_number matches are inserted first)
-            if len(matches) > 1:
-                matches = [matches[0]]
-            if len(matches) == 0 and jde_style:
-                style_colour_code = _extract_style_colour_code(jde_style)
-                fallback_key = f"{jde_style}|{style_colour_code}" if style_colour_code else ""
-                matches = product_sheet_map.get(fallback_key, []) if fallback_key else [] # type: ignore
+            if not product and not product_sheet_map:
+                add_warning(f"Row {row_idx} PO {po}: product is empty; row skipped.")
+                continue
+            if not product and product_sheet_map:
+                product = ""
+            product_external_ref = ""
+            product_customer_ref = _as_text(_cell(row_idx, "product_customer_ref"))
+            brand_value  = _as_text(_cell(row_idx, "brand")) or (manual_brand or "")
+            if not brand_value and "marmot" in source_name:
+                brand_value = "marmot"
+            if not brand_value and "vuori" in source_name:
+                brand_value = "vuori"
+            if not brand_value and "evo" in source_name:
+                brand_value = "evo"
+            brand_key_lower = brand_value.strip().lower()
+            colour  = _as_text(_cell(row_idx, "colour"))
+            colour_display = _as_text(_cell(row_idx, "colour_display"))  # Longtext: human-readable name
+            marmot_short_text = _as_text(_cell(row_idx, "marmot_short_text"))
+            marmot_style_text = _as_text(_cell(row_idx, "marmot_style"))
+            if (brand_value or "").strip().lower() == "vuori" and colour_display:
+                colour = colour_display
+            if (brand_value or "").strip().lower() == "fox racing":
+                fox_colour = _extract_fox_bracketed_colour(colour)
+                if fox_colour:
+                    colour = fox_colour
+            if (brand_value or "").strip().lower() == "marmot" and marmot_short_text:
+                colour = marmot_short_text
+            if (brand_value or "").strip().lower() == "evo" and evo_ex_fty:
+                orig_ex_fac = evo_ex_fty
+            qty_cell = _cell(row_idx, "qty")
+            if qty_cell is None and default_qty_if_missing:
+                qty = 1
+                if not qty_default_warned:
+                    add_warning("Quantity column missing; defaulting Quantity=1 for all rows.")
+                    qty_default_warned = True
+            else:
+                qty = _to_int_quantity(qty_cell)
+    
+            buyer_po_number_raw = _cell(row_idx, "buyer_po_number")
+            vans_confirmed_vendor_crd = _cell(row_idx, "vans_confirmed_vendor_crd")
+            brand_requested_crd = _cell(row_idx, "brand_requested_crd")
+            is_vans_row = _as_text(_cell(row_idx, "brand")).strip().lower() == "vans" or BRAND_CUSTOMER_MAP.get(_as_text(_cell(row_idx, "customer")).strip().lower()) == "Vans"
+            orig_ex_fac  = (vans_confirmed_vendor_crd or brand_requested_crd or _cell(row_idx, "orig_ex_fac") or _cell(row_idx, "confirmed_ex_fac")) if is_vans_row else (_cell(row_idx, "orig_ex_fac") or _cell(row_idx, "confirmed_ex_fac"))
+            buy_date     = _cell(row_idx, "buy_date")
+            trans_cond   = _cell(row_idx, "trans_cond")
+            cancel_date_raw = _cell(row_idx, "cancel_date")
+            # Fix #1: Use actual season/range value, raise error if missing
+            season_raw = _as_text(_cell(row_idx, "season"))
+            season_value = manual_product_range or season_raw
+            if not season_value:
+                add_warning(f"Row {row_idx} PO {po}: season/range is empty; row skipped.")
+                continue
+            template_raw = _as_text(_cell(row_idx, "template"))
+            customer_raw = _as_text(_cell(row_idx, "customer"))
+            if not brand_value and customer_raw:
+                customer_key = customer_raw.strip().lower()
+                if BRAND_CUSTOMER_MAP.get(customer_key) == "Vans" or "vans" in customer_key:
+                    brand_value = "vans"
+            size_raw     = _as_text(_cell(row_idx, "size"))
+            vendor_code  = _as_text(_cell(row_idx, "vendor_code"))
+            vendor_name  = _as_text(_cell(row_idx, "vendor_name"))
+            buy_round    = _as_text(_cell(row_idx, "submit_buy"))
+            status_raw   = _as_text(_cell(row_idx, "status"))
+    
+            if not colour or colour.strip().lower() == "not set":
+                skipped_no_colour += 1
+                add_warning(f"Row {row_idx} PO {po}: colour is empty or 'Not Set'; line/size skipped.")
+                continue
+    
+            plm_entry = None
+            colour_out = colour
+            plm_missing = False
+            if product_sheet_map:
+                colour_key = _normalize_marmot_colour_key(colour) if brand_key_lower == "marmot" else _normalize_colour_key(colour)
+                jde_style_raw = _as_text(_cell(row_idx, "marmot_style")) or _as_text(_cell(row_idx, "product_alt"))
+                jde_style = _normalize_style_key(jde_style_raw)
+                # Fall back to product field when product_alt (JDE Style) is absent
+                # e.g. ON AG INFOR uses Buyer Item # as product, no separate JDE Style column
+                if not jde_style:
+                    product_raw = _as_text(_cell(row_idx, "product"))
+                    jde_style = _normalize_style_key(product_raw)
+                if not jde_style:
+                    add_warning(f"Row {row_idx} PO {po}: JDE Style missing; PLM fields left blank.")
+                    plm_missing = True
+                lookup_key = f"{jde_style}|{colour_key}" if jde_style else ""
+                matches = product_sheet_map.get(lookup_key, []) if lookup_key else [] # type: ignore
+                # If multiple matches, use the first (exact buyer_style_number matches are inserted first)
                 if len(matches) > 1:
                     matches = [matches[0]]
-            # Prefix match: PLM Buyer Style Number may be a prefix of the buy file style key
-            # e.g. PLM has "2UF1067", buy file has "2UF10674959" — try all PLM keys where
-            # the style portion is a prefix of jde_style
-            # Also handles colour key mismatch via contains check (e.g. "espresso" in "on 003 espresso")
-            if len(matches) == 0 and jde_style and colour_key:
-                for plm_key, plm_entries in product_sheet_map.items():
-                    if "|" not in plm_key:
-                        continue
-                    plm_style, plm_colour = plm_key.rsplit("|", 1)
-                    if not plm_style:
-                        continue
-                    style_ok = (jde_style.upper().startswith(plm_style.upper()) or
-                                plm_style.upper().startswith(jde_style.upper()))
-                    if not style_ok:
-                        continue
-                    colour_ok = (plm_colour == colour_key or
-                                 plm_colour in colour_key or colour_key in plm_colour)
-                    if not colour_ok and plm_entries:
-                        # Raw colour word match (e.g. "espresso" in "on 003 espresso")
-                        plm_colour_raw = _as_text(plm_entries[0].get("colour")).lower()
-                        colour_ok = (colour.lower() in plm_colour_raw or
-                                     plm_colour_raw in colour.lower())
-                    if colour_ok:
-                        matches = plm_entries[:1]  # type: ignore
-                        break
-            if len(matches) == 0 and not plm_missing:
-                add_warning(f"Row {row_idx} PO {po}: JDE {jde_style} color {colour} not found in PLM sheet; PLM fields left blank.")
-                plm_missing = True
-            if not plm_missing and len(matches) == 1:
-                plm_entry = matches[0]
-            if plm_entry and _as_text(plm_entry.get("colour")).strip().lower() == "not set":
-                skipped_no_colour += 1
-                add_warning(f"Row {row_idx} PO {po}: PLM Color Name is 'Not Set'; line/size skipped.")
-                continue
-
-            bv_lower = brand_value.strip().lower() if brand_value else ""
-            if plm_entry and bv_lower != "vans" and _as_text(plm_entry.get("product_name")):
-                product = _as_text(plm_entry.get("product_name"))
-            if plm_entry and _as_text(plm_entry.get("factory")):
-                vendor_code = _as_text(plm_entry.get("factory"))
-            if plm_entry and bv_lower != "vans" and _as_text(plm_entry.get("colour")): # type: ignore
-                colour_out = _as_text(plm_entry.get("colour"))
-        # colour_out is PLM Color Name if found, else raw Material value — Longtext (colour_display) is NOT used as colour output
-
-        # Build PO suffix: ManualPO-PlantCode-PlantName (M88) or ManualPO-Plant-Dest (other files)
-        # Skip suffix building if PO came from the pre-computed last column (already fully formed,
-        # e.g. ON AG "PO002924-SWITZERLAND-ZRH-MKT", Cotopaxi "PO002864", Hunter "PO002933-UKSOS")
-        po_col_idx = col_map.get("po")
-        po_is_precomputed = (po_col_idx is not None and po_col_idx == src.max_column) # type: ignore
-        brand_key_for_row = (brand_value or "").strip().lower()
-        plant_value_raw = _as_text(_cell(row_idx, "plant"))
-        plant_value = _normalize_vans_plant_code(plant_value_raw) if brand_key_for_row == "vans" else plant_value_raw
-        plant_name_value = _as_text(_cell(row_idx, "plant_name"))
-        vans_po_suffix = _normalize_vans_po_suffix(customer_raw) if brand_key_for_row == "vans" else ""
-        # Derive transport location: explicit column → plant name map → plant code map
-        plant_derived_country = (
-            PLANT_COUNTRY_MAP.get(plant_value_raw.strip().lower(), "")
-            or PLANT_COUNTRY_MAP.get(plant_value.strip().lower(), "")
-            or PLANT_COUNTRY_MAP.get(plant_name_value.strip().lower(), "")
-        )
-        rossignol_destination = manual_destination or _as_text(_cell(row_idx, "transport_location")) or plant_derived_country
-        dest_country_raw = (
-            (manual_destination or plant_derived_country or _as_text(_cell(row_idx, "transport_location"))) if brand_key_for_row == "vans"
-            else ("France" if brand_key_for_row == "rossignol" and _as_text(rossignol_destination).strip().upper() == "EU" else rossignol_destination)
-        )
-        dest_country = COUNTRY_NAME_MAP.get(dest_country_raw.strip().upper(), dest_country_raw) if dest_country_raw else ""
-        if not po_is_precomputed:
-            if brand_key_for_row == "vans" and (plant_value or vans_po_suffix or plant_name_value):
-                po = "-".join([po] + [p for p in [plant_value, vans_po_suffix or plant_name_value] if p])
-            elif plant_name_value:
-                # M88 format: ManualPO-PlantCode-PlantName
-                po = "-".join([po] + [p for p in [plant_value, plant_name_value] if p])
-            elif plant_value or dest_country:
-                po = "-".join([po] + [p for p in [plant_value, dest_country] if p])
-        suffix_source = _as_text(plm_entry.get("customer_name")) if plm_entry else ""
-        suffix = _customer_suffix(suffix_source or customer_raw or brand_value)
-        if suffix and not po.lower().endswith(f" {suffix.lower()}"):
-            po = f"{po} {suffix}"
-
-        total_buy_rows += 1
-
-        # ── Derived values ───────────────────────────────────────────────────
-        trans_method       = _transport_method(trans_cond)
-        if not _as_text(orig_ex_fac):
-            add_warning(f"Row {row_idx} PO {po}: exFtyDate is empty; delivery/cancel dates left blank.")
-        key_date_obj       = _parse_date(buy_date)
-        key_date_lines     = _format_date(buy_date, "%m/%d/%Y")
-        delivery_date      = _format_date(orig_ex_fac, "%m/%d/%Y")
-        cancel_date        = _format_date(cancel_date_raw or orig_ex_fac, "%m/%d/%Y")
-
-        brand_lookup       = brand_value or customer_raw
-        # Vendor name fallback for NF0 rows where brand and customer columns are both empty
-        if not brand_lookup:
-            _vname_lower = (vendor_name or "").strip().lower()
-            if "uwu jump" in _vname_lower or "madison 88" in _vname_lower:
-                brand_lookup = "tnf"
-        if not brand_lookup and re.match(r"^RL[A-Z0-9]", _as_text(_cell(row_idx, "product")).strip(), flags=re.IGNORECASE):
-            brand_lookup = "rossignol"
-        # Customer name → brand inference for files with no explicit brand column
-        if not brand_value and customer_raw:
-            _cust_lower = customer_raw.strip().lower()
-            if "haglofs" in _cust_lower or "häglofs" in _cust_lower:
-                brand_lookup = "haglofs"
-            elif "fox racing" in _cust_lower or "fox" in _cust_lower:
-                brand_lookup = "fox racing"
-            elif "vuori" in _cust_lower:
-                brand_lookup = "vuori"
-            elif "511 tactical" in _cust_lower or "511tactical" in _cust_lower:
-                brand_lookup = "511 tactical"
-            elif "obermeyer" in _cust_lower:
-                brand_lookup = "obermeyer"
-            elif "on ag" in _cust_lower or "on running" in _cust_lower:
-                brand_lookup = "on ag"
-            elif "66 degrees north" in _cust_lower or "66north" in _cust_lower:
-                brand_lookup = "66 degrees north"
-            elif "peak performance" in _cust_lower:
-                brand_lookup = "peak performance"
-            elif "prana" in _cust_lower:
-                brand_lookup = "prana"
-            elif "burton" in _cust_lower:
-                brand_lookup = "burton"
-            elif "cotopaxi" in _cust_lower:
-                brand_lookup = "cotopaxi"
-            elif "hunter" in _cust_lower:
-                brand_lookup = "hunter"
-        brand_config       = _get_brand_config(brand_lookup)
-        # When customer_raw is empty (e.g. NF0 rows with plm_missing), use brand map instead of raw customer_fallback
-        _cust_raw_for_resolve = customer_raw or (BRAND_CUSTOMER_MAP.get((brand_lookup or "").strip().lower(), "") if brand_lookup else "")
-        customer_value     = _resolve_customer_subtype(_cust_raw_for_resolve, str(brand_value), customer_fallback)
-        supplier_value     = _resolve_supplier(vendor_code, vendor_name, brand_lookup)
-        size_value         = "One Size" if (not size_raw or size_raw.strip().lower() in {"os", "ons", "one size"}) else size_raw
-        if brand_lookup.strip().lower() in {"vans", "rossignol"}:
-            product = _as_text(_cell(row_idx, "product_alt")) or product
-        product_range      = _format_product_range(season_value)
-        if manual_template:
-            orders_template = manual_template
-            lines_template = manual_template
-        else:
-            orders_template = _resolve_orders_template(brand_lookup, template_raw, brand_config)
-            lines_template  = _resolve_lines_template(brand_lookup, template_raw, brand_config)
-        status_value       = _normalize_status(status_raw, brand_lookup)
-        comments_value     = _build_comments(
-            brand_lookup, product_range, buy_date, orders_template, buy_round
-        )
-        keyusers           = _resolve_keyusers(brand_lookup)
-        purchase_price     = ""  # purchase price not captured
-        key_date_orders    = _format_manual_keydate(manual_keydate) if manual_keydate else (
-            _format_date(key_date_obj, "%m/%d/%Y") if key_date_obj else ""
-        )
-        if plm_entry and _as_text(plm_entry.get("customer_name")):
-            customer_value = _as_text(plm_entry.get("customer_name"))
-        elif product_sheet_map and not plm_entry:
-            # plm_missing: only blank PLM-exclusive fields; keep buy file values
-            purchase_price = ""
-            # product stays as Material Style from buy file (already set above)
-            # colour_out stays as Color from buy file (already set above)
-            # vendor_code stays as buy file value (already set above)
-            # customer_value: fall back to brand map instead of blanking
-            customer_value = _resolve_customer_subtype(_cust_raw_for_resolve, str(brand_value), customer_fallback)
-
-        if brand_config and isinstance(brand_config.get("keyusers"), dict):
-            cfg_keyusers = brand_config.get("keyusers") or {}
-            keyusers = {
-                "KeyUser1": _as_text(cfg_keyusers.get("KeyUser1")) or keyusers.get("KeyUser1", ""),
-                "KeyUser2": _as_text(cfg_keyusers.get("KeyUser2")) or keyusers.get("KeyUser2", ""),
-                "KeyUser3": _as_text(cfg_keyusers.get("KeyUser3")) or keyusers.get("KeyUser3", ""),
-                "KeyUser4": _as_text(cfg_keyusers.get("KeyUser4")) or keyusers.get("KeyUser4", ""),
-                "KeyUser5": _as_text(cfg_keyusers.get("KeyUser5")) or keyusers.get("KeyUser5", ""),
-                "KeyUser6": _as_text(cfg_keyusers.get("KeyUser6")) or keyusers.get("KeyUser6", ""),
-                "KeyUser7": _as_text(cfg_keyusers.get("KeyUser7")) or keyusers.get("KeyUser7", ""),
-                "KeyUser8": _as_text(cfg_keyusers.get("KeyUser8")) or keyusers.get("KeyUser8", ""),
-            }
-        valid_statuses = []
-        if brand_config and isinstance(brand_config.get("valid_statuses"), list):
-            valid_statuses = [str(s).strip().lower() for s in brand_config.get("valid_statuses") if s]  # type: ignore
-
-        # ── Row-level validation warnings ────────────────────────────────────
-        for field_name, field_val, fallback_desc in [
-            ("season",   season_value, f"ProductRange '{product_range}'"),
-            ("product",  product,      "Product missing"),
-            ("template", template_raw, f"Template '{orders_template}'"),
-            ("customer", customer_raw, f"Customer '{customer_value}'"),
-            ("size",     size_raw,     "Size 'One Size'"),
-        ]:
-            if not field_val:
-                msg = f"Row {row_idx} PO {po}: {field_name} is empty; fallback {fallback_desc} used."
-                (add_error if strict else add_warning)(msg)
-
-        if not brand_value:
-            add_warning(f"Row {row_idx} PO {po}: brand is empty; comments use fallback brand value.")
-        if valid_statuses:
-            if status_value and status_value.strip().lower() not in valid_statuses:
-                add_warning(
-                    f"Row {row_idx} PO {po}: status '{status_value}' not in valid statuses "
-                    f"{valid_statuses}."
-                )
-
-        # ── ORDERS row (one per unique PO) ───────────────────────────────────
-        if brand_lookup.strip().lower() == "evo" and pivot_info.get("is_pivot"):
-            evo_header_row_idx = max(1, data_start_row - 1)
-            evo_destination_row_idx = max(1, evo_header_row_idx - 2)
-            evo_or_row_idx = max(1, evo_header_row_idx - 1)
-            evo_header_series = [cell.value for cell in src[evo_header_row_idx]]  # type: ignore
-            evo_pivot_cols = _detect_evo_pivot_cols(evo_header_series)
-            if not evo_pivot_cols and pivot_info.get("pivot_cols"):
-                evo_pivot_cols = [int(col) for col, _ in pivot_info.get("pivot_cols", [])]  # type: ignore
-            evo_entries = _process_evo_pivot_row(
-                src,
-                row_idx,
-                evo_header_row_idx,
-                evo_destination_row_idx,
-                evo_or_row_idx,
-                evo_pivot_cols,
-            )
-            if not evo_entries:
-                total_buy_rows -= 1
-                continue
-            if len(evo_entries) > 1:
-                total_buy_rows += len(evo_entries) - 1
-
-            evo_order_customer_key = customer_value or customer_fallback
-            for entry in evo_entries:
-                evo_po = _normalize_po(entry.get("or_number")) or po
-                if not evo_po:
+                if len(matches) == 0 and jde_style:
+                    style_colour_code = _extract_style_colour_code(jde_style)
+                    fallback_key = f"{jde_style}|{style_colour_code}" if style_colour_code else ""
+                    matches = product_sheet_map.get(fallback_key, []) if fallback_key else [] # type: ignore
+                    if len(matches) > 1:
+                        matches = [matches[0]]
+                # Prefix match: PLM Buyer Style Number may be a prefix of the buy file style key
+                # e.g. PLM has "2UF1067", buy file has "2UF10674959" — try all PLM keys where
+                # the style portion is a prefix of jde_style
+                # Also handles colour key mismatch via contains check (e.g. "espresso" in "on 003 espresso")
+                if len(matches) == 0 and jde_style and colour_key:
+                    for plm_key, plm_entries in product_sheet_map.items():
+                        if "|" not in plm_key:
+                            continue
+                        plm_style, plm_colour = plm_key.rsplit("|", 1)
+                        if not plm_style:
+                            continue
+                        style_ok = (jde_style.upper().startswith(plm_style.upper()) or
+                                    plm_style.upper().startswith(jde_style.upper()))
+                        if not style_ok:
+                            continue
+                        colour_ok = (plm_colour == colour_key or
+                                     plm_colour in colour_key or colour_key in plm_colour)
+                        if not colour_ok and plm_entries:
+                            # Raw colour word match (e.g. "espresso" in "on 003 espresso")
+                            plm_colour_raw = _as_text(plm_entries[0].get("colour")).lower()
+                            colour_ok = (colour.lower() in plm_colour_raw or
+                                         plm_colour_raw in colour.lower())
+                        if colour_ok:
+                            matches = plm_entries[:1]  # type: ignore
+                            break
+                if len(matches) == 0 and not plm_missing:
+                    add_warning(f"Row {row_idx} PO {po}: JDE {jde_style} color {colour} not found in PLM sheet; PLM fields left blank.")
+                    plm_missing = True
+                if not plm_missing and len(matches) == 1:
+                    plm_entry = matches[0]
+                if plm_entry and _as_text(plm_entry.get("colour")).strip().lower() == "not set":
+                    skipped_no_colour += 1
+                    add_warning(f"Row {row_idx} PO {po}: PLM Color Name is 'Not Set'; line/size skipped.")
                     continue
-                evo_destination = _format_transport_location(
-                    entry.get("destination_label")
-                    or manual_destination
-                    or plant_derived_country
-                    or _cell(row_idx, "transport_location")
-                    or ""
+    
+                bv_lower = brand_value.strip().lower() if brand_value else ""
+                if plm_entry and _as_text(plm_entry.get("product_name")):
+                    product = _as_text(plm_entry.get("product_name"))
+                if plm_entry and _as_text(plm_entry.get("factory")):
+                    vendor_code = _as_text(plm_entry.get("factory"))
+                if plm_entry and bv_lower != "vans":
+                    if brand_key_lower == "marmot":
+                        colour_out = _as_text(plm_entry.get("colour_name")) or _as_text(plm_entry.get("colour"))
+                    elif _as_text(plm_entry.get("colour")):
+                        colour_out = _as_text(plm_entry.get("colour"))
+            # colour_out is PLM Color Name if found, else raw Material value — Longtext (colour_display) is NOT used as colour output
+    
+            po_col_idx = col_map.get("po")
+            brand_key_for_row = (brand_value or "").strip().lower()
+            plant_value_raw = _as_text(_cell(row_idx, "plant"))
+            plant_value = _normalize_vans_plant_code(plant_value_raw) if brand_key_for_row == "vans" else plant_value_raw
+            plant_name_value = _as_text(_cell(row_idx, "plant_name"))
+            factory_value = _as_text(_cell(row_idx, "vendor_name"))
+            hunter_packing_split = _as_text(_cell(row_idx, "hunter_packing_split"))
+            # Derive transport location: explicit column → plant name map → plant code map
+            plant_derived_country = (
+                PLANT_COUNTRY_MAP.get(plant_value_raw.strip().lower(), "")
+                or PLANT_COUNTRY_MAP.get(plant_value.strip().lower(), "")
+                or PLANT_COUNTRY_MAP.get(plant_name_value.strip().lower(), "")
+            )
+            rossignol_destination = manual_destination or _as_text(_cell(row_idx, "transport_location")) or plant_derived_country
+            dest_country_raw = "France" if brand_key_for_row == "rossignol" and _as_text(rossignol_destination).strip().upper() == "EU" else rossignol_destination
+            dest_country = COUNTRY_NAME_MAP.get(dest_country_raw.strip().upper(), dest_country_raw) if dest_country_raw else ""
+            po_plant_part = _as_text(plant_value or plant_value_raw or plant_name_value).strip()
+            po_destination = next(
+                (
+                    candidate for candidate in [
+                        dest_country,
+                        _as_text(_cell(row_idx, "transport_location")),
+                        manual_destination,
+                        rossignol_destination,
+                        plant_derived_country,
+                    ]
+                    if _is_likely_destination_country(candidate, po_plant_part)
+                ),
+                "",
+            )
+            if brand_key_for_row == "jack wolfskin" and not po_destination:
+                po_destination = "Germany"
+            if brand_key_for_row == "hunter":
+                hunter_destination = _normalize_hunter_order_transport_location(hunter_packing_split, po) or _normalize_hunter_transport_location(
+                    _as_text(_cell(row_idx, "transport_location")),
+                    hunter_packing_split,
+                    po,
                 )
-                evo_order_key = (evo_po, f"{evo_order_customer_key}||{evo_destination}")
-                if evo_order_key not in seen_orders:
-                    seen_orders.add(evo_order_key)
-                    _append_row(orders_ws, [
-                        evo_po, supplier_value, status_value, customer_value,
-                        trans_method, evo_destination, "", orders_template,
-                        key_date_orders,
-                        "", "", comments_value, CURRENCY,
-                        keyusers["KeyUser1"], keyusers["KeyUser2"], keyusers["KeyUser3"],
-                        keyusers["KeyUser4"], keyusers["KeyUser5"], keyusers["KeyUser6"],
-                        keyusers["KeyUser7"], keyusers["KeyUser8"],
-                        "", "", "", "", "",
+                if hunter_destination:
+                    po_destination = hunter_destination
+            if brand_key_for_row == "jack wolfskin":
+                jws_plant_code = re.sub(r"\bPT\.?\s*UWU\s*JUMP\b", "", _as_text(factory_value or po_plant_part), flags=re.IGNORECASE)
+                jws_plant_code = re.sub(r"\bPT\.?\s*UWU\b", "", jws_plant_code, flags=re.IGNORECASE)
+                jws_plant_code = re.sub(r"\s*-\s*", "", jws_plant_code).strip() or "JW"
+                jws_destination_code = _as_text(po_destination).strip() or "Germany"
+                po = f"{_normalize_po(po)}-{jws_plant_code}-{jws_destination_code}"
+            else:
+                po = _format_purchase_order(po, po_plant_part or plant_value or plant_name_value, po_destination)
+    
+            total_buy_rows += 1
+    
+            # ── Derived values ───────────────────────────────────────────────────
+            trans_method       = _transport_method(trans_cond)
+            if not _as_text(orig_ex_fac):
+                add_warning(f"Row {row_idx} PO {po}: exFtyDate is empty; delivery/cancel dates left blank.")
+            key_date_obj       = _parse_date(buy_date)
+            key_date_lines     = _format_date(buy_date, "%m/%d/%Y")
+            delivery_date      = _format_date(orig_ex_fac, "%m/%d/%Y")
+            if brand_key_lower == "cotopaxi" and not delivery_date:
+                delivery_date = _format_date(buy_date, "%m/%d/%Y")
+            cancel_date        = _format_date(cancel_date_raw or orig_ex_fac, "%m/%d/%Y")
+    
+            brand_lookup       = brand_value or customer_raw
+            # Vendor name fallback for NF0 rows where brand and customer columns are both empty
+            if not brand_lookup:
+                _vname_lower = (vendor_name or "").strip().lower()
+                if "uwu jump" in _vname_lower or "madison 88" in _vname_lower:
+                    brand_lookup = "tnf"
+            if not brand_lookup and re.match(r"^RL[A-Z0-9]", _as_text(_cell(row_idx, "product")).strip(), flags=re.IGNORECASE):
+                brand_lookup = "rossignol"
+            # Customer name → brand inference for files with no explicit brand column
+            if not brand_value and customer_raw:
+                _cust_lower = customer_raw.strip().lower()
+                if "haglofs" in _cust_lower or "häglofs" in _cust_lower:
+                    brand_lookup = "haglofs"
+                elif "fox racing" in _cust_lower or "fox" in _cust_lower:
+                    brand_lookup = "fox racing"
+                elif "vuori" in _cust_lower:
+                    brand_lookup = "vuori"
+                elif "511 tactical" in _cust_lower or "511tactical" in _cust_lower:
+                    brand_lookup = "511 tactical"
+                elif "obermeyer" in _cust_lower:
+                    brand_lookup = "obermeyer"
+                elif "on ag" in _cust_lower or "on running" in _cust_lower:
+                    brand_lookup = "on ag"
+                elif "66 degrees north" in _cust_lower or "66north" in _cust_lower:
+                    brand_lookup = "66 degrees north"
+                elif "peak performance" in _cust_lower:
+                    brand_lookup = "peak performance"
+                elif "prana" in _cust_lower:
+                    brand_lookup = "prana"
+                elif "burton" in _cust_lower:
+                    brand_lookup = "burton"
+                elif "cotopaxi" in _cust_lower:
+                    brand_lookup = "cotopaxi"
+                elif "hunter" in _cust_lower:
+                    brand_lookup = "hunter"
+            brand_config       = _get_brand_config(brand_lookup)
+            # When customer_raw is empty (e.g. NF0 rows with plm_missing), use brand map instead of raw customer_fallback
+            _cust_raw_for_resolve = customer_raw or (BRAND_CUSTOMER_MAP.get((brand_lookup or "").strip().lower(), "") if brand_lookup else "")
+            customer_value     = _resolve_customer_subtype(_cust_raw_for_resolve, str(brand_value), customer_fallback)
+            supplier_value     = _resolve_supplier(vendor_code, vendor_name, brand_lookup)
+            size_value         = "One Size" if (not size_raw or size_raw.strip().lower() in {"os", "ons", "one size"}) else size_raw
+            product_name_raw   = _as_text(_cell(row_idx, "product_name"))
+            if product_name_raw:
+                product = product_name_raw
+            brand_key_lower = brand_lookup.strip().lower()
+            if brand_key_lower in {"vans", "rossignol"}:
+                product = _as_text(_cell(row_idx, "product_alt")) or product
+            elif brand_key_lower == "66 degrees north":
+                product = _as_text(_cell(row_idx, "product_name")) or product
+            product_range      = _format_product_range(season_value)
+            if manual_template:
+                orders_template = manual_template
+                lines_template = manual_template
+            else:
+                orders_template = _resolve_orders_template(brand_lookup, template_raw, brand_config)
+                lines_template  = _resolve_lines_template(brand_lookup, template_raw, brand_config)
+            status_value       = _normalize_status(status_raw, brand_lookup)
+            comments_value     = _build_comments(
+                brand_lookup, product_range, buy_date, orders_template, buy_round
+            )
+            keyusers           = _resolve_keyusers(brand_lookup)
+            purchase_price     = ""  # purchase price not captured
+            key_date_orders    = _format_manual_keydate(manual_keydate) if manual_keydate else (
+                _format_date(key_date_obj, "%m/%d/%Y") if key_date_obj else ""
+            )
+            if plm_entry and _as_text(plm_entry.get("customer_name")):
+                customer_value = _as_text(plm_entry.get("customer_name"))
+            elif product_sheet_map and not plm_entry:
+                # plm_missing: only blank PLM-exclusive fields; keep buy file values
+                purchase_price = ""
+                # product stays as Material Style from buy file (already set above)
+                # colour_out stays as Color from buy file (already set above)
+                # vendor_code stays as buy file value (already set above)
+                # customer_value: fall back to brand map instead of blanking
+                customer_value = _resolve_customer_subtype(_cust_raw_for_resolve, str(brand_value), customer_fallback)
+
+            if brand_config and isinstance(brand_config.get("keyusers"), dict):
+                cfg_keyusers = brand_config.get("keyusers") or {}
+                keyusers = {
+                    "KeyUser1": _as_text(cfg_keyusers.get("KeyUser1")) or keyusers.get("KeyUser1", ""),
+                    "KeyUser2": _as_text(cfg_keyusers.get("KeyUser2")) or keyusers.get("KeyUser2", ""),
+                    "KeyUser3": _as_text(cfg_keyusers.get("KeyUser3")) or keyusers.get("KeyUser3", ""),
+                    "KeyUser4": _as_text(cfg_keyusers.get("KeyUser4")) or keyusers.get("KeyUser4", ""),
+                    "KeyUser5": _as_text(cfg_keyusers.get("KeyUser5")) or keyusers.get("KeyUser5", ""),
+                    "KeyUser6": _as_text(cfg_keyusers.get("KeyUser6")) or keyusers.get("KeyUser6", ""),
+                    "KeyUser7": _as_text(cfg_keyusers.get("KeyUser7")) or keyusers.get("KeyUser7", ""),
+                    "KeyUser8": _as_text(cfg_keyusers.get("KeyUser8")) or keyusers.get("KeyUser8", ""),
+                }
+            valid_statuses = []
+            if brand_config and isinstance(brand_config.get("valid_statuses"), list):
+                valid_statuses = [str(s).strip().lower() for s in brand_config.get("valid_statuses") if s]  # type: ignore
+    
+            # ── Row-level validation warnings ────────────────────────────────────
+            for field_name, field_val, fallback_desc in [
+                ("season",   season_value, f"ProductRange '{product_range}'"),
+                ("product",  product,      "Product missing"),
+                ("template", template_raw, f"Template '{orders_template}'"),
+                ("customer", customer_raw, f"Customer '{customer_value}'"),
+                ("size",     size_raw,     "Size 'One Size'"),
+            ]:
+                if not field_val:
+                    msg = f"Row {row_idx} PO {po}: {field_name} is empty; fallback {fallback_desc} used."
+                    (add_error if strict else add_warning)(msg)
+    
+            if not brand_value:
+                add_warning(f"Row {row_idx} PO {po}: brand is empty; comments use fallback brand value.")
+            if valid_statuses:
+                if status_value and status_value.strip().lower() not in valid_statuses:
+                    add_warning(
+                        f"Row {row_idx} PO {po}: status '{status_value}' not in valid statuses "
+                        f"{valid_statuses}."
+                    )
+    
+            # ── ORDERS row (one per unique PO) ───────────────────────────────────
+            if brand_lookup.strip().lower() == "evo" and pivot_info.get("is_pivot"):
+                evo_header_row_idx = max(1, data_start_row - 1)
+                evo_destination_row_idx = max(1, evo_header_row_idx - 2)
+                evo_or_row_idx = max(1, evo_header_row_idx - 1)
+                evo_header_series = [cell.value for cell in src[evo_header_row_idx]]  # type: ignore
+                evo_pivot_cols = _detect_evo_pivot_cols(evo_header_series)
+                if not evo_pivot_cols and pivot_info.get("pivot_cols"):
+                    evo_pivot_cols = [int(col) for col, _ in pivot_info.get("pivot_cols", [])]  # type: ignore
+                evo_entries = _process_evo_pivot_row(
+                    src,
+                    row_idx,
+                    evo_header_row_idx,
+                    evo_destination_row_idx,
+                    evo_or_row_idx,
+                    evo_pivot_cols,
+                )
+                if not evo_entries:
+                    total_buy_rows -= 1
+                    continue
+                if len(evo_entries) > 1:
+                    total_buy_rows += len(evo_entries) - 1
+    
+                evo_order_customer_key = customer_value or customer_fallback
+                for entry in evo_entries:
+                    evo_po = _normalize_po(entry.get("or_number")) or po
+                    if not evo_po:
+                        continue
+                    evo_destination = _format_transport_location(
+                        entry.get("destination_label")
+                        or manual_destination
+                        or plant_derived_country
+                        or _cell(row_idx, "transport_location")
+                        or ""
+                    )
+                    evo_order_key = (evo_po, f"{evo_order_customer_key}||{evo_destination}")
+                    if evo_order_key not in seen_orders:
+                        seen_orders.add(evo_order_key)
+                        _append_row(orders_ws, [
+                            evo_po, supplier_value, status_value, customer_value,
+                            trans_method, evo_destination, "", orders_template,
+                            key_date_orders,
+                            "", "", comments_value, CURRENCY,
+                            keyusers["KeyUser1"], keyusers["KeyUser2"], keyusers["KeyUser3"],
+                            keyusers["KeyUser4"], keyusers["KeyUser5"], keyusers["KeyUser6"],
+                            keyusers["KeyUser7"], keyusers["KeyUser8"],
+                            "", "", "", "", "",
+                        ])
+    
+                    line_item_counter[evo_po] += 1 # type: ignore
+                    line_item = line_item_counter[evo_po]
+                    _append_row(lines_ws, [
+                        evo_po, line_item, product_range, product, customer_value,
+                        delivery_date, trans_method, evo_destination, _normalize_vans_line_status(evo_po, status_value), purchase_price, "",
+                        lines_template, delivery_date, SUPPLIER_PROFILE,
+                        "", "", CURRENCY, "", product_external_ref, product_customer_ref, "", "",
+                        evo_po,
+                        delivery_date, cancel_date,
+                        "", "", "", "", "", "",
                     ])
-
-                line_item_counter[evo_po] += 1 # type: ignore
-                line_item = line_item_counter[evo_po]
-                _append_row(lines_ws, [
-                    evo_po, line_item, product_range, product, customer_value,
-                    delivery_date, trans_method, evo_destination, _normalize_vans_line_status(evo_po, status_value), purchase_price, "",
-                    lines_template, delivery_date, SUPPLIER_PROFILE,
-                    "", "", CURRENCY, "", product_external_ref, product_customer_ref, "", "",
-                    evo_po,
-                    delivery_date, cancel_date,
-                    "", "", "", "", "", "",
+                    po_to_lines[evo_po].append(line_item)
+                    total_lines_rows += 1
+    
+                    _append_row(sizes_ws, [
+                        evo_po, line_item, product_range, product,
+                        size_value, size_value, entry["qty"], colour_out,
+                        "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+                        "", "", "", "", "", "", "",
+                    ])
+                    po_to_nonzero_lines[evo_po].append(line_item)
+                    po_to_sizes[evo_po].append(line_item)
+                    total_sizes_rows += 1
+                continue
+    
+            order_customer_key = customer_value or customer_fallback
+            order_key = (po, order_customer_key)
+            if brand_key_lower == "66 degrees north":
+                po = _format_purchase_order(po, po_plant_part or plant_value or plant_name_value, _as_text(plant_derived_country or "Iceland"))
+    
+            if order_key not in seen_orders:
+                seen_orders.add(order_key)
+                # Fix #2: Map TransportLocation from source (with plant-derived fallback for M88)
+                transport_location = _format_transport_location(
+                    (manual_destination or plant_derived_country or _cell(row_idx, "transport_location")) if brand_key_for_row == "vans"
+                    else ("France" if brand_key_for_row == "rossignol" and _as_text(manual_destination or _cell(row_idx, "transport_location") or plant_derived_country).strip().upper() == "EU" else (manual_destination or _cell(row_idx, "transport_location") or plant_derived_country))
+                )
+                _append_row(orders_ws, [
+                    po, supplier_value, status_value, customer_value,
+                    trans_method, transport_location, "", orders_template,
+                    key_date_orders,
+                    "", "", comments_value, CURRENCY,
+                    keyusers["KeyUser1"], keyusers["KeyUser2"], keyusers["KeyUser3"],
+                    keyusers["KeyUser4"], keyusers["KeyUser5"], keyusers["KeyUser6"],
+                    keyusers["KeyUser7"], keyusers["KeyUser8"],
+                    "", "", "", "", "",
                 ])
-                po_to_lines[evo_po].append(line_item)
-                total_lines_rows += 1
-
-                _append_row(sizes_ws, [
-                    evo_po, line_item, product_range, product,
-                    size_value, size_value, entry["qty"], colour_out,
-                    "", "", "", "", "", "", "", "", "", "", "", "", "", "",
-                    "", "", "", "", "", "", "",
-                ])
-                po_to_nonzero_lines[evo_po].append(line_item)
-                po_to_sizes[evo_po].append(line_item)
-                total_sizes_rows += 1
-            continue
-
-        order_customer_key = customer_value or customer_fallback
-        order_key = (po, order_customer_key)
-        if order_key not in seen_orders:
-            seen_orders.add(order_key)
-            # Fix #2: Map TransportLocation from source (with plant-derived fallback for M88)
+    
+            # Skip LINES / SIZES if Colour is blank
+            if not colour:
+                skipped_no_colour += 1
+                add_warning(f"Row {row_idx} PO {po}: colour is empty; line/size skipped.")
+                continue
+    
+            # ── LINES row (one per buy file row) ─────────────────────────────────
+            line_item_counter[po] += 1 # type: ignore
+            line_item = line_item_counter[po]
+    
+            # Fix #2: Map TransportLocation from source for LINES (with plant-derived fallback for M88)
             transport_location = _format_transport_location(
                 (manual_destination or plant_derived_country or _cell(row_idx, "transport_location")) if brand_key_for_row == "vans"
                 else ("France" if brand_key_for_row == "rossignol" and _as_text(manual_destination or _cell(row_idx, "transport_location") or plant_derived_country).strip().upper() == "EU" else (manual_destination or _cell(row_idx, "transport_location") or plant_derived_country))
             )
-            _append_row(orders_ws, [
-                po, supplier_value, status_value, customer_value,
-                trans_method, transport_location, "", orders_template,
-                key_date_orders,
-                "", "", comments_value, CURRENCY,
-                keyusers["KeyUser1"], keyusers["KeyUser2"], keyusers["KeyUser3"],
-                keyusers["KeyUser4"], keyusers["KeyUser5"], keyusers["KeyUser6"],
-                keyusers["KeyUser7"], keyusers["KeyUser8"],
-                "", "", "", "", "",
+            # Fix #3: KeyDate per line from DeliveryDate
+            key_date_line = delivery_date
+            buyer_po_number_out = (
+                buyer_po_number_raw if buyer_po_number_raw not in (None, "")
+                else _normalize_po(raw_po_val) or ""
+            )
+            udf_start_date = delivery_date if brand_key_lower in {"hunter", "columbia"} else ""
+            udf_cancel_date = delivery_date if brand_key_lower in {"hunter", "columbia"} else ""
+            _append_row(lines_ws, [
+                po, line_item, product_range, product, customer_value,
+                delivery_date, trans_method, transport_location, _normalize_vans_line_status(po, status_value), purchase_price, "",
+                lines_template, key_date_line, SUPPLIER_PROFILE,
+                "", "", CURRENCY, "", product_external_ref, product_customer_ref, "", "",
+                buyer_po_number_out,
+                udf_start_date, udf_cancel_date,
+                "", "", "", "", "", "",
             ])
-
-        # Skip LINES / SIZES if Colour is blank
-        if not colour:
-            skipped_no_colour += 1
-            add_warning(f"Row {row_idx} PO {po}: colour is empty; line/size skipped.")
-            continue
-
-        # ── LINES row (one per buy file row) ─────────────────────────────────
-        line_item_counter[po] += 1 # type: ignore
-        line_item = line_item_counter[po]
-
-        # Fix #2: Map TransportLocation from source for LINES (with plant-derived fallback for M88)
-        transport_location = _format_transport_location(
-            (manual_destination or plant_derived_country or _cell(row_idx, "transport_location")) if brand_key_for_row == "vans"
-            else ("France" if brand_key_for_row == "rossignol" and _as_text(manual_destination or _cell(row_idx, "transport_location") or plant_derived_country).strip().upper() == "EU" else (manual_destination or _cell(row_idx, "transport_location") or plant_derived_country))
-        )
-        # Fix #3: KeyDate per line from DeliveryDate
-        key_date_line = delivery_date
-        buyer_po_number_out = (
-            buyer_po_number_raw if buyer_po_number_raw not in (None, "")
-            else _normalize_po(raw_po_val) or ""
-        )
-        _append_row(lines_ws, [
-            po, line_item, product_range, product, customer_value,
-            delivery_date, trans_method, transport_location, _normalize_vans_line_status(po, status_value), purchase_price, "",
-            lines_template, key_date_line, SUPPLIER_PROFILE,
-            "", "", CURRENCY, "", product_external_ref, product_customer_ref, "", "",
-            buyer_po_number_out,
-            delivery_date, cancel_date,
-            "", "", "", "", "", "",
-        ])
-        po_to_lines[po].append(line_item)
-        total_lines_rows += 1
-
-        # ── ORDER_SIZES row (include qty=0) ──────────────────────────────────
-        po_to_nonzero_lines[po].append(line_item)
-        _append_row(sizes_ws, [
-            po, line_item, product_range, product,
-            size_value, size_value, qty, colour_out,
-            "", "", "", "", "", "", "", "", "", "", "", "", "", "",
-            "", "", "", "", "", "", "",
-        ])
-        po_to_sizes[po].append(line_item)
-        total_sizes_rows += 1
-
-    # ── Post-processing integrity checks ─────────────────────────────────────
-    unique_order_count = len(seen_orders)
-    unique_po_count = len({po for po, _ in seen_orders})
-    orders_count    = orders_ws.max_row - 1 # type: ignore
-
-    if orders_count != unique_order_count:
-        raise ValueError(
-            f"ORDERS row count mismatch. Expected {unique_order_count}, got {orders_count}."
-        )
-
-    if total_lines_rows != total_buy_rows - skipped_no_colour: # type: ignore
-        raise ValueError(
-            f"LINES row count mismatch. Expected {total_buy_rows - skipped_no_colour}, got {total_lines_rows}."
-        )
-
-    if total_buy_rows == 0:
-        raise ValueError(
-            "No usable buy rows detected. Check the sheet/header row, "
-            "or pass --sheet with the exact worksheet name."
-        )
-
-    for po, line_items in po_to_lines.items():
-        expected = list(range(1, len(line_items) + 1))
-        if line_items != expected:
+            po_to_lines[po].append(line_item)
+            total_lines_rows += 1
+    
+            # ── ORDER_SIZES row (include qty=0) ──────────────────────────────────
+            po_to_nonzero_lines[po].append(line_item)
+            _append_row(sizes_ws, [
+                po, line_item, product_range, product,
+                size_value, size_value, qty, colour_out,
+                "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+                "", "", "", "", "", "", "",
+            ])
+            po_to_sizes[po].append(line_item)
+            total_sizes_rows += 1
+    
+        # ── Post-processing integrity checks ─────────────────────────────────────
+        unique_order_count = len(seen_orders)
+        unique_po_count = len({po for po, _ in seen_orders})
+        orders_count    = orders_ws.max_row - 1 # type: ignore
+    
+        if orders_count != unique_order_count:
             raise ValueError(
-                f"LineItem sequence invalid for PO {po}. "
-                f"Expected {expected}, got {line_items}."
+                f"ORDERS row count mismatch. Expected {unique_order_count}, got {orders_count}."
             )
-        size_items          = po_to_sizes.get(po, [])
-        expected_size_items = po_to_lines.get(po, [])
-        if size_items != expected_size_items:
+    
+        if total_lines_rows != total_buy_rows - skipped_no_colour: # type: ignore
             raise ValueError(
-                f"LineItem mismatch LINES vs ORDER_SIZES for PO {po}. "
-                f"Expected {expected_size_items}, got {size_items}."
+                f"LINES row count mismatch. Expected {total_buy_rows - skipped_no_colour}, got {total_lines_rows}."
             )
-
-    if strict and validation_errors:
-        _print_summary(
-            src, layout_mode, layout_score, probed_po_rows, data_start_row,
-            total_buy_rows, unique_po_count, unique_order_count, orders_count,
-            total_lines_rows, total_sizes_rows,
-            skipped_empty_po, skipped_no_colour, validation_warnings, validation_errors,
-            skipped_empty_po_samples,
-            validate_sizes=validate_sizes,
+    
+        if total_buy_rows == 0:
+            raise ValueError(
+                "No usable buy rows detected. Check the sheet/header row, "
+                "or pass --sheet with the exact worksheet name."
+            )
+    
+        for po, line_items in po_to_lines.items():
+            expected = list(range(1, len(line_items) + 1))
+            if line_items != expected:
+                raise ValueError(
+                    f"LineItem sequence invalid for PO {po}. "
+                    f"Expected {expected}, got {line_items}."
+                )
+            size_items          = po_to_sizes.get(po, [])
+            expected_size_items = po_to_lines.get(po, [])
+            if size_items != expected_size_items:
+                raise ValueError(
+                    f"LineItem mismatch LINES vs ORDER_SIZES for PO {po}. "
+                    f"Expected {expected_size_items}, got {size_items}."
+                )
+    
+        if strict and validation_errors:
+            _print_summary(
+                src, layout_mode, layout_score, probed_po_rows, data_start_row,
+                total_buy_rows, unique_po_count, unique_order_count, orders_count,
+                total_lines_rows, total_sizes_rows,
+                skipped_empty_po, skipped_no_colour, validation_warnings, validation_errors,
+                skipped_empty_po_samples,
+                validate_sizes=validate_sizes,
+            )
+            raise ValueError("Strict validation failed due to missing/blank required fields.")
+    
+        # ── Output slice validation (NEW) ─────────────────────────────────────────
+        slice_issues = _validate_output_slices(
+            orders_ws, lines_ws, sizes_ws, validate_sizes=validate_sizes
         )
-        raise ValueError("Strict validation failed due to missing/blank required fields.")
-
-    # ── Output slice validation (NEW) ─────────────────────────────────────────
-    slice_issues = _validate_output_slices(
-        orders_ws, lines_ws, sizes_ws, validate_sizes=validate_sizes
-    )
-    slice_errors   = [(lvl, msg) for lvl, msg in slice_issues if lvl == "ERROR"]
+        slice_errors   = [(lvl, msg) for lvl, msg in slice_issues if lvl == "ERROR"]
     slice_warnings = [(lvl, msg) for lvl, msg in slice_issues if lvl == "WARNING"]
 
     # ── Write output files ────────────────────────────────────────────────────

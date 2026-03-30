@@ -1,5 +1,15 @@
 "use client";
 
+// Predefined comment options for dropdown
+const COMMENT_OPTIONS = [
+    "[TNF] FW25 Nov Buy 15-NOV Bulk",
+    "[Vans] SS26 Bulk Order",
+    "[Columbia] FW26 Special",
+    "[Vuori] 2026 Main Buy",
+    "[Marmot] Fall 2026",
+    "[Other]"
+];
+
 import { useEffect, useState } from "react";
 import { Upload, FileCheck, AlertCircle, Download, ChevronRight, ChevronLeft, Settings, History, Loader2, Info, CheckCircle2, CloudUpload, ArrowRight, ShieldCheck, FileText } from "lucide-react";
 import { clsx, type ClassValue } from "clsx";
@@ -12,6 +22,114 @@ function cn(...inputs: ClassValue[]) {
 
 type Step = "UPLOAD" | "RUN" | "VALIDATE" | "REVIEW" | "DOWNLOAD";
 
+const TEMPLATE_OPTIONS = [
+    "BULK",
+    "Major Brand Bulk",
+    "Major Brand Bulk EDI",
+    "FOB Bulk EDI PO (New)",
+    "FOB Bulk Non EDI PO (New)",
+    "SMS PO Header",
+    "SMS Non EDI (New)",
+    "SMS EDI",
+];
+
+const LINE_TEMPLATE_OPTIONS = [
+    "BULK",
+    "Major Brand Bulk",
+    "FOB Bulk EDI PO (New)",
+    "FOB Bulk Non EDI PO (New)",
+    "SMS PO Header",
+    "SMS Non EDI (New)",
+    "SMS EDI",
+];
+
+const SEASON_OPTIONS = [
+    "FH:2026",
+    "FH:2027",
+    "SH:2026",
+    "SH:2027",
+    "FW26",
+    "FW27",
+    "SS26",
+    "SS27",
+    "AW26",
+    "AW27",
+];
+
+const BRAND_OPTIONS = [
+    "Vans",
+    "Prana",
+    "Columbia",
+    "Rossignol",
+    "Peak Performance",
+    "Dynafit",
+    "LL Bean",
+    "Helly Hansen",
+    "Jack Wolfskin",
+    "Vuori",
+    "Marmot",
+    "Burton",
+    "Cotopaxi",
+    "Fox Racing",
+    "Haglofs",
+    "Mammut",
+    "Evo",
+    "On AG",
+    "66 Degrees North",
+    "Hunter",
+    "Other",
+];
+
+const CUSTOMER_OPTIONS = [
+    "Vans",
+    "Prana",
+    "Columbia",
+    "The North Face In-Line",
+    "The North Face SMU",
+    "The North Face RTO",
+    "Rossignol",
+    "Peak Performance",
+    "Dynafit",
+    "LL Bean",
+    "Helly Hansen",
+    "Jack Wolfskin",
+    "Vuori",
+    "Marmot",
+    "Burton",
+    "Cotopaxi",
+    "Fox Racing",
+    "Haglofs",
+    "Mammut",
+    "Evo",
+    "On AG",
+    "66 Degrees North",
+    "Hunter",
+    "Other",
+];
+
+const DESTINATION_OPTIONS = [
+    "USA",
+    "Canada",
+    "Mexico",
+    "UK",
+    "UAE",
+    "France",
+    "Germany",
+    "Korea",
+    "Japan",
+    "Indonesia",
+    "Australia",
+    "Hong Kong",
+    "Netherlands",
+    "Czech Republic",
+    "New Zealand",
+    "Sweden",
+    "Iceland",
+    "EU",
+    "Belgium",
+    "Other",
+];
+
 export default function Workflow() {
     const [currentStep, setCurrentStep] = useState<Step>("UPLOAD");
     const [isProcessing, setIsProcessing] = useState(false);
@@ -23,6 +141,7 @@ export default function Workflow() {
     const [manualTemplate, setManualTemplate] = useState("");
     const [manualLinesTemplate, setManualLinesTemplate] = useState("");
     const [manualComments, setManualComments] = useState("");
+    const [customComment, setCustomComment] = useState("");
     const [manualKeyDate, setManualKeyDate] = useState("");
     const [manualKeyUser1, setManualKeyUser1] = useState("");
     const [manualKeyUser2, setManualKeyUser2] = useState("");
@@ -55,9 +174,23 @@ export default function Workflow() {
     ];
 
     const currentStepIndex = steps.findIndex(s => s.key === currentStep);
+    const fieldBase =
+        "w-full rounded-2xl bg-white/5 border border-white/10 px-4 py-4 text-base md:text-lg text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 min-h-[56px]";
+    const selectBase =
+        "w-full appearance-none rounded-2xl bg-white/5 border border-white/10 px-4 py-4 text-base md:text-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500/40 min-h-[56px]";
 
     const handleStartUpload = async () => {
         if (!buyFiles || buyFiles.length === 0) return;
+        if (!manualPo.trim()) {
+            setErrors([{
+                field: "Manual PO",
+                row: 0,
+                message: "Manual PO is required before upload.",
+                severity: "CRITICAL"
+            }]);
+            setCurrentStep("VALIDATE");
+            return;
+        }
 
         setIsProcessing(true);
         setCurrentStep("RUN");
@@ -72,7 +205,13 @@ export default function Workflow() {
         if (manualPo.trim()) formData.append("manualPo", manualPo.trim());
         if (manualTemplate.trim()) formData.append("manualTemplate", manualTemplate.trim());
         if (manualLinesTemplate.trim()) formData.append("manualLinesTemplate", manualLinesTemplate.trim());
-        if (manualComments.trim()) formData.append("manualComments", manualComments.trim());
+        if (manualComments.trim()) {
+            if (manualComments === '[Other]') {
+                formData.append("manualComments", customComment.trim());
+            } else {
+                formData.append("manualComments", manualComments.trim());
+            }
+        }
         if (manualKeyDate.trim()) formData.append("manualKeyDate", manualKeyDate.trim());
         if (manualKeyUser1.trim()) formData.append("manualKeyUser1", manualKeyUser1.trim());
         if (manualKeyUser2.trim()) formData.append("manualKeyUser2", manualKeyUser2.trim());
@@ -330,40 +469,69 @@ export default function Workflow() {
                                     )}
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Manual PO</label>
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Manual PO <span className="text-rose-400">*</span></label>
                                     <input
                                         value={manualPo}
                                         onChange={(e) => setManualPo(e.target.value)}
                                         placeholder="PO002954"
+                                        required
                                         className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
                                     />
                                 </div>
                                 <div className="space-y-2">
                                     <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Template</label>
-                                    <input
+                                    <select
                                         value={manualTemplate}
-                                        onChange={(e) => setManualTemplate(e.target.value)}
-                                        placeholder="FOB Bulk EDI PO (New) or SMS EDI"
-                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-                                    />
+                                        onChange={e => setManualTemplate(e.target.value)}
+                                        className="w-full rounded-xl bg-slate-900 border border-blue-700 px-4 py-4 text-base md:text-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-400/80 min-h-[56px] transition-colors duration-200 shadow-lg hover:border-blue-400"
+                                        style={{ backgroundColor: '#181e29', color: '#fff' }}
+                                    >
+                                        <option value="" disabled className="text-slate-400 bg-slate-800">Choose a template</option>
+                                        {TEMPLATE_OPTIONS.map(option => (
+                                            <option key={option} value={option} className="text-slate-200 bg-slate-900 hover:bg-blue-900">{option}</option>
+                                        ))}
+                                    </select>
                                 </div>
                                 <div className="space-y-2">
                                     <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Lines Template</label>
-                                    <input
+                                    <select
                                         value={manualLinesTemplate}
-                                        onChange={(e) => setManualLinesTemplate(e.target.value)}
-                                        placeholder="FOB Bulk EDI PO (New) or SMS EDI"
-                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-                                    />
+                                        onChange={e => setManualLinesTemplate(e.target.value)}
+                                        className="w-full rounded-xl bg-slate-900 border border-blue-700 px-4 py-4 text-base md:text-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-400/80 min-h-[56px] transition-colors duration-200 shadow-lg hover:border-blue-400"
+                                        style={{ backgroundColor: '#181e29', color: '#fff' }}
+                                    >
+                                        <option value="" disabled className="text-slate-400 bg-slate-800">Choose lines template</option>
+                                        {LINE_TEMPLATE_OPTIONS.map(option => (
+                                            <option key={option} value={option} className="text-slate-200 bg-slate-900 hover:bg-blue-900">{option}</option>
+                                        ))}
+                                    </select>
                                 </div>
                                 <div className="space-y-2">
                                     <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Comments</label>
-                                    <input
+                                    <select
                                         value={manualComments}
-                                        onChange={(e) => setManualComments(e.target.value)}
-                                        placeholder="[TNF] FW25 Nov Buy 15-NOV Bulk"
-                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-                                    />
+                                        onChange={e => {
+                                            setManualComments(e.target.value);
+                                            if (e.target.value !== '[Other]') setCustomComment("");
+                                        }}
+                                        className="w-full rounded-2xl bg-slate-900 border border-white/10 px-4 py-4 text-base md:text-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-400/80 min-h-[56px] transition-colors duration-200 shadow-lg hover:border-blue-400"
+                                        style={{ backgroundColor: '#181e29', color: '#fff' }}
+                                    >
+                                        <option value="" disabled>Choose a comment</option>
+                                        {COMMENT_OPTIONS.map(option => (
+                                            <option key={option} value={option}>{option}</option>
+                                        ))}
+                                    </select>
+                                    {manualComments === '[Other]' && (
+                                        <textarea
+                                            value={customComment}
+                                            onChange={e => setCustomComment(e.target.value)}
+                                            placeholder="Enter your comment here"
+                                            rows={2}
+                                            className="w-full rounded-2xl bg-slate-900 border border-white/10 px-4 py-4 text-base md:text-lg text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-400/80 min-h-[56px] mt-2 transition-colors duration-200 shadow-lg hover:border-blue-400"
+                                            style={{ backgroundColor: '#181e29', color: '#fff' }}
+                                        />
+                                    )}
                                 </div>
                                 <div className="space-y-2">
                                     <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Orders KeyDate</label>
@@ -424,8 +592,9 @@ export default function Workflow() {
                                     <input
                                         value={manualSeason}
                                         onChange={(e) => setManualSeason(e.target.value)}
-                                        placeholder="FH:2026"
-                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                        placeholder="Choose a season"
+                                        list="season-presets"
+                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-4 text-base md:text-lg text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
                                     />
                                 </div>
                                 <div className="space-y-2">
@@ -451,16 +620,30 @@ export default function Workflow() {
                                     <input
                                         value={manualDestination}
                                         onChange={(e) => setManualDestination(e.target.value)}
-                                        placeholder="Sweden"
-                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                        placeholder="Choose a destination"
+                                        list="destination-presets"
+                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-4 text-base md:text-lg text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
                                     />
                                 </div>
                             </div>
 
+                            <datalist id="template-presets">
+                                {TEMPLATE_OPTIONS.map(option => <option key={option} value={option} />)}
+                            </datalist>
+                            <datalist id="lines-template-presets">
+                                {LINE_TEMPLATE_OPTIONS.map(option => <option key={option} value={option} />)}
+                            </datalist>
+                            <datalist id="season-presets">
+                                {SEASON_OPTIONS.map(option => <option key={option} value={option} />)}
+                            </datalist>
+                            <datalist id="destination-presets">
+                                {DESTINATION_OPTIONS.map(option => <option key={option} value={option} />)}
+                            </datalist>
+
                             <div className="flex flex-col items-center gap-6">
                                 <button
                                     onClick={handleStartUpload}
-                                    disabled={!buyFiles || buyFiles.length === 0}
+                                    disabled={!buyFiles || buyFiles.length === 0 || !manualPo.trim()}
                                     className="primary-button inline-flex items-center gap-4 bg-blue-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
                                     style={{ background: "linear-gradient(90deg, #2563eb, #1d4ed8)" }}
                                 >
