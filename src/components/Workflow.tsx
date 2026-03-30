@@ -130,6 +130,19 @@ const DESTINATION_OPTIONS = [
     "Other",
 ];
 
+function inferSeasonFromFilename(filename: string): string {
+    const text = filename.toUpperCase();
+    const explicitMatch = text.match(/\b((?:FW|FH|AW|AH|SS|SH|SP|SW)\s*\d{2})\b/);
+    if (explicitMatch?.[1]) {
+        return explicitMatch[1].replace(/\s+/g, "");
+    }
+    const shortMatch = text.match(/\b([FS])\s*(\d{2})\b/);
+    if (shortMatch) {
+        return `${shortMatch[1]}W${shortMatch[2]}`;
+    }
+    return "";
+}
+
 export default function Workflow() {
     const [currentStep, setCurrentStep] = useState<Step>("UPLOAD");
     const [isProcessing, setIsProcessing] = useState(false);
@@ -152,6 +165,7 @@ export default function Workflow() {
     const [manualCustomer, setManualCustomer] = useState("");
     const [manualBrand, setManualBrand] = useState("");
     const [manualDestination, setManualDestination] = useState("");
+    const [showAdvanced, setShowAdvanced] = useState(false);
     const applyTheme = (nextTheme: "dark" | "light") => {
       document.documentElement.classList.remove("light", "dark");
       document.documentElement.classList.add(nextTheme);
@@ -164,6 +178,13 @@ export default function Workflow() {
       const initial = saved === "light" || saved === "dark" ? saved : (systemPreferred ? "dark" : "light");
       applyTheme(initial as "dark" | "light");
     }, []);
+
+    useEffect(() => {
+        if (manualSeason.trim()) return;
+        const firstFileName = buyFiles?.[0]?.name || "";
+        const inferredSeason = inferSeasonFromFilename(firstFileName);
+        if (inferredSeason) setManualSeason(inferredSeason);
+    }, [buyFiles, manualSeason]);
 
     const steps: { key: Step; label: string; icon: any }[] = [
         { key: "UPLOAD", label: "Acquisition", icon: CloudUpload },
@@ -178,6 +199,18 @@ export default function Workflow() {
         "w-full rounded-2xl bg-white/5 border border-white/10 px-4 py-4 text-base md:text-lg text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 min-h-[56px]";
     const selectBase =
         "w-full appearance-none rounded-2xl bg-white/5 border border-white/10 px-4 py-4 text-base md:text-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500/40 min-h-[56px]";
+    const optionalFieldCount = [
+        manualKeyDate,
+        manualKeyUser1,
+        manualKeyUser2,
+        manualKeyUser3,
+        manualKeyUser4,
+        manualKeyUser5,
+        manualSeason,
+        manualCustomer,
+        manualBrand,
+        manualDestination,
+    ].filter((value) => value.trim()).length;
 
     const handleStartUpload = async () => {
         if (!buyFiles || buyFiles.length === 0) return;
@@ -542,89 +575,132 @@ export default function Workflow() {
                                         className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
                                     />
                                 </div>
-                                <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">KeyUser1 (Manual)</label>
-                                    <input
-                                        value={manualKeyUser1}
-                                        onChange={(e) => setManualKeyUser1(e.target.value)}
-                                        placeholder="Planning"
-                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-                                    />
+                                <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                                    <div>
+                                        <div className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Advanced overrides</div>
+                                        <div className="text-xs text-slate-400 mt-1">
+                                            Optional fields for files that are missing columns. {optionalFieldCount > 0 ? `${optionalFieldCount} filled.` : "Keep this collapsed unless you need a fallback."}
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowAdvanced((v) => !v)}
+                                        className="rounded-full border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-xs font-bold uppercase tracking-[0.2em] text-blue-200 hover:bg-blue-500/20 transition-colors"
+                                    >
+                                        {showAdvanced ? "Hide advanced" : "Show advanced"}
+                                    </button>
                                 </div>
-                                <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">KeyUser2 (Manual)</label>
-                                    <input
-                                        value={manualKeyUser2}
-                                        onChange={(e) => setManualKeyUser2(e.target.value)}
-                                        placeholder="Purchasing"
-                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">KeyUser3 (Manual)</label>
-                                    <input
-                                        value={manualKeyUser3}
-                                        onChange={(e) => setManualKeyUser3(e.target.value)}
-                                        placeholder="(Optional)"
-                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">KeyUser4 (Manual)</label>
-                                    <input
-                                        value={manualKeyUser4}
-                                        onChange={(e) => setManualKeyUser4(e.target.value)}
-                                        placeholder="Production"
-                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">KeyUser5 (Manual)</label>
-                                    <input
-                                        value={manualKeyUser5}
-                                        onChange={(e) => setManualKeyUser5(e.target.value)}
-                                        placeholder="Logistics"
-                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Season Override <span className="text-slate-600 normal-case font-normal">(for files with no season column)</span></label>
-                                    <input
-                                        value={manualSeason}
-                                        onChange={(e) => setManualSeason(e.target.value)}
-                                        placeholder="Choose a season"
-                                        list="season-presets"
-                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-4 text-base md:text-lg text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Customer Override <span className="text-slate-600 normal-case font-normal">(for files with no customer column)</span></label>
-                                    <input
-                                        value={manualCustomer}
-                                        onChange={(e) => setManualCustomer(e.target.value)}
-                                        placeholder="511 Tactical"
-                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Brand Override <span className="text-slate-600 normal-case font-normal">(when file has no brand column)</span></label>
-                                    <input
-                                        value={manualBrand}
-                                        onChange={(e) => setManualBrand(e.target.value)}
-                                        placeholder="haglofs"
-                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Destination Override <span className="text-slate-600 normal-case font-normal">(when file has no destination column)</span></label>
-                                    <input
-                                        value={manualDestination}
-                                        onChange={(e) => setManualDestination(e.target.value)}
-                                        placeholder="Choose a destination"
-                                        list="destination-presets"
-                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-4 text-base md:text-lg text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-                                    />
-                                </div>
+                                {showAdvanced && (
+                                    <div className="space-y-4 rounded-3xl border border-white/10 bg-black/20 p-4 md:p-6">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className="space-y-2">
+                                                <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">KeyUser1</label>
+                                                <input
+                                                    value={manualKeyUser1}
+                                                    onChange={(e) => setManualKeyUser1(e.target.value)}
+                                                    placeholder="Planning"
+                                                    className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                                />
+                                            </div>
+                                            <div className="space-y-2">
+                                                <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">KeyUser2</label>
+                                                <input
+                                                    value={manualKeyUser2}
+                                                    onChange={(e) => setManualKeyUser2(e.target.value)}
+                                                    placeholder="Purchasing"
+                                                    className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                                />
+                                            </div>
+                                            <div className="space-y-2">
+                                                <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">KeyUser3</label>
+                                                <input
+                                                    value={manualKeyUser3}
+                                                    onChange={(e) => setManualKeyUser3(e.target.value)}
+                                                    placeholder="Optional"
+                                                    className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                                />
+                                            </div>
+                                            <div className="space-y-2">
+                                                <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">KeyUser4</label>
+                                                <input
+                                                    value={manualKeyUser4}
+                                                    onChange={(e) => setManualKeyUser4(e.target.value)}
+                                                    placeholder="Production"
+                                                    className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                                />
+                                            </div>
+                                            <div className="space-y-2 md:col-span-2">
+                                                <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">KeyUser5</label>
+                                                <input
+                                                    value={manualKeyUser5}
+                                                    onChange={(e) => setManualKeyUser5(e.target.value)}
+                                                    placeholder="Logistics"
+                                                    className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className="space-y-2">
+                                                <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Season</label>
+                                                <input
+                                                    value={manualSeason}
+                                                    onChange={(e) => setManualSeason(e.target.value)}
+                                                    placeholder="Choose a season"
+                                                    className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-4 text-base md:text-lg text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                                />
+                                            </div>
+                                            <div className="space-y-2">
+                                                <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Customer</label>
+                                                <input
+                                                    value={manualCustomer}
+                                                    onChange={(e) => setManualCustomer(e.target.value)}
+                                                    placeholder="511 Tactical"
+                                                    list="customer-presets"
+                                                    className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                                />
+                                            </div>
+                                            <div className="space-y-2">
+                                                <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Brand</label>
+                                                <input
+                                                    value={manualBrand}
+                                                    onChange={(e) => setManualBrand(e.target.value)}
+                                                    placeholder="haglofs"
+                                                    list="brand-presets"
+                                                    className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                                />
+                                            </div>
+                                            <div className="space-y-2">
+                                                <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Destination</label>
+                                                <input
+                                                    value={manualDestination}
+                                                    onChange={(e) => setManualDestination(e.target.value)}
+                                                    placeholder="Choose a destination"
+                                                    list="destination-presets"
+                                                    className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-4 text-base md:text-lg text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="flex justify-end">
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setManualKeyUser1("");
+                                                    setManualKeyUser2("");
+                                                    setManualKeyUser3("");
+                                                    setManualKeyUser4("");
+                                                    setManualKeyUser5("");
+                                                    setManualSeason("");
+                                                    setManualCustomer("");
+                                                    setManualBrand("");
+                                                    setManualDestination("");
+                                                }}
+                                                className="text-xs font-bold uppercase tracking-[0.2em] text-slate-400 hover:text-white transition-colors"
+                                            >
+                                                Clear advanced fields
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
 
                             <datalist id="template-presets">
@@ -633,8 +709,11 @@ export default function Workflow() {
                             <datalist id="lines-template-presets">
                                 {LINE_TEMPLATE_OPTIONS.map(option => <option key={option} value={option} />)}
                             </datalist>
-                            <datalist id="season-presets">
-                                {SEASON_OPTIONS.map(option => <option key={option} value={option} />)}
+                            <datalist id="brand-presets">
+                                {BRAND_OPTIONS.map(option => <option key={option} value={option} />)}
+                            </datalist>
+                            <datalist id="customer-presets">
+                                {CUSTOMER_OPTIONS.map(option => <option key={option} value={option} />)}
                             </datalist>
                             <datalist id="destination-presets">
                                 {DESTINATION_OPTIONS.map(option => <option key={option} value={option} />)}

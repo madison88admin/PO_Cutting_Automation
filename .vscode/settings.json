@@ -1,2 +1,5 @@
 {
+  "css.lint.unknownAtRules": "ignore",
+  "python.analysis.extraPaths": ["c:\\Users\\jcmad\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages"],
+  "python.analysis.typeCheckingMode": "basic"
 }

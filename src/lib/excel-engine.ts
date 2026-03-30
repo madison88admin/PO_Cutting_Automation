@@ -13,6 +13,9 @@ import {
     type PivotFormatDetection,
 } from "./excel-engine-helpers";
 
+// Destination code mapping for Helly Hansen and similar
+import destinationMapping from "@/config/destination-mapping.json";
+
 export interface POHeader {
     purchaseOrder: string;
     brandKey?: string;
@@ -155,6 +158,8 @@ const PLANT_COUNTRY_MAP: Record<string, string> = {
     'vd60': 'Dubai',
     '0010': 'USA',
     '0011': 'Canada',
+    '126': 'Australia',
+    '920': 'USA',
     '120': 'Iceland',
     '0040': 'Netherlands',
     '0050': 'Singapore',
@@ -968,6 +973,97 @@ export class ExcelEngine {
         return result;
     }
 
+    private extractInlineProductSheetMapFromBuyWorkbook(workbook: ExcelJS.Workbook): Record<string, ProductSheetRow[]> {
+        const result: Record<string, ProductSheetRow[]> = {};
+        const seenEntries = new Set<string>();
+        const buyAliases: Record<string, string[]> = {
+            buyerStyleNumber: ['item#', 'item #', 'buyer item#', 'buyer item #', 'style code', 'style number', 'style nr', 'product', 'sku'],
+            colour: ['color code', 'colour', 'color', 'colour code', 'color description', 'style color', 'stylecolor'],
+            colourName: ['color name', 'colour name', 'color description', 'colour description'],
+            factory: ['updated fty', 'factory', 'vendor name', 'supplier name'],
+            productName: ['style name', 'product name'],
+            productExternalRef: ['sku', 'fty-sku', 'sku-wh', 'po#', 'po #', 'purchase order'],
+            productCustomerRef: ['buyer style number', 'buyer item#', 'buyer item #'],
+            season: ['season', 'item market', 'type', 'segmentation'],
+            crd: ['updated planned exit date', 'confirmed x-fty', 'delivery date', 'requested delivery date'],
+            exFactory: ['confirmed x-fty', 'updated planned exit date', 'delivery date'],
+            poNumber: ['po#', 'po #', 'purchase order', 'master po#'],
+            destinationName: ['wh', 'whs', 'warehouse name', 'destination name', 'item market'],
+        };
+
+        for (const ws of workbook.worksheets) {
+            const { isProductSheet } = this.detectProductSheet(ws);
+            if (isProductSheet) continue;
+
+            const headerRow = this.detectHeaderRow(ws);
+            if (!this.isLikelyBuySheet(ws, headerRow, this.getFallbackColumnAliases())) continue;
+
+            const header = ws.getRow(headerRow);
+            const headerMap: Record<string, number> = {};
+            header.eachCell((cell, colNumber) => {
+                const key = normalizeHeaderText(cell.value?.toString() || '');
+                if (!key) return;
+                for (const [field, keys] of Object.entries(buyAliases)) {
+                    if (!headerMap[field] && keys.includes(key)) {
+                        headerMap[field] = colNumber;
+                    }
+                }
+            });
+
+            const getRaw = (row: ExcelJS.Row, field: keyof typeof buyAliases) => {
+                const col = headerMap[field as string];
+                if (!col) return undefined;
+                return this.getCellValue(row.getCell(col));
+            };
+
+            ws.eachRow((row, rowNumber) => {
+                if (rowNumber <= headerRow) return;
+
+                const buyerStyleNumber = this.stripBrackets(
+                    (getRaw(row, 'buyerStyleNumber') || getRaw(row, 'productCustomerRef') || getRaw(row, 'productName') || getRaw(row, 'productExternalRef') || getRaw(row, 'poNumber') || '')
+                        .toString()
+                ).trim();
+                const colourRaw = this.stripBrackets((getRaw(row, 'colour') || getRaw(row, 'colourName') || '')?.toString() || '').trim();
+                const colourKey = this.normalizeColourKey(colourRaw);
+                if (!buyerStyleNumber || !colourKey) return;
+
+                const entry: ProductSheetRow = {
+                    colour: colourRaw,
+                    colourName: this.stripBrackets((getRaw(row, 'colourName') || colourRaw || '')?.toString() || '').trim(),
+                    factory: this.stripBrackets((getRaw(row, 'factory') || '')?.toString() || '').trim(),
+                    cost: (() => {
+                        const c = getRaw(row, 'poNumber');
+                        return typeof c === 'number' ? c : (c?.toString().trim() || '');
+                    })(),
+                    customerName: '',
+                    productName: this.stripBrackets((getRaw(row, 'productName') || '')?.toString() || '').trim(),
+                    productExternalRef: this.stripBrackets((getRaw(row, 'productExternalRef') || '')?.toString() || '').trim(),
+                    buyerStyleNumber,
+                    season: this.stripBrackets((getRaw(row, 'season') || '')?.toString() || '').trim(),
+                    crd: getRaw(row, 'crd') as string | Date | undefined,
+                    exFactory: getRaw(row, 'exFactory') as string | Date | undefined,
+                    poNumber: this.stripBrackets((getRaw(row, 'poNumber') || '')?.toString() || '').trim(),
+                    destinationName: this.stripBrackets((getRaw(row, 'destinationName') || '')?.toString() || '').trim(),
+                };
+
+                const lookupKeys = new Set<string>();
+                lookupKeys.add(`${buyerStyleNumber}|${colourKey}`);
+                const styleBase = buyerStyleNumber.split(/\s*[\(\-]/)[0].trim();
+                if (styleBase && styleBase !== buyerStyleNumber) lookupKeys.add(`${styleBase}|${colourKey}`);
+
+                for (const lk of lookupKeys) {
+                    const dedupKey = `${lk}|${entry.colour}|${entry.factory}|${entry.productName}|${entry.productExternalRef}|${entry.customerName}`;
+                    if (seenEntries.has(dedupKey)) continue;
+                    seenEntries.add(dedupKey);
+                    if (!result[lk]) result[lk] = [];
+                    result[lk].push(entry);
+                }
+            });
+        }
+
+        return result;
+    }
+
     private resolveSupplier(vendorCode: string | undefined, vendorName: string | undefined, brand: string | undefined, category: string | undefined, factoryMap: any[]): string {
         const vCode = this.stripBrackets(vendorCode || '').trim();
         const vName = this.stripBrackets(vendorName || '').trim();
@@ -1064,7 +1160,8 @@ export class ExcelEngine {
     }
 
     private resolveHhDestinationCountry(companyName: string | undefined, shipTo: string | undefined, manualDestination: string | undefined, plantDerivedCountry: string | undefined): string {
-        const raw = this.stripBrackets(companyName || '').toLowerCase().trim();
+        const resolvedCompany = this.resolveHhCompanyName(companyName);
+        const raw = this.stripBrackets(resolvedCompany || '').toLowerCase().trim();
         const shipToKey = this.stripBrackets(shipTo || '').toLowerCase().trim();
         const manualKey = this.stripBrackets(manualDestination || '').toLowerCase().trim();
         const plantKey = this.stripBrackets(plantDerivedCountry || '').toLowerCase().trim();
@@ -1087,6 +1184,24 @@ export class ExcelEngine {
         if (source.includes('uk') || source.includes('united kingdom') || source.includes(' great britain')) return 'UK';
         if (source.includes('canada') || source.includes(' brampton')) return 'Canada';
         return '';
+    }
+
+    private resolveHhCompanyName(rawCompanyName: string | undefined): string {
+        const source = this.stripBrackets(rawCompanyName || '').toLowerCase().trim();
+        if (!source) return '';
+        const exactMap: Record<string, string> = {
+            'whs 126': 'HELLY HANSEN AUS - TOLL Prestons',
+            'whs 920': 'Helly Hansen (U.S.) Inc.',
+            'whs 120': 'Helly Hansen Distributie B.V.',
+        };
+        return exactMap[source] || this.stripBrackets(rawCompanyName || '').trim();
+    }
+
+    private normalizeHhPlantCode(rawPlantCode: string | undefined): string {
+        const text = this.stripBrackets(rawPlantCode || '').trim();
+        if (!text) return '';
+        const whsMatch = text.match(/^WHS\s*(.+)$/i);
+        return whsMatch ? whsMatch[1].trim() : text;
     }
 
     private normalizeSizeName(rawSize: string | undefined, brand: string | undefined): string {
@@ -1388,6 +1503,14 @@ export class ExcelEngine {
         return `F${String(year).slice(-2)}`;
     }
 
+    private inferFoxSeasonFromDate(rawDate: string | number | Date | undefined): string {
+        const parsed = this.parseDate(rawDate);
+        if (!parsed) return '';
+        const year = parsed.getFullYear();
+        if (!Number.isFinite(year) || year < 2000) return '';
+        return `F${String(year).slice(-2)}`;
+    }
+
     private normalizeTemplate(rawTemplate: string): string {
         const normalized = (rawTemplate || '').trim().toUpperCase();
         const map: Record<string, string> = { OG: 'BULK', ZNB1: 'BULK', ZMF1: 'BULK', ZDS1: 'BULK', SMS: 'SMS' };
@@ -1425,14 +1548,34 @@ export class ExcelEngine {
         // Normalize base by removing well-known hunter/origin suffix tokens that should be replaced by table values
         const baseNormalized = base.replace(/\s*-\s*(UKSOS|SOS|GOLDSEAL|DTE|ZALANDO)\s*$/i, '').trim();
 
-        if (!baseNormalized) return uniqueSuffixParts.join(' - ');
-        if (uniqueSuffixParts.length === 0) return baseNormalized;
+        if (!baseNormalized) return this.collapseRepeatedPurchaseOrder(uniqueSuffixParts.join(' - '));
+        if (uniqueSuffixParts.length === 0) return this.collapseRepeatedPurchaseOrder(baseNormalized);
 
         const lowerBase = baseNormalized.toLowerCase();
         const suffixAlreadyInBase = uniqueSuffixParts.every(part => lowerBase.includes(part.toLowerCase()));
-        if (suffixAlreadyInBase) return baseNormalized;
+        if (suffixAlreadyInBase) return this.collapseRepeatedPurchaseOrder(baseNormalized);
 
-        return `${baseNormalized} - ${uniqueSuffixParts.join(' - ')}`;
+        return this.collapseRepeatedPurchaseOrder(`${baseNormalized} - ${uniqueSuffixParts.join(' - ')}`);
+    }
+
+    private collapseRepeatedPurchaseOrder(raw: string | undefined): string {
+        const text = this.stripBrackets(raw || '').replace(/\s+/g, ' ').trim();
+        if (!text) return '';
+        const tokens = text.split(' ');
+        const maxChunkSize = Math.floor(tokens.length / 2);
+        for (let chunkSize = 1; chunkSize <= maxChunkSize; chunkSize++) {
+            if (tokens.length % chunkSize !== 0) continue;
+            const chunk = tokens.slice(0, chunkSize).join(' ');
+            let repeated = true;
+            for (let i = chunkSize; i < tokens.length; i += chunkSize) {
+                if (tokens.slice(i, i + chunkSize).join(' ') !== chunk) {
+                    repeated = false;
+                    break;
+                }
+            }
+            if (repeated) return chunk;
+        }
+        return text;
     }
 
     private isLikelyDestinationCountry(value: string | undefined, plantPart: string | undefined): boolean {
@@ -1679,12 +1822,23 @@ export class ExcelEngine {
             && headerVals.has('m88 ref')
             && headerVals.has('color name')
             && headerVals.has('size name');
+        const looksLikeFoxBuySheet =
+            headerVals.has('purchasing document number')
+            && headerVals.has('item number of purchasing document')
+            && headerVals.has('material')
+            && headerVals.has('material description')
+            && headerVals.has('order qty')
+            && headerVals.has('ex factory date')
+            && (headerVals.has('vendor name') || headerVals.has('goods supplier name'));
 
-        return hasProduct && (
+        return (
+            hasProduct && (
             (hasPurchaseOrder && hasQuantity)
             || (hasSeason && hasQuantity)
             || (hasPurchaseOrder && hasBuyStructure)
+            )
             || looksLikeRossignolBuySheet
+            || looksLikeFoxBuySheet
         );
     }
 
@@ -1740,7 +1894,10 @@ export class ExcelEngine {
         const workbook = new ExcelJS.Workbook();
         await workbook.xlsx.load(buffer);
         const workbookProductMap = this.extractProductSheetMapFromWorkbook(workbook);
-        const productSheetMap: Record<string, ProductSheetRow[]> = { ...(options?.productSheetMap || {}), ...workbookProductMap };
+        const inlineProductMap = Object.keys(workbookProductMap).length === 0
+            ? this.extractInlineProductSheetMapFromBuyWorkbook(workbook)
+            : {};
+        const productSheetMap: Record<string, ProductSheetRow[]> = { ...(options?.productSheetMap || {}), ...workbookProductMap, ...inlineProductMap };
         const fallbackAliases = this.getFallbackColumnAliases();
         const seasonOverride = manualSeason || manualProductRange;
 
@@ -2005,8 +2162,14 @@ export class ExcelEngine {
             if (headerKey === 'ship to' && !headerMap['shipTo']) {
                 headerMap['shipTo'] = colNumber;
             }
+            if (headerKey === 'whs' && !headerMap['whs']) {
+                headerMap['whs'] = colNumber;
+            }
             if (headerKey === 'whs' && !headerMap['plantName']) {
                 headerMap['plantName'] = colNumber;
+            }
+            if (headerKey === 'goods supplier name' && !headerMap['goodsSupplierName']) {
+                headerMap['goodsSupplierName'] = colNumber;
             }
             if (headerKey === 'warehouse name' && !headerMap['warehouseName']) {
                 headerMap['warehouseName'] = colNumber;
@@ -2392,7 +2555,9 @@ export class ExcelEngine {
                     ? columbiaUltimateDestination
                     : (brandKey === 'vans'
                         ? vansPlantLabel
-                        : (whsCode || plant || plantName)));
+                        : (isHHBrand
+                            ? (this.normalizeHhPlantCode(whsCode || plant || ''))
+                            : (whsCode || plant || plantName))));
             let poDestination = [
                 destCountry,
                 destinationFromFile,
@@ -2412,6 +2577,8 @@ export class ExcelEngine {
                 poDestination = pranaDestinationCountry;
             } else if (brandKey === 'columbia') {
                 poDestination = columbiaDestinationCountry;
+            } else if (isHHBrand && plantDerivedCountry) {
+                poDestination = plantDerivedCountry;
             }
             let poNumber = this.formatPurchaseOrder(poNumberRaw, poPlantPart, poDestination);
             const manualDestinationEffective = manualDestination;
@@ -2491,7 +2658,7 @@ export class ExcelEngine {
             const colour = brandKey === 'vuori'
                 ? (inlineColorDescription || colourNameRaw || rawColour)
                 : brandKey === 'fox racing'
-                ? (this.extractFoxBracketedColour(rawColour) || rawColour)
+                ? (this.extractFoxBracketedColour(foxMaterialDescription || colourNameRaw || rawColour) || foxMaterialDescription || colourNameRaw || rawColour)
                 : brandKey === 'marmot'
                 ? (marmotShortText || rawColour)
                 : brandKey === 'prana'
@@ -2699,6 +2866,10 @@ export class ExcelEngine {
             const foxSeasonFromStyle = brandKey === 'fox racing'
                 ? this.inferFoxSeasonFromStyle(foxMaterialCode || productField || jdeStyle)
                 : '';
+            const foxSeasonDateSource = (getRawVal('exFtyDate') || getRawVal('confirmedExFac')) as string | number | Date | undefined;
+            const foxSeasonFromDate = brandKey === 'fox racing'
+                ? this.inferFoxSeasonFromDate(foxSeasonDateSource)
+                : '';
             const arcteryxSeasonFromDate = brandKey === 'arcteryx'
                 ? this.inferArcteryxSeason((getRawVal('exFtyDate') || getRawVal('confirmedExFac')) as Date | string | undefined)
                 : '';
@@ -2709,7 +2880,7 @@ export class ExcelEngine {
             const season = this.stripBrackets(
                 brandKey === 'hunter'
                     ? (hunterEffectiveSeason || foxSeasonFromStyle || arcteryxSeasonFromDate)
-                    : (getVal('season') || foxSeasonFromStyle || arcteryxSeasonFromDate || seasonOverride || inferredSeasonFromSheet)
+                    : (getVal('season') || foxSeasonFromStyle || foxSeasonFromDate || arcteryxSeasonFromDate || seasonOverride || inferredSeasonFromSheet)
             );
             if (!season) { skippedMissingSeason += 1; this.errors.push({ field: 'season', row: rowNumber, message: `Row ${rowNumber} PO ${poNumber}: No season/range value found.`, severity: 'CRITICAL' }); return; }
 
@@ -2890,6 +3061,8 @@ export class ExcelEngine {
                         ? (this.stripBrackets(productMatch?.factory || '').trim() || BRAND_SUPPLIER_MAP['ll bean'])
                     : brandKey === 'dynafit'
                         ? (this.stripBrackets(productMatch?.factory || '').trim() || BRAND_SUPPLIER_MAP['dynafit'])
+                    : brandKey === 'fox racing'
+                        ? (this.stripBrackets(getVal('goodsSupplierName') || '').trim() || BRAND_SUPPLIER_MAP['fox racing'])
                     : brandKey === 'burton'
                         ? (this.stripBrackets(inlineFactory || productMatch?.factory || '').trim() || BRAND_SUPPLIER_MAP['burton'])
                         : brandKey === '66 degrees north'
@@ -3009,6 +3182,8 @@ export class ExcelEngine {
             } else if (brandKey !== 'columbia' && customerSubtype && !poNumber.toLowerCase().endsWith(` ${customerSubtype.toLowerCase()}`)) {
                 poNumber = `${poNumber} ${customerSubtype}`;
             }
+
+            poNumber = this.collapseRepeatedPurchaseOrder(poNumber);
 
             const validStatuses = Array.isArray(brandConfig?.valid_statuses) ? brandConfig!.valid_statuses!.map((s: string) => s.toLowerCase()) : [];
             if (transportMethod && !VALID_TRANSPORT_VALUES.has(transportMethod)) {
@@ -3148,7 +3323,7 @@ export class ExcelEngine {
             if (!results.has(poKey)) {
                 results.set(poKey, {
                     header: {
-                        purchaseOrder: dynafitExportPurchaseOrder, brandKey, productSupplier, status: 'Confirmed', customer: llbCustomerName || customerName,
+                        purchaseOrder: brandKey === 'dynafit' ? dynafitExportPurchaseOrder : poNumber, brandKey, productSupplier, status: 'Confirmed', customer: llbCustomerName || customerName,
                         transportMethod, transportLocation: isHHBrand
                             ? (hhDestinationCountry || destCountry || hhDestinationSource || effectiveTransportLocation)
                             : effectiveTransportLocation, ordersTemplate, linesTemplate, keyDate, keyDateFormat,
