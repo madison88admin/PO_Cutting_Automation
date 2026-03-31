@@ -23,24 +23,23 @@ function cn(...inputs: ClassValue[]) {
 type Step = "UPLOAD" | "RUN" | "VALIDATE" | "REVIEW" | "DOWNLOAD";
 
 const TEMPLATE_OPTIONS = [
-    "BULK",
     "Major Brand Bulk",
-    "Major Brand Bulk EDI",
-    "FOB Bulk EDI PO (New)",
-    "FOB Bulk Non EDI PO (New)",
+    "Major Brand Bulk (COPY)",
     "SMS PO Header",
-    "SMS Non EDI (New)",
-    "SMS EDI",
+    "Specialty Bulk PO",
 ];
 
 const LINE_TEMPLATE_OPTIONS = [
-    "BULK",
-    "Major Brand Bulk",
     "FOB Bulk EDI PO (New)",
+    "FOB Bulk EDI PO (VF & UA) (New)",
     "FOB Bulk Non EDI PO (New)",
-    "SMS PO Header",
+    "Forecast",
+    "Forecast - CRD",
+    "Forecast - OP",
+    "SMS EDI (New)",
+    "SMS Keep Samples",
+    "SMS Non EDI",
     "SMS Non EDI (New)",
-    "SMS EDI",
 ];
 
 const SEASON_OPTIONS = [

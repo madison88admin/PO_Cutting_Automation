@@ -377,7 +377,7 @@ export const FALLBACK_COLUMN_ALIASES: Record<string, string> = {
     // Burton
     'seller name': 'vendorName',
     'supplier party id': 'ignore',
-    'final destination': 'ignore',
+    'final destination': 'plant',
     'po reference': 'ignore',
     'materialnumber': 'ignore',
     'extended sizing': 'ignore',
