@@ -189,8 +189,8 @@ const PLANT_COUNTRY_MAP: Record<string, string> = {
 };
 
 const BRAND_SUPPLIER_MAP: Record<string, string> = {
-    col: "",
-    columbia: "",
+    col: "PT. UWU JUMP INDONESIA",
+    columbia: "PT. UWU JUMP INDONESIA",
     tnf: "PT. UWU JUMP INDONESIA",
     "the north face": "PT. UWU JUMP INDONESIA",
     arcteryx: "PT. UWU JUMP INDONESIA",
@@ -3067,7 +3067,7 @@ export class ExcelEngine {
                 : (buyerPoNumber?.toString?.().trim?.() || String(buyerPoNumber || ''));
 
             const productSupplier = brandKey === 'col' || brandKey === 'columbia'
-                ? 'M88XXX'
+                ? (this.stripBrackets(productMatch?.factory || '').trim() || this.resolveSupplier(vendorCodeRaw, vendorNameRaw, inferredBrand || brand, inferredCat, factoryMap) || BRAND_SUPPLIER_MAP['col'] || 'M88XXX')
                 : brandKey === 'on ag'
                 ? (this.stripBrackets(productMatch?.factory || '').trim() || BRAND_SUPPLIER_MAP['on ag'])
                 : brandKey === 'arcteryx'
