@@ -259,6 +259,7 @@ const BRAND_CUSTOMER_MAP: Record<string, string> = {
     "dynafit": "Dynafit",
     "travis mathew": "Travis Mathew",
     "vans": "Vans",
+    "vans smu": "Vans",
     "rossignol": "Rossignol",
     "south ontario dc": "Vans",
     "canada brampton dc": "Vans",
@@ -1573,9 +1574,12 @@ export class ExcelEngine {
     }
 
     private normalizeTemplate(rawTemplate: string): string {
-        const normalized = (rawTemplate || '').trim().toUpperCase();
+        const cleaned = (rawTemplate || '').trim()
+            .replace(/\s*\(COPY\)\s*$/i, '')
+            .trim();
+        const normalized = cleaned.toUpperCase();
         const map: Record<string, string> = { OG: 'BULK', ZNB1: 'BULK', ZMF1: 'BULK', ZDS1: 'BULK', SMS: 'SMS' };
-        return map[normalized] || (rawTemplate || 'BULK').trim() || 'BULK';
+        return map[normalized] || cleaned || 'BULK';
     }
 
     private normalizeTransportMethod(raw: string | undefined): string {
@@ -2856,7 +2860,38 @@ export class ExcelEngine {
                 }
             }
 
-            if (productMatches.length > 1) productMatches = [productMatches[0]];
+            if (productMatches.length > 1) {
+                if (brandKey === 'vans') {
+                    // For Vans, use the input productCustomerRef as filter to match exact product
+                    if (productCustomerRef && productCustomerRef.trim()) {
+                        const exactMatch = productMatches.find(m => {
+                            const mRef = (m.productExternalRef || m.productName || '').trim();
+                            return mRef && mRef.includes(productCustomerRef.trim());
+                        });
+                        if (exactMatch) {
+                            productMatches = [exactMatch];
+                        } else {
+                            // If no exact match on productCustomerRef, fall back to factory matching
+                            const plantDerivedKey = (plant || whsCode || plantName || '').toLowerCase().trim();
+                            const preferredMatch = productMatches.find(m => {
+                                const matchFactory = (m.factory || '').toLowerCase().trim();
+                                return matchFactory && plantDerivedKey && matchFactory.includes(plantDerivedKey);
+                            });
+                            productMatches = [preferredMatch || productMatches[0]];
+                        }
+                    } else {
+                        // Fallback: match by factory/location
+                        const plantDerivedKey = (plant || whsCode || plantName || '').toLowerCase().trim();
+                        const preferredMatch = productMatches.find(m => {
+                            const matchFactory = (m.factory || '').toLowerCase().trim();
+                            return matchFactory && plantDerivedKey && matchFactory.includes(plantDerivedKey);
+                        });
+                        productMatches = [preferredMatch || productMatches[0]];
+                    }
+                } else {
+                    productMatches = [productMatches[0]];
+                }
+            }
 
             const hasArcInlineProductData = brandKey === 'arcteryx' && !!(inlineProductName || inlineColorName || inlineFactory);
             const hasBurtonInlineProductData = brandKey === 'burton' && !!(inlineProductName || inlineColorName || inlineFactory);
@@ -3111,19 +3146,20 @@ export class ExcelEngine {
             const templateRaw = this.stripBrackets(getVal('template') || '');
             const vendorCodeRaw = this.stripBrackets(plmMissing ? (getVal('productSupplier') || '') : (productMatch?.factory || getVal('productSupplier') || ''));
             const buyerPoNumberCell = getRawVal('buyerPoNumber');
+            const buyerPoNumberAsText = brandKey === 'vans' ? ((): string | undefined => {
+                const col = headerMap['buyerPoNumber'];
+                if (!col) return undefined;
+                return this.getCellValueAsText(row.getCell(col));
+            })() : undefined;
             const buyerPoNumber: string | number = (() => {
+                if (brandKey === 'vans' && buyerPoNumberAsText) return buyerPoNumberAsText;
                 const poRaw = getRawVal('purchaseOrder');
-                if (brandKey === 'vans' && typeof buyerPoNumberCell === 'number') return buyerPoNumberCell;
                 if (brandKey === 'll bean') {
                     const buyerPoText = buyerPoNumberCell?.toString().trim();
                     if (buyerPoText) return buyerPoText;
                     if (typeof rawFilePo === 'number') return rawFilePo;
                     const rawFilePoText = rawFilePo?.toString().trim();
                     if (rawFilePoText) return rawFilePoText;
-                }
-                if (brandKey === 'vans') {
-                    const vansBuyerPo = buyerPoNumberCell?.toString().trim();
-                    if (vansBuyerPo) return vansBuyerPo;
                 }
                 if (brandKey === 'rossignol') {
                     const buyerPoText = buyerPoNumberCell?.toString().trim();
@@ -3663,6 +3699,21 @@ export class ExcelEngine {
         return value;
     }
 
+    private getCellValueAsText(cell: ExcelJS.Cell): string {
+        const cell_ = cell.isMerged && cell.master ? cell.master : cell;
+        if (typeof cell_.text === 'string' && cell_.text.trim()) return cell_.text;
+        const value = cell_.value;
+        if (typeof value === 'string') return value;
+        if (typeof value === 'number') return String(value);
+        if (value && typeof value === 'object') {
+            if ('text' in value && typeof value.text === 'string') return value.text;
+            if ('richText' in value && Array.isArray(value.richText)) {
+                return value.richText.map((part: any) => part?.text || '').join('');
+            }
+        }
+        return String(value || '');
+    }
+
     async generateOutputs(data: ProcessedPO[]) {
         const ordersWb = new ExcelJS.Workbook();
         const linesWb = new ExcelJS.Workbook();
@@ -3836,7 +3887,7 @@ export class ExcelEngine {
                             archiveDate: '', productExternalRef: (isArcteryx || isHunter || isBurton || isJackWolfskin) ? '' : (line.productExternalRef || ''), productCustomerRef: (isArcteryx || isJackWolfskin) ? '' : (line.productCustomerRef || ''),
                             purchaseUOM: '', sellingUOM: '', udfBuyerPoNumber: isDynafit
                                 ? (line.buyerPoNumber?.toString?.() || '')
-                                : (line.buyerPoNumber?.toString?.() || line.buyerPoNumber || ''),
+                                : (String(line.buyerPoNumber || '')),
                             udfStartDate: exportDeliveryDate || this.formatDateString(line.startDate) || this.formatDateString(line.cancelDate) || '',
                             udfCanelDate: exportDeliveryDate || this.formatDateString(line.startDate) || this.formatDateString(line.cancelDate) || '',
                             udfInspectionResult: '', udfReportType: '', udfInspector: '', udfApprovalStatus: '',
