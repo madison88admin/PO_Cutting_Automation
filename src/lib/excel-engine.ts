@@ -463,6 +463,7 @@ const BRAND_ORDERS_TEMPLATE_MAP: Record<string, string> = {
     columbia:         "BULK",
     arcteryx:         "BULK",
     "arc'teryx":      "BULK",
+    vans:             "Major Brand Bulk",
     rossignol:        "Major Brand Bulk",
     hh:               "Major Brand Bulk",
     "helly hansen":  "Major Brand Bulk",
@@ -486,6 +487,7 @@ const BRAND_LINES_TEMPLATE_MAP: Record<string, string> = {
     columbia:         "BULK",
     arcteryx:         "BULK",
     "arc'teryx":      "BULK",
+    vans:             "FOB Bulk EDI PO (New)",
     rossignol:        "FOB Bulk EDI PO (New)",
     hh:               "FOB Bulk EDI PO (New)",
     "helly hansen":  "FOB Bulk EDI PO (New)",
@@ -652,6 +654,19 @@ export class ExcelEngine {
             return normalized || '0';
         }
         return raw;
+    }
+
+    private normalizeVansColourText(value: string): string {
+        const raw = this.stripBrackets(value || '').toLowerCase().trim();
+        if (!raw) return '';
+        return raw
+            .replace(/^(?:vans|vns)\s*[-]?\s*/i, '')
+            .replace(/^[a-z0-9]{2,5}\s+/, '')
+            .replace(/^-\s*/, '')
+            .replace(/\bone size\b/g, '')
+            .replace(/[,/_-]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
     }
 
     private extractFoxBracketedColour(value: string): string {
@@ -852,12 +867,15 @@ export class ExcelEngine {
         if (/^V\d{3,}$/i.test(styleKey)) candidates.push(styleKey.slice(1));
         if (/^H\d{3,}$/i.test(styleKey)) candidates.push(styleKey.slice(1));
         if (/^2UF/i.test(styleKey) && styleKey.length > 7) candidates.push(styleKey.slice(0, 7));
+        if (/^VN[A-Z0-9]{5,}[A-Z0-9]{3}$/i.test(styleKey)) candidates.push(styleKey.slice(0, -3));
         const dynafitMatch = styleKey.match(/(\d{6})$/);
         if (dynafitMatch) {
             candidates.push(dynafitMatch[1]);
             candidates.push(String(parseInt(dynafitMatch[1], 10)));
         }
-        return candidates;
+        return candidates.filter((candidate, index) =>
+            !!candidate && candidates.findIndex(entry => entry.toLowerCase() === candidate.toLowerCase()) === index
+        );
     }
 
     private extractProductSheetMapFromWorkbook(workbook: ExcelJS.Workbook): Record<string, ProductSheetRow[]> {
@@ -1135,28 +1153,57 @@ export class ExcelEngine {
         const labelByCode: Record<string, string> = {
             '1023': 'South Ontario',
             '1004': 'Brampton',
-            'D010': 'EMEA',
-            'D080': 'EMEA',
-            'VD10': 'EMEA',
+            'D010': 'VF Prague DC CZ',
+            'D080': 'VF Northern Europe (UK)',
+            'VD10': 'Sun and Sand Sports',
             'D00028': 'Sun and Sand Sports',
         };
         if (plantName) {
+            if (/^emea$/i.test(plantName) && labelByCode[plantCode]) return labelByCode[plantCode];
             const directMap: Record<string, string> = {
                 'south ontario dc': 'South Ontario',
                 'bampton dc': 'Brampton',
                 'brampton dc': 'Brampton',
-                'vf northern europe': 'VF Northern Europe',
-                'vf northern europe (uk)': 'VF Northern Europe',
-                'vf prague dc cz': 'VF Prague',
+                'vf northern europe': 'VF Northern Europe (UK)',
+                'vf northern europe (uk)': 'VF Northern Europe (UK)',
+                'vf prague dc cz': 'VF Prague DC CZ',
                 'sun and sand sports': 'Sun and Sand Sports',
                 'sun and sand sports llc': 'Sun and Sand Sports',
-                'emea': 'EMEA',
             };
             const key = plantName.toLowerCase();
             if (directMap[key]) return directMap[key];
             return plantName.replace(/\s+dc$/i, '').trim();
         }
         return labelByCode[plantCode] || plantCode || '';
+    }
+
+    private formatVansPurchaseOrder(basePo: string | undefined, rawPlantCode: string | undefined, rawPlantName: string | undefined): string {
+        const base = this.stripBrackets(basePo || '').trim();
+        const plantCodeRaw = this.stripBrackets(rawPlantCode || '').trim().toUpperCase();
+        const plantCode = plantCodeRaw === 'VD10' ? 'D00028' : plantCodeRaw;
+        const plantLabel = this.normalizeVansPlantLabel(rawPlantName, rawPlantCode);
+        if (!base) return '';
+        if (!plantCode && !plantLabel) return base;
+        const suffix = [plantCode, plantLabel]
+            .filter(Boolean)
+            .filter((part, index, parts) => parts.findIndex(candidate => candidate.toLowerCase() === part.toLowerCase()) === index)
+            .join('-');
+        if (!suffix) return base;
+        return this.collapseRepeatedPurchaseOrder(`${base}-${suffix}`);
+    }
+
+    private formatVansColorForExport(displayName: string): string {
+        const colorMap: Record<string, string> = {
+            'green balsam': 'VNS - GRK GREEN BALSAM',
+            'mystic mulberry': 'VNS-  GSC MYSTIC MULBERRY',
+            'classic blue': 'VNS- 10Z CLASSIC BLUE',
+            'black': 'VNS- BLK Black',
+            'black/natural': 'VNS- BF5 BLACK NATURAL',
+            'olive brown': 'VNS- OVB OLIVE BROWN',
+            'true navy': 'VNS- 5TU TRUE NAVY',
+        };
+        const key = (displayName || '').toLowerCase().trim();
+        return colorMap[key] || displayName;
     }
 
     private resolveHhDestinationCountry(companyName: string | undefined, shipTo: string | undefined, manualDestination: string | undefined, plantDerivedCountry: string | undefined): string {
@@ -1259,6 +1306,10 @@ export class ExcelEngine {
         const key = (brand || '').trim().toLowerCase();
         if (BRAND_LINES_TEMPLATE_MAP[key]) return BRAND_LINES_TEMPLATE_MAP[key];
         return this.normalizeTemplate(rawTemplate);
+    }
+
+    private shouldAppendCustomerSubtype(brandKey: string): boolean {
+        return !new Set(['burton', 'hh', 'helly hansen', 'vans']).has((brandKey || '').trim().toLowerCase());
     }
 
     private looksLikeSizeHeader(headerText: string): boolean {
@@ -2603,6 +2654,10 @@ export class ExcelEngine {
                 poDestination = plantDerivedCountry;
             }
             let poNumber = this.formatPurchaseOrder(poNumberRaw, poPlantPart, poDestination);
+            if (brandKey === 'vans') {
+                poDestination = '';
+                poNumber = this.formatVansPurchaseOrder(poNumberRaw, rawPlant || plant || whsCode, plantName || customerNameRaw || poPlantPart);
+            }
             const manualDestinationEffective = manualDestination;
 
             const categoryRaw = this.stripBrackets(getVal('category') || '');
@@ -2678,6 +2733,8 @@ export class ExcelEngine {
             const peakPerformanceColourCandidates = this.getPeakPerformanceColourCandidates(peakPerformanceColourSource);
             const peakPerformanceColourKey = peakPerformanceColourCandidates[0]?.toLowerCase().trim() || '';
             const colour = brandKey === 'vuori'
+                ? (inlineColorDescription || colourNameRaw || rawColour)
+                : brandKey === 'vans'
                 ? (inlineColorDescription || colourNameRaw || rawColour)
                 : brandKey === 'fox racing'
                 ? (this.extractFoxBracketedColour(foxMaterialDescription || colourNameRaw || rawColour) || foxMaterialDescription || colourNameRaw || rawColour)
@@ -2762,7 +2819,16 @@ export class ExcelEngine {
                 for (const candidate of styleKeyCandidates) {
                     const allForStyle = Object.entries(productSheetMap).filter(([k]) => k.startsWith(`${candidate}|`)).flatMap(([, v]) => v);
                     if (allForStyle.length > 0) {
-                        const fuzzy = allForStyle.find(e => { const ek = this.normalizeColourKey(e.colour); return ek === colourKey || ek.includes(colourKey) || colourKey.includes(ek); });
+                        const vansColourText = brandKey === 'vans' ? this.normalizeVansColourText(colour) : '';
+                        const fuzzy = allForStyle.find(e => {
+                            const ek = this.normalizeColourKey(e.colour);
+                            if (ek === colourKey || ek.includes(colourKey) || colourKey.includes(ek)) return true;
+                            if (brandKey === 'vans' && vansColourText) {
+                                const vansEntryText = this.normalizeVansColourText(e.colour || e.colourName || '');
+                                return !!vansEntryText && (vansEntryText === vansColourText || vansEntryText.includes(vansColourText) || vansColourText.includes(vansEntryText));
+                            }
+                            return false;
+                        });
                         if (fuzzy) { productMatches = [fuzzy]; matchedStyleKey = candidate; break; }
                     }
                 }
@@ -2804,6 +2870,43 @@ export class ExcelEngine {
             const productMatch = !plmMissing && productMatches.length === 1 ? productMatches[0] : undefined;
             if (productMatch && productMatch.colour && productMatch.colour.trim().toLowerCase() === 'not set') {
                 this.errors.push({ field: 'Colour', row: rowNumber, message: `Row ${rowNumber} PO ${poNumber}: PLM Color Name is "Not Set"; line/size skipped.`, severity: 'WARNING' }); return;
+            }
+            if (process.env.DEBUG_EXPORT_TRACE === '1' && brandKey === 'vans' && rowNumber <= 20) {
+                const vansColourText = this.normalizeVansColourText(colour);
+                const vansStylePreview = styleKeyCandidates.slice(0, 6);
+                const vansMapPreview = vansStylePreview.flatMap(candidate =>
+                    Object.entries(productSheetMap)
+                        .filter(([key]) => key.startsWith(`${candidate}|`))
+                        .slice(0, 6)
+                        .map(([key, entries]) => ({
+                            key,
+                            products: entries.slice(0, 3).map(entry => ({
+                                productName: entry.productName,
+                                colour: entry.colour,
+                                colourName: entry.colourName,
+                            })),
+                        }))
+                );
+                console.log('[vans-trace]', {
+                    rowNumber,
+                    poNumber,
+                    effectiveStyle,
+                    styleKeyCandidates: vansStylePreview,
+                    colour,
+                    colourKey,
+                    vansColourText,
+                    productMatches: productMatches.map(entry => ({
+                        productName: entry.productName,
+                        colour: entry.colour,
+                        colourName: entry.colourName,
+                    })),
+                    selectedProductMatch: productMatch ? {
+                        productName: productMatch.productName,
+                        colour: productMatch.colour,
+                        colourName: productMatch.colourName,
+                    } : null,
+                    productSheetMapPreview: vansMapPreview,
+                });
             }
             let dynafitBuyerPoNumber = '';
 
@@ -3132,10 +3235,12 @@ export class ExcelEngine {
                 ? 'Courier'
                 : this.normalizeTransportMethod(transportRaw)));
             const brandConfig = mloMap.find((m: any) => (m.brand || '').trim().toLowerCase() === brandKey);
+            const resolvedOrdersTemplate = this.resolveOrdersTemplate(inferredBrand || brand, templateRaw);
+            const resolvedLinesTemplate = this.resolveLinesTemplate(inferredBrand || brand, templateRaw);
             const ordersTemplate = brandKey === 'dynafit'
                 ? (dynafitContext?.ordersTemplate || 'SMS PO Header')
-                : (manualTemplate || brandConfig?.orders_template?.trim() || this.resolveOrdersTemplate(inferredBrand || brand, templateRaw));
-            const linesTemplateBase = manualLinesTemplate || brandConfig?.lines_template?.trim() || this.resolveLinesTemplate(inferredBrand || brand, templateRaw);
+                : (manualTemplate || (brandKey === 'vans' ? resolvedOrdersTemplate : (brandConfig?.orders_template?.trim() || resolvedOrdersTemplate)));
+            const linesTemplateBase = manualLinesTemplate || (brandKey === 'vans' ? resolvedLinesTemplate : (brandConfig?.lines_template?.trim() || resolvedLinesTemplate));
             const hunterTemplateDate = this.formatIsoDateString(exFtyDate || '');
             const linesTemplate = brandKey === 'hunter'
                 ? (hunterTemplateDate && !linesTemplateBase.includes(hunterTemplateDate)
@@ -3163,7 +3268,7 @@ export class ExcelEngine {
                     : buyRound)
                 : buyRound;
 
-            const customerSubtype = (brandKey === 'burton' || isHHBrand)
+            const customerSubtype = (!this.shouldAppendCustomerSubtype(brandKey) || isHHBrand)
                 ? undefined
                 : this.detectCustomerSubtype(productMatch?.customerName || getVal('customerName') || getVal('brand') || detectedCustomer || '');
             if (brandKey === 'vuori') {
@@ -3802,10 +3907,13 @@ export class ExcelEngine {
                     linesForEntry.forEach(line => {
                         (po.sizes[line.lineItem] || []).forEach(sz => {
                             const exportedSize = sz.productSize || 'One Size';
+                            const exportedColour = brandKey === 'vans' 
+                                ? this.formatVansColorForExport(line.colour)
+                                : (brandKey === 'dynafit' ? (line.colour || line.rawColour || line.styleColor) : line.colour);
                             sizesSheet.addRow({
                                 purchaseOrder: entry.purchaseOrder || po.header.purchaseOrder, lineItem: lineItemMap.get(line.lineItem) || line.lineItem, range: line.productRange,
                                 product: line.styleNumber, sizeName: exportedSize, productSize: exportedSize,
-                        quantity: sz.quantity, colour: (brandKey === 'dynafit' ? (line.colour || line.rawColour || line.styleColor) : line.colour), customer: '', department: '',
+                        quantity: sz.quantity, colour: exportedColour, customer: '', department: '',
                                 customAttribute1: '', customAttribute2: '', customAttribute3: '',
                                 lineRatio: '', colourExt: '', customerExt: '', departmentExt: '',
                                 customAttribute1Ext: '', customAttribute2Ext: '', customAttribute3Ext: '',

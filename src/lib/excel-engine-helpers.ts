@@ -104,6 +104,8 @@ export const FALLBACK_COLUMN_ALIASES: Record<string, string> = {
     'keydate': 'poIssuanceDate',
     'buy date': 'buyDate',
     'file date': 'buyDate',
+    'creation date': 'buyDate',
+    'created date': 'buyDate',
     'report_date': 'poIssuanceDate',
     'report date': 'poIssuanceDate',
     'cancel date': 'cancelDate',
