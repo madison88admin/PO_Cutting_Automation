@@ -1445,7 +1445,9 @@ def _process_evo_pivot_row(
         if qty <= 0:
             continue
         dest_label = _strip_brackets(_as_text(raw_df.cell(row=destination_row_idx, column=col_idx).value)).strip()
-        or_number = _strip_brackets(_as_text(raw_df.cell(row=or_row
+        or_number = _strip_brackets(
+            _as_text(raw_df.cell(row=or_row_idx, column=col_idx).value)
+        ).strip()
         if not or_number and not dest_label:
             continue
         if or_number.lower() == "or-xxx":
@@ -2110,10 +2112,12 @@ def generate_templates(
     evo_ex_fty = _extract_evo_ex_fty(src) if "evo" in source_name else ""
 
     orders_wb, lines_wb, sizes_wb = Workbook(), Workbook(), Workbook()
-    orders_ws = orders_wb.active
-    lines_ws  = lines_wb.active
-    sizes_ws  = sizes_wb.active
-    orders_ws.title, lines_ws.title, sizes_ws.title = "ORDERS", "LINES", "ORDER_SIZES"
+    orders_ws = orders_wb.active or orders_wb.create_sheet("ORDERS")
+    lines_ws  = lines_wb.active or lines_wb.create_sheet("LINES")
+    sizes_ws  = sizes_wb.active or sizes_wb.create_sheet("ORDER_SIZES")
+    orders_ws.title = "ORDERS"
+    lines_ws.title = "LINES"
+    sizes_ws.title = "ORDER_SIZES"
 
     _append_row(orders_ws, ORDERS_HEADERS)
     _append_row(lines_ws,  LINES_HEADERS)
@@ -2166,8 +2170,9 @@ def generate_templates(
 
     warned_empty_plant_destination: set[str] = set()
 
-    assert src.max_row is not None
-    for row_idx in range(data_start_row, src.max_row + 1): # type: ignore
+    if src is None or src.max_row is None:
+        raise ValueError("Source worksheet is invalid or has no rows.")
+    for row_idx in range(data_start_row, src.max_row + 1):
         pivot_expansions = [{"pivot_col": None, "pivot_header": "", "pivot_qty": None}]
         if pivot_info.get("is_pivot"):
             pivot_expansions = []
@@ -2197,7 +2202,7 @@ def generate_templates(
             po = manual_po_norm or _normalize_po(raw_po_val)
             if not po:
                 skipped_empty_po += 1 # type: ignore
-                if len(skipped_empty_po_samples) < 10:
+                if len(skipped_empty_po_samples) < 10 and src is not None:
                     skipped_empty_po_samples.append((
                         row_idx,
                         _as_text(src.cell(row=row_idx, column=1).value), # type: ignore

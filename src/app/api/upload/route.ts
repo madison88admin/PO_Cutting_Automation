@@ -9,6 +9,15 @@ const MAX_UPLOADS_PER_MINUTE = 10;
 const MAX_FILE_COUNT = 5;
 const MAX_FILE_SIZE = 30 * 1024 * 1024; // 30 MB per file
 const ALLOWED_MIME = new Set(["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]);
+
+function isProductShiFile(filename: string): boolean {
+    return filename.toLowerCase().includes("product shi");
+}
+
+function isDynafitFile(filename: string): boolean {
+    return filename.toLowerCase().includes("dynafit");
+}
+
 function checkRateLimit(userId: string): boolean {
     const now = Date.now();
     const windowStart = now - 60000;
@@ -193,6 +202,10 @@ export async function POST(req: NextRequest) {
 
         let productSheetMap: Record<string, any> = {};
         const buyFiles: Array<{ file: File; buffer: Buffer }> = [];
+        const dynafitDebug = {
+            referenceFiles: [] as Array<{ filename: string; productSheetKeys: number; hasBuySheet: boolean }>,
+            mergedProductSheetKeys: 0,
+        };
 
         stage = "analysis";
         for (const entry of fileBuffers) {
@@ -203,14 +216,26 @@ export async function POST(req: NextRequest) {
                 hasBuySheet: analysis.hasBuySheet,
                 productSheetKeys: Object.keys(analysis.productSheetMap || {}).length,
             });
+            if (isDynafitFile(entry.file.name)) {
+                dynafitDebug.referenceFiles.push({
+                    filename: entry.file.name,
+                    productSheetKeys: Object.keys(analysis.productSheetMap || {}).length,
+                    hasBuySheet: analysis.hasBuySheet,
+                });
+            }
             productSheetMap = { ...productSheetMap, ...analysis.productSheetMap };
             const lowerName = entry.file.name.toLowerCase();
-            const isProductShiReference = lowerName.includes('product shi');
+            const isProductShiReference = isProductShiFile(lowerName);
             const isReferenceSizes = lowerName.includes('sizes') && !lowerName.includes('buy') && !lowerName.includes('product shi');
-            if (analysis.hasBuySheet && !isReferenceSizes && !isProductShiReference) {
+            const shouldProcessAsPrimaryBuyFile = analysis.hasBuySheet
+                && !isReferenceSizes
+                && !isProductShiReference;
+            if (shouldProcessAsPrimaryBuyFile) {
                 buyFiles.push(entry);
             }
         }
+        dynafitDebug.mergedProductSheetKeys = Object.keys(productSheetMap || {}).length;
+        console.log("[upload] dynafitDebug", dynafitDebug);
 
         stage = "process_buy";
         for (const entry of buyFiles) {
@@ -360,6 +385,7 @@ export async function POST(req: NextRequest) {
             },
             fileOutputs: perFileExports,
             formatDetection: perFileFormatDetection,
+            dynafitDebug,
         });
 
     } catch (error: any) {

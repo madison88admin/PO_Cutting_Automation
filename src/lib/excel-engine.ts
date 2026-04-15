@@ -70,8 +70,10 @@ export interface POSize {
 interface ProductSheetRow {
     colour: string;
     colourName?: string;
+    sizeName?: string;
     factory?: string;
     cost?: string | number;
+    sell?: string | number;
     customerName?: string;
     productName?: string;
     productExternalRef?: string;
@@ -81,6 +83,8 @@ interface ProductSheetRow {
     exFactory?: string | Date;
     poNumber?: string;
     destinationName?: string;
+    quantity?: number;
+    productionSurcharge?: number;
 }
 
 export interface ValidationError {
@@ -443,6 +447,7 @@ const BRAND_KEYUSER_MAP: Record<string, KeyUsers> = {
     "jack wolfskin": { k1: "Via", k2: "Mary", k3: "", k4: "Via", k5: "Elaine Sanchez", k6: "", k7: "", k8: "" },
     dynafit: { k1: "Patrick", k2: "Sarah Jane", k3: "", k4: "Patrick", k5: "Edbert Suan", k6: "", k7: "", k8: "" },
     vuori: { k1: "Patrick", k2: "Mary", k3: "", k4: "Patrick", k5: "Elaine Sanchez", k6: "", k7: "", k8: "" },
+    obermeyer: { k1: "", k2: "MJ", k3: "", k4: "Louis Miguel Dural", k5: "Elaine Sanchez", k6: "", k7: "", k8: "" },
     "ll bean": { k1: "", k2: "", k3: "", k4: "", k5: "", k6: "", k7: "", k8: "" },
     "l.l.bean": { k1: "", k2: "", k3: "", k4: "", k5: "", k6: "", k7: "", k8: "" },
     marmot: { k1: "", k2: "", k3: "", k4: "", k5: "", k6: "", k7: "", k8: "" },
@@ -475,6 +480,7 @@ const BRAND_ORDERS_TEMPLATE_MAP: Record<string, string> = {
     "511 tactical":   "BULK",
     haglofs:          "BULK",
     "fox racing":     "BULK",
+    obermeyer:        "Major Brand Bulk",
     "ll bean":        "Major Brand Bulk",
     "l.l.bean":       "Major Brand Bulk",
     marmot:           "Major Brand Bulk",
@@ -499,6 +505,7 @@ const BRAND_LINES_TEMPLATE_MAP: Record<string, string> = {
     "511 tactical":   "BULK",
     haglofs:          "BULK",
     "fox racing":     "BULK",
+    obermeyer:        "FOB Bulk EDI PO (New)",
     "ll bean":        "FOB Bulk EDI PO (New)",
     "l.l.bean":       "FOB Bulk EDI PO (New)",
     marmot:           "FOB Bulk EDI PO (New)",
@@ -557,9 +564,10 @@ export class ExcelEngine {
         return {
             'color name': 'colourName', 'colour name': 'colourName', 'color': 'colour', 'colour': 'colour',
             'factory': 'factory', 'vendor code': 'factory', 'vendorcode': 'factory',
-            'cost': 'cost', 'customer name': 'customerName', 'customer': 'customerName', 'cust': 'customerName',
+            'cost': 'cost', 'sell': 'sell', 'customer name': 'customerName', 'customer': 'customerName', 'cust': 'customerName',
             'product name': 'productName', 'style name': 'productName', 'ng style name': 'productName', 'product': 'productName',
             'name': 'productExternalRef',
+            'size name': 'sizeName', 'size': 'sizeName',
             'style': 'buyerStyleNumber',
             'buyer style number': 'buyerStyleNumber', 'buyer style no': 'buyerStyleNumber',
             'buyer style #': 'buyerStyleNumber', 'buyer style': 'buyerStyleNumber',
@@ -570,6 +578,8 @@ export class ExcelEngine {
             'ex factory': 'exFactory',
             'destination name': 'destinationName',
             'po number': 'poNumber',
+            'qty': 'quantity',
+            'production surcharge': 'productionSurcharge',
         };
     }
 
@@ -635,6 +645,8 @@ export class ExcelEngine {
     private normalizeColourKey(value: string): string {
         const raw = this.stripBrackets(value || '').toLowerCase().trim();
         if (!raw) return '';
+        const dynafitCodeMatch = raw.match(/^dyn\s*-\s*([a-z0-9]{4})\b/i);
+        if (dynafitCodeMatch?.[1]) return dynafitCodeMatch[1].toLowerCase();
         const vansCodeMatch = raw.match(/^(?:[a-z]{2,5})\s*-\s*([a-z0-9]{2,5})\b/);
         if (vansCodeMatch) return vansCodeMatch[1];
         const hhStyleColorMatch = raw.match(/^(\d+)\s*[_-]\s*([a-z0-9]{2,5})\b/);
@@ -655,6 +667,31 @@ export class ExcelEngine {
             return normalized || '0';
         }
         return raw;
+    }
+
+    private normalizeLookupText(value: string): string {
+        return this.stripBrackets(value || '')
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    private resolveHhHeaderKeyDate(headerRow: ExcelJS.Row, fallbackDate: Date | string | undefined): string {
+        const fallback = this.parseDate(fallbackDate as any);
+        const fallbackYear = fallback?.getFullYear() || new Date().getFullYear();
+        let resolved = '';
+        headerRow.eachCell(cell => {
+            if (resolved) return;
+            const text = cell.value?.toString().trim() || '';
+            const match = text.match(/final xf date\s+(\d{1,2})\.(\d{1,2})/i);
+            if (!match) return;
+            const month = Number(match[1]);
+            const day = Number(match[2]);
+            if (!Number.isFinite(month) || !Number.isFinite(day)) return;
+            resolved = `${String(month).padStart(2, '0')}/${String(day).padStart(2, '0')}/${fallbackYear}`;
+        });
+        return resolved;
     }
 
     private normalizeVansColourText(value: string): string {
@@ -874,6 +911,12 @@ export class ExcelEngine {
             candidates.push(dynafitMatch[1]);
             candidates.push(String(parseInt(dynafitMatch[1], 10)));
         }
+        const digitsOnly = styleKey.replace(/\D+/g, '');
+        if (digitsOnly.length > 6) {
+            const trailingSix = digitsOnly.slice(-6);
+            candidates.push(trailingSix);
+            candidates.push(String(parseInt(trailingSix, 10)));
+        }
         return candidates.filter((candidate, index) =>
             !!candidate && candidates.findIndex(entry => entry.toLowerCase() === candidate.toLowerCase()) === index
         );
@@ -930,6 +973,7 @@ export class ExcelEngine {
                 const entry: ProductSheetRow = {
                     colour: isPeakPerformanceCustomer ? (peakPerformanceColourSource || colourRaw) : colourRaw,
                     colourName: getRaw('colourName')?.toString().trim() || '',
+                    sizeName: getRaw('sizeName')?.toString().trim() || '',
                     factory: getRaw('factory')?.toString().trim() || '',
                     cost: (() => { const c = getRaw('cost'); return typeof c === 'number' ? c : c?.toString().trim(); })(),
                     customerName: getRaw('customerName')?.toString().trim() || '',
@@ -941,6 +985,18 @@ export class ExcelEngine {
                     exFactory: getRaw('exFactory') as string | Date | undefined,
                     poNumber: getRaw('poNumber')?.toString().trim() || '',
                     destinationName: getRaw('destinationName')?.toString().trim() || '',
+                    quantity: (() => {
+                        const qty = getRaw('quantity');
+                        if (typeof qty === 'number') return qty;
+                        const parsed = this.parseLooseNumber(qty?.toString().trim() || '');
+                        return Number.isFinite(parsed) ? parsed : undefined;
+                    })(),
+                    productionSurcharge: (() => {
+                        const surcharge = getRaw('productionSurcharge');
+                        if (typeof surcharge === 'number') return surcharge;
+                        const parsed = this.parseLooseNumber(surcharge?.toString().trim() || '');
+                        return Number.isFinite(parsed) ? parsed : undefined;
+                    })(),
                 };
                 const lookupKeys = new Map<string, boolean>();
                 lookupKeys.set(buyerStyleNumber, true);
@@ -1261,10 +1317,14 @@ export class ExcelEngine {
         if (size.toLowerCase() === 'ons') return 'One Size';
         if (/^one\s*size$/i.test(size) || /^onesize$/i.test(size)) return 'One Size';
         const brandKey = (brand || '').trim().toLowerCase();
+        if (brandKey === 'dynafit' && /^uni\d+$/i.test(size)) return 'One Size';
         if (brandKey === 'burton') {
             if (/\b1sz\b/i.test(sizeKey) || /\bfit\s*all\b/i.test(sizeKey) || /\bone\s*size\b/i.test(sizeKey)) return 'One Size';
             if (/\breg(?:ular)?\b/i.test(sizeKey) || /\brg1sz\b/i.test(sizeKey) || /\breg\s*fit\b/i.test(sizeKey)) return 'Reg Fit';
             if (/\bhelmet\b/i.test(sizeKey) || /\bhs\b/i.test(sizeKey) || /\bhelmet\s*sz\b/i.test(sizeKey)) return 'Helmet Fit';
+        }
+        if (brandKey === 'obermeyer' && (/^one\s*size$/i.test(size) || /^onesize$/i.test(size) || /-?1sz$/i.test(sizeKey) || /\b1sz\b/i.test(sizeKey))) {
+            return 'ONE SIZE';
         }
         if (/-?1sz$/i.test(sizeKey) || /\b1sz\b/i.test(sizeKey)) return 'One Size';
         if (/^reg\s*fit$/i.test(size) || /\brg1sz\b/i.test(sizeKey) || /\breg(?:ular)?\s*fit\b/i.test(sizeKey)) return 'Reg Fit';
@@ -1272,6 +1332,11 @@ export class ExcelEngine {
         if (brandKey === 'on ag') return 'One Size';
         if (brandKey === 'vans' && /^one\s*size$/i.test(size)) return 'One Size';
         return size;
+    }
+
+    private normalizeObermeyerSizeKey(rawSize: string | undefined): string {
+        const normalized = this.normalizeSizeName(rawSize, 'obermeyer');
+        return this.normalizeLookupText(normalized).replace(/\s+/g, '');
     }
 
     private normalizeStatus(rawStatus: string | undefined, brand: string | undefined): string {
@@ -1771,6 +1836,18 @@ export class ExcelEngine {
         if (brandKey === 'prana') {
             return `PRA ${s} Dec Buy 11-DEC Bulk`.trim();
         }
+        if (brandKey === 'obermeyer') {
+            const compact = this.compactProductRange(s);
+            const compactLabel = compact.replace(/^FH/i, 'FH').replace(/^SH/i, 'SH') || 'FH26';
+            const parsed = this.parseDate(buyDateRaw);
+            const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            if (parsed) {
+                const monShort = months[parsed.getMonth()];
+                const day = String(parsed.getDate()).padStart(1, '0');
+                return `OBERMEYER ${compactLabel} ${monShort} Buy ${day}-${monShort} Bulk`.trim();
+            }
+            return `OBERMEYER ${compactLabel} Bulk`.trim();
+        }
         if (brandKey === 'hh' || brandKey === 'helly hansen') {
             const compact = this.compactProductRange(s).replace(/^FH/i, 'F').replace(/^SH/i, 'S');
             const parts = ['HH', compact || 'F26', 'Bulk'];
@@ -1895,7 +1972,6 @@ export class ExcelEngine {
             && headerVals.has('order qty')
             && headerVals.has('ex factory date')
             && (headerVals.has('vendor name') || headerVals.has('goods supplier name'));
-
         return (
             hasProduct && (
             (hasPurchaseOrder && hasQuantity)
@@ -1959,11 +2035,26 @@ export class ExcelEngine {
 
         const workbook = new ExcelJS.Workbook();
         await workbook.xlsx.load(buffer);
+        const workbookProps = workbook.properties as { modified?: Date; created?: Date };
+        const workbookSourceDate = workbookProps.modified || workbookProps.created || undefined;
         const workbookProductMap = this.extractProductSheetMapFromWorkbook(workbook);
-        const inlineProductMap = Object.keys(workbookProductMap).length === 0
+        const hasExternalProductSheetMap = Object.keys(options?.productSheetMap || {}).length > 0;
+        const prefersExternalProductSheetMap = sourceNameHint.includes('dynafit')
+            || sourceNameHint.includes('helly hansen')
+            || sourceNameHint.startsWith('hh')
+            || sourceNameHint.includes('_hh')
+            || sourceNameHint.includes('hh ');
+        const shouldUseInlineProductMap = Object.keys(workbookProductMap).length === 0
+            && !(prefersExternalProductSheetMap && hasExternalProductSheetMap);
+        const inlineProductMap = shouldUseInlineProductMap
             ? this.extractInlineProductSheetMapFromBuyWorkbook(workbook)
             : {};
-        const productSheetMap: Record<string, ProductSheetRow[]> = { ...(options?.productSheetMap || {}), ...workbookProductMap, ...inlineProductMap };
+        const productSheetMap: Record<string, ProductSheetRow[]> = prefersExternalProductSheetMap
+            ? { ...workbookProductMap, ...inlineProductMap, ...(options?.productSheetMap || {}) }
+            : { ...(options?.productSheetMap || {}), ...workbookProductMap, ...inlineProductMap };
+        const hasObermeyerProductSheetMap = Object.values(productSheetMap).some(entries =>
+            (entries || []).some(entry => (entry.customerName || '').trim().toLowerCase().includes('obermeyer'))
+        );
         const fallbackAliases = this.getFallbackColumnAliases();
         const seasonOverride = manualSeason || manualProductRange;
 
@@ -2064,13 +2155,20 @@ export class ExcelEngine {
             && headerKeysInRow.has('production supplier name')
             && (headerKeysInRow.has('final po qty') || headerKeysInRow.has('buy 1 agreed qty') || headerKeysInRow.has('buy 1 - tracking no.'));
         const looksLikePeakPerformanceSheet = looksLikePeakPerformanceDetailedSheet || looksLikePeakPerformanceEarlyBuySheet;
+        const looksLikeObermeyerContext = !!(
+            this.stripBrackets(manualBrand || '').trim().toLowerCase() === 'obermeyer'
+            || this.stripBrackets(manualCustomer || '').trim().toLowerCase() === 'obermeyer'
+            || sourceNameHint.includes('obermeyer')
+            || hasObermeyerProductSheetMap
+        );
+
         const firstDataRow = worksheet.getRow(headerRowNumber + 1);
         const allMappings = await getAllColumnMappings();
         const knownCustomers = Array.from(new Set(allMappings.map((m: any) => m.customer)));
         const lowerKnown = knownCustomers.map((c: string) => c.toLowerCase());
-        let detectedCustomer = (looksLikePeakPerformanceSheet && !looksLikeBurtonSource) ? 'Peak Performance' : 'DEFAULT';
+        let detectedCustomer = (looksLikePeakPerformanceSheet && !looksLikeBurtonSource && !looksLikeObermeyerContext) ? 'Peak Performance' : 'DEFAULT';
         firstDataRow.eachCell(cell => {
-            if (looksLikePeakPerformanceSheet && !looksLikeBurtonSource) return;
+            if (looksLikePeakPerformanceSheet && !looksLikeBurtonSource && !looksLikeObermeyerContext) return;
             const val = cell.value?.toString().trim();
             if (!val) return;
             const lowerVal = val.toLowerCase();
@@ -2133,7 +2231,8 @@ export class ExcelEngine {
             && headerKeysInRow.has('customer name')
             && !looksLikePranaSource;
         if (looksLikeVuoriBuy) detectedCustomer = 'Vuori';
-        if (!looksLikeBurtonSource && (looksLikePeakPerformanceSheet || looksLikePeakPerformanceBuy)) detectedCustomer = 'Peak Performance';
+        if (looksLikeObermeyerContext) detectedCustomer = 'Obermeyer';
+        if (!looksLikeObermeyerContext && !looksLikeBurtonSource && (looksLikePeakPerformanceSheet || looksLikePeakPerformanceBuy)) detectedCustomer = 'Peak Performance';
         if (looksLikeBurtonSource) detectedCustomer = 'Burton';
         if (looksLikePranaSource) detectedCustomer = 'Prana';
         if (sourceNameHint.includes('mammut')) detectedCustomer = 'Mammut';
@@ -2163,11 +2262,23 @@ export class ExcelEngine {
             if (headerKey === 'material description' && !headerMap['foxMaterialDescription']) {
                 headerMap['foxMaterialDescription'] = colNumber;
             }
+            if (looksLikeObermeyerContext && headerKey === 'product name' && !headerMap['obermeyerProductName']) {
+                headerMap['obermeyerProductName'] = colNumber;
+                if (process.env.DEBUG_EXPORT_TRACE === '1') {
+                    console.log('[obermeyer-header]', { headerText, colNumber, headerKey, mapped: 'obermeyerProductName' });
+                }
+            }
             if (headerKey === 'product name' && !headerMap['onAgProductName']) {
                 headerMap['onAgProductName'] = colNumber;
+                if (process.env.DEBUG_EXPORT_TRACE === '1' && looksLikeObermeyerContext) {
+                    console.log('[header-conflict]', { headerText, colNumber, attempted: 'onAgProductName', looksLikeObermeyerContext, alreadyMappedObermeyer: !!headerMap['obermeyerProductName'] });
+                }
             }
             if (headerKey === 'product name' && !headerMap['inlineProductName']) {
                 headerMap['inlineProductName'] = colNumber;
+                if (process.env.DEBUG_EXPORT_TRACE === '1' && looksLikeObermeyerContext) {
+                    console.log('[header-conflict]', { headerText, colNumber, attempted: 'inlineProductName', looksLikeObermeyerContext, alreadyMappedObermeyer: !!headerMap['obermeyerProductName'] });
+                }
             }
             if (headerKey === 'm88 ref' && !headerMap['rossignolM88Ref']) {
                 headerMap['rossignolM88Ref'] = colNumber;
@@ -2312,6 +2423,12 @@ export class ExcelEngine {
             if (headerKey === 'brand requested crd' && !headerMap['vansBrandRequestedCrd']) {
                 headerMap['vansBrandRequestedCrd'] = colNumber;
             }
+            if (headerKey === 'product name' && !headerMap['obermeyerProductName']) {
+                headerMap['obermeyerProductName'] = colNumber;
+            }
+            if (headerKey === 'color name' && !headerMap['obermeyerColorName']) {
+                headerMap['obermeyerColorName'] = colNumber;
+            }
             const internalField = normalizedColMap[headerKey];
             const fallbackField = fallbackAliases[headerKey];
             if (internalField && internalField !== 'ignore') {
@@ -2353,6 +2470,7 @@ export class ExcelEngine {
         }
 
         const precomputedPoColNumber = (!manualPurchaseOrder && /^(?:po|p)\d{4,}$/i.test(lastColHeaderText)) ? maxColNumber : null;
+        const obermeyerPoHeader = /^(?:po|p)\d{4,}$/i.test(lastColHeaderText) ? lastColHeaderText.trim() : '';
         const pivotFormat = detectPivotFormatFromHeaders(
             Array.from({ length: maxColNumber }, (_, i) => {
                 const cell = headerRow.getCell(i + 1);
@@ -2441,10 +2559,30 @@ export class ExcelEngine {
             return match ? match[0].replace(/\s+/g, ' ').toUpperCase() : '';
         })();
 
+
+
         worksheet.eachRow((row, rowNumber) => {
             if (rowNumber <= headerRowNumber) return;
             const getRawVal = (field: string) => { const col = headerMap[field]; if (!col) return undefined; return this.getCellValue(row.getCell(col)); };
             const getVal = (field: string) => { const raw = getRawVal(field); if (raw instanceof Date) return raw.toISOString().split('T')[0]; return raw?.toString().trim(); };
+            const rowValues = Array.isArray(row.values) ? row.values.slice(1) : [];
+            const hasMeaningfulValue = rowValues.some(value => {
+                if (value === null || value === undefined) return false;
+                const rendered = typeof value === 'object'
+                    ? ((value as any).text ?? (value as any).result ?? '')
+                    : value;
+                return String(rendered).trim() !== '';
+            });
+            if (!hasMeaningfulValue) return;
+            const hasCoreRowData = !!(
+                this.stripBrackets(getVal('purchaseOrder') || '').trim()
+                || this.stripBrackets(getVal('product') || '').trim()
+                || this.stripBrackets(getVal('productExternalRef') || '').trim()
+                || this.stripBrackets(getVal('productName') || '').trim()
+                || this.stripBrackets(getVal('colour') || '').trim()
+                || this.stripBrackets(getVal('colourName') || '').trim()
+            );
+            if (!hasCoreRowData) return;
 
             const rawFilePo = getVal('purchaseOrder');
             const brand = this.stripBrackets(getVal('brand') || '');
@@ -2467,6 +2605,7 @@ export class ExcelEngine {
                 if (sourceName.includes('mammut')) return 'mammut';
                 if (sourceName.includes('fox racing')) return 'fox racing';
                 if (sourceName.includes('511 tactical')) return '511 tactical';
+                if (sourceName.includes('obermeyer')) return 'obermeyer';
                 if (sourceName.includes('evo')) return 'evo';
                 if (sourceName.includes('cotopaxi')) return 'cotopaxi';
                 if (sourceName.includes('haglofs')) return 'haglofs';
@@ -2486,6 +2625,7 @@ export class ExcelEngine {
                 if (custRaw.includes('fox racing') || custRaw === 'fox') return 'fox racing';
                 if (custRaw.includes('mammut')) return 'mammut';
                 if (custRaw.includes('511 tactical')) return '511 tactical';
+                if (custRaw.includes('obermeyer')) return 'obermeyer';
                 if (custRaw.includes('evo')) return 'evo';
                 if (custRaw.includes('haglofs')) return 'haglofs';
                 if (custRaw.includes('hunter')) return 'hunter';
@@ -2496,16 +2636,16 @@ export class ExcelEngine {
                 const suppRaw = (getVal('vendorName') || getVal('productSupplier') || '').toLowerCase();
                 if (suppRaw.includes('pt uwu jump - jw') || suppRaw.includes('jack wolfskin')) return 'jack wolfskin';
                 if (suppRaw.includes('madison 88')) return 'tnf';
-                if (suppRaw.includes('uwu jump')) return (!looksLikeBurtonSource && (looksLikePeakPerformanceSheet || looksLikePeakPerformanceBuy)) ? 'peak performance' : 'tnf';
+                if (suppRaw.includes('uwu jump')) return looksLikeObermeyerContext ? 'obermeyer' : ((!looksLikeBurtonSource && (looksLikePeakPerformanceSheet || looksLikePeakPerformanceBuy)) ? 'peak performance' : 'tnf');
                 if (suppRaw.includes('llb') || suppRaw.includes('jaytex') || suppRaw.includes('ll bean')) return 'll bean';
                 return '';
             })();
-            const inferredBrand = this.stripBrackets(manualBrand || '') || (looksLikePranaSource ? 'prana' : ((!looksLikeBurtonSource && (looksLikePeakPerformanceSheet || looksLikePeakPerformanceBuy)) ? 'peak performance' : strongSourceBrand || brand || (() => {
+            const inferredBrandFallback = (() => {
                 const custRaw = (getVal('customerName') || '').toLowerCase();
                 if (custRaw.includes('burton')) return 'burton';
                 if (custRaw.includes('dynafit')) return 'dynafit';
                 if (custRaw.includes('on ag') || custRaw.includes('on running')) return 'on ag';
-                if (custRaw.includes('peak performance')) return 'peak performance';
+                if (custRaw.includes('peak performance') && !looksLikeObermeyerContext) return 'peak performance';
                 if (custRaw.includes('prana')) return 'prana';
                 if (custRaw.includes('cotopaxi')) return 'cotopaxi';
                 if (custRaw.includes('vuori')) return 'vuori';
@@ -2526,15 +2666,25 @@ export class ExcelEngine {
                 const suppRaw = (getVal('vendorName') || getVal('productSupplier') || '').toLowerCase();
                 if (suppRaw.includes('pt uwu jump - jw') || suppRaw.includes('jack wolfskin')) return 'jack wolfskin';
                 if (suppRaw.includes('madison 88')) return 'tnf';
-                if (suppRaw.includes('uwu jump')) return (!looksLikeBurtonSource && (looksLikePeakPerformanceSheet || looksLikePeakPerformanceBuy)) ? 'peak performance' : 'tnf';
+                if (suppRaw.includes('uwu jump')) return looksLikeObermeyerContext ? 'obermeyer' : ((!looksLikeBurtonSource && (looksLikePeakPerformanceSheet || looksLikePeakPerformanceBuy)) ? 'peak performance' : 'tnf');
                 if (suppRaw.includes('llb') || suppRaw.includes('jaytex') || suppRaw.includes('ll bean')) return 'll bean';
                 return '';
-            })()));
+            })();
+            const inferredBrand = this.stripBrackets(manualBrand || '')
+                || (looksLikePranaSource
+                    ? 'prana'
+                    : (looksLikeObermeyerContext
+                        ? 'obermeyer'
+                        : ((!looksLikeBurtonSource && (looksLikePeakPerformanceSheet || looksLikePeakPerformanceBuy))
+                            ? 'peak performance'
+                            : (strongSourceBrand || brand || inferredBrandFallback))));
             let brandKey = looksLikePranaSource
                 ? 'prana'
-                : ((!looksLikeBurtonSource && (looksLikePeakPerformanceSheet || looksLikePeakPerformanceBuy))
+                : (looksLikeObermeyerContext
+                    ? 'obermeyer'
+                    : ((!looksLikeBurtonSource && (looksLikePeakPerformanceSheet || looksLikePeakPerformanceBuy))
                     ? 'peak performance'
-                    : (inferredBrand || brand || '').trim().toLowerCase());
+                    : (inferredBrand || brand || '').trim().toLowerCase()));
             if (brandKey === 'col') brandKey = 'columbia';
             const isHHBrand = brandKey === 'hh' || brandKey === 'helly hansen';
             const poNumberRaw = manualPurchaseOrder || rawFilePo || (brandKey === 'rossignol' ? rossignolBuyToken : '');
@@ -2598,8 +2748,11 @@ export class ExcelEngine {
             const hhDestinationCountry = isHHBrand
                 ? this.resolveHhDestinationCountry(hhCompanyNameRaw || customerNameRaw, shipToRaw, manualDestination, plantDerivedCountry)
                 : '';
+            const hhOrderDestination = isHHBrand
+                ? (hhDestinationCountry || this.normalizeTransportLocation(hhDestinationSource) || destCountry || '')
+                : '';
             const hhPoSuffix = isHHBrand
-                ? [hhDestinationCountry || destCountry || hhDestinationSource].filter(Boolean)
+                ? [hhOrderDestination].filter(Boolean)
                 : [];
             const hhStartDateRaw = isHHBrand ? (getRawVal('hhFinalXfDate') || getRawVal('finalXfDate') || getRawVal('exFtyDate') || getRawVal('confirmedExFac') || '') : '';
             const hhCancelDateRaw = isHHBrand ? (getRawVal('hhConfirmedDeliveryDate') || getRawVal('confirmedExFac') || getRawVal('cancelDate') || '') : '';
@@ -2611,6 +2764,7 @@ export class ExcelEngine {
                 : '';
             const hhStartDate = isHHBrand ? this.formatDateString(hhStartDateRaw as any) : '';
             const hhCancelDate = isHHBrand ? this.formatDateString(hhCancelDateRaw as any) : '';
+            const hhHeaderKeyDate = isHHBrand ? this.resolveHhHeaderKeyDate(headerRow, (hhStartDateRaw || hhCancelDateRaw || '') as any) : '';
             const pranaPlantLabel = brandKey === 'prana'
                 ? this.extractPranaPlantLabel(shipToRaw || plantName || plant || whsCode || manualDestination)
                 : '';
@@ -2714,6 +2868,8 @@ export class ExcelEngine {
             const inlineColorName = this.stripBrackets(getVal('inlineColorName') || '').trim();
             const inlineColorDescription = this.stripBrackets(getVal('inlineColorDescription') || '').trim();
             const inlineStyleColor = this.stripBrackets(getVal('inlineStyleColor') || '').trim();
+            const obermeyerProductName = this.stripBrackets(getVal('obermeyerProductName') || '').trim();
+            const obermeyerColorName = this.stripBrackets(getVal('obermeyerColorName') || '').trim();
             const marmotShortText = this.stripBrackets(getVal('marmotShortText') || '').trim();
             const marmotStyle = this.stripBrackets(getVal('marmotStyle') || '').trim();
             const ourReference = this.stripBrackets(getVal('ourReference') || '').trim();
@@ -2731,6 +2887,7 @@ export class ExcelEngine {
             }
             const rawColour = this.stripBrackets(getVal('colour') || '').trim();
             const colourNameRaw = this.stripBrackets(getVal('colourName') || '').trim();
+            const buyDescription = this.stripBrackets(getVal('productExternalRef') || getVal('productName') || '').trim();
             const pranaColorCodeRaw = this.stripBrackets(getVal('pranaColorCode') || '').trim();
             const pranaColorTextRaw = this.stripBrackets(getVal('pranaColorText') || '').trim();
             const peakPerformanceColourSource = this.stripBrackets(getVal('inlineColorName') || colourNameRaw || rawColour).trim();
@@ -2860,6 +3017,42 @@ export class ExcelEngine {
                 }
             }
 
+            if (productMatches.length === 0 && brandKey === 'dynafit' && buyDescription) {
+                const descriptionKey = this.normalizeLookupText(buyDescription);
+                const allDynafitEntries = Object.values(productSheetMap).flatMap(entries => entries || []);
+                const descriptionMatches = allDynafitEntries.filter(entry => {
+                    const entryCustomer = (entry.customerName || '').toLowerCase().trim();
+                    if (entryCustomer && entryCustomer !== 'dynafit') return false;
+                    return this.normalizeLookupText(entry.productName || '') === descriptionKey;
+                });
+                if (descriptionMatches.length > 0) {
+                    const exactColourMatch = descriptionMatches.find(entry => {
+                        const entryColourKey = this.normalizeColourKey(entry.colour || entry.colourName || '');
+                        return !!entryColourKey && !!colourKey && entryColourKey === colourKey;
+                    });
+                    const fuzzyColourMatch = descriptionMatches.find(entry => {
+                        const entryColourRaw = this.normalizeLookupText(entry.colour || entry.colourName || '');
+                        const buyColourRaw = this.normalizeLookupText(colour || colourNameRaw || rawColour);
+                        return !!entryColourRaw && !!buyColourRaw && (entryColourRaw.includes(buyColourRaw) || buyColourRaw.includes(entryColourRaw));
+                    });
+                    const fallbackMatch = exactColourMatch || fuzzyColourMatch || descriptionMatches[0];
+                    if (fallbackMatch) {
+                        productMatches = [fallbackMatch];
+                        matchedStyleKey = fallbackMatch.buyerStyleNumber || matchedStyleKey;
+                    }
+                }
+            }
+
+            if (productMatches.length > 1 && brandKey === 'obermeyer') {
+                const obermeyerSizeKey = this.normalizeObermeyerSizeKey(sizeRaw || size);
+                const exactSizeMatches = obermeyerSizeKey
+                    ? productMatches.filter(m => this.normalizeObermeyerSizeKey(m.sizeName) === obermeyerSizeKey)
+                    : [];
+                if (exactSizeMatches.length > 0) {
+                    productMatches = exactSizeMatches;
+                }
+            }
+
             if (productMatches.length > 1) {
                 if (brandKey === 'vans') {
                     // For Vans, use the input productCustomerRef as filter to match exact product
@@ -2888,6 +3081,21 @@ export class ExcelEngine {
                         });
                         productMatches = [preferredMatch || productMatches[0]];
                     }
+                } else if (brandKey === 'obermeyer') {
+                    const obermeyerProductName = this.normalizeLookupText(this.stripBrackets(getVal('productName') || getVal('product') || '').trim());
+                    const obermeyerPo = this.normalizeLookupText(this.stripBrackets(getVal('purchaseOrder') || '').trim());
+                    const obermeyerQty = this.parseLooseNumber(this.stripBrackets(getVal('quantity') || '').trim());
+                    const exactProductMatch = obermeyerProductName
+                        ? productMatches.find(m => this.normalizeLookupText(m.productName || '') === obermeyerProductName)
+                        : undefined;
+                    const poMatch = obermeyerPo
+                        ? productMatches.find(m => this.normalizeLookupText(m.poNumber || '') === obermeyerPo)
+                        : undefined;
+                    const qtyMatch = Number.isFinite(obermeyerQty) && obermeyerQty > 0
+                        ? productMatches.find(m => Number.isFinite(m.quantity) && m.quantity === obermeyerQty)
+                        : undefined;
+                    const customerMatch = productMatches.find(m => (m.customerName || '').trim().toLowerCase() === 'obermeyer');
+                    productMatches = [exactProductMatch || poMatch || qtyMatch || customerMatch || productMatches[0]];
                 } else {
                     productMatches = [productMatches[0]];
                 }
@@ -2905,6 +3113,12 @@ export class ExcelEngine {
             const productMatch = !plmMissing && productMatches.length === 1 ? productMatches[0] : undefined;
             if (productMatch && productMatch.colour && productMatch.colour.trim().toLowerCase() === 'not set') {
                 this.errors.push({ field: 'Colour', row: rowNumber, message: `Row ${rowNumber} PO ${poNumber}: PLM Color Name is "Not Set"; line/size skipped.`, severity: 'WARNING' }); return;
+            }
+            if (brandKey === 'obermeyer') {
+                // RESPECT manual PO if provided, otherwise use obermeyerPoHeader or productMatch PO
+                if (!manualPurchaseOrder) {
+                    poNumber = obermeyerPoHeader || this.stripBrackets(productMatch?.poNumber || '').trim() || poNumber;
+                }
             }
             if (process.env.DEBUG_EXPORT_TRACE === '1' && brandKey === 'vans' && rowNumber <= 20) {
                 const vansColourText = this.normalizeVansColourText(colour);
@@ -2963,7 +3177,38 @@ export class ExcelEngine {
 
             const buyProductName = this.stripBrackets(inlineProductName || getVal('productName') || '').trim();
             const plmProductName = this.stripBrackets(productMatch?.productName || '').trim();
-            let styleNumber = plmProductName;
+            
+            // FOR OBERMEYER: MUST ALWAYS use Product Name (M88 format), NOT PLM product name
+            let styleNumber = '';
+            if (brandKey === 'obermeyer') {
+                const productNameCandidate = this.stripBrackets(obermeyerProductName || '').trim();
+                const m88ProductMatch = productNameCandidate.match(/^M\d{6,}$/); // M88xxxxxx format
+                
+                
+                if (m88ProductMatch) {
+                    // Valid M88 product code found in Product Name column - USE IT!
+                    styleNumber = productNameCandidate;
+                } else if (plmProductName) {
+                    // Fall back to PLM product name if M88 not available
+                    styleNumber = plmProductName;
+                } else {
+                    // Last resort: use other fallbacks
+                    styleNumber = this.stripBrackets(buyProductName || getVal('product') || matchedStyleKey || '').trim();
+                }
+
+                
+                // Validation: warn if we don't have M88 format
+                if (styleNumber && !/^M\d{6,}$/.test(styleNumber)) {
+                    this.errors.push({ 
+                        field: 'Product', 
+                        row: rowNumber, 
+                        message: `Row ${rowNumber} PO ${poNumber}: Obermeyer product "${styleNumber}" is not M88 format (expected M88xxxxxx). obermeyerProductName="${productNameCandidate}"`, 
+                        severity: 'WARNING' 
+                    });
+                }
+            } else {
+                styleNumber = plmProductName;
+            }
             if (!styleNumber) {
                 if (brandKey === 'vans') {
                     styleNumber = this.stripBrackets(getVal('jdeStyle') || buyProductName || getVal('product') || matchedStyleKey || '');
@@ -3071,6 +3316,8 @@ export class ExcelEngine {
                 transportLocationSource = (((rossignolDestinationRaw || '').trim().toUpperCase() === 'EU') ? 'France' : rossignolDestinationRaw);
             } else if (isHHBrand) {
                 transportLocationSource = hhDestinationCountry || hhDestinationSource;
+            } else if (brandKey === 'obermeyer') {
+                transportLocationSource = this.normalizeTransportLocation(manualDestination || destinationFromFile || 'USA') || 'USA';
             }
             const transportLocation = this.normalizeTransportLocation(transportLocationSource);
             const effectiveTransportLocation = brandKey === '66 degrees north'
@@ -3079,6 +3326,13 @@ export class ExcelEngine {
             if (brandKey === '66 degrees north' && !poDestination) {
                 poDestination = effectiveTransportLocation || plantDerivedCountry || 'Iceland';
                 poNumber = this.formatPurchaseOrder(poNumberRaw, poPlantPart, poDestination);
+            }
+            if (isHHBrand) {
+                const hhBasePo = this.stripBrackets(poNumberRaw || '').trim().split(/\s+-\s+/)[0].trim();
+                poNumber = hhBasePo;
+                if (hhOrderDestination) {
+                    poNumber = `${hhBasePo}-${hhOrderDestination}`;
+                }
             }
             const dynafitContext = brandKey === 'dynafit'
                 ? this.resolveDynafitExportContext({
@@ -3118,6 +3372,14 @@ export class ExcelEngine {
                 if (isHHBrand) return getRawVal('finalXfDate') || getRawVal('exFtyDate') || getRawVal('confirmedExFac');
                 return getRawVal('exFtyDate') || getRawVal('confirmedExFac');
             })() as Date | string | undefined;
+            const obermeyerDeliveryDate = (() => {
+                if (brandKey !== 'obermeyer') return '';
+                const parsed = this.parseDate(exFtyDate as any);
+                if (!parsed) return '';
+                const monthEnd = new Date(parsed.getFullYear(), parsed.getMonth() + 1, 0);
+                monthEnd.setHours(0, 0, 0, 0);
+                return monthEnd;
+            })();
             if (brandKey === 'prana' && typeof pranaDateSource === 'string' && pranaDateSource.includes('#')) return;
             if (brandKey === 'dynafit' && !dynafitCrdRaw) {
                 this.errors.push({ field: 'DeliveryDate', row: rowNumber, message: `Row ${rowNumber} PO ${poNumber}: Dynafit CRD missing; falling back to buy-file ETD/EX. Factory.`, severity: 'WARNING' });
@@ -3138,7 +3400,9 @@ export class ExcelEngine {
                     ? (jwsCancelDateRaw || jwsStartDateRaw || getRawVal('cancelDate') || exFtyDate || '')
                     : (brandKey === 'll bean'
                         ? (llbFinalDeliveryDateRaw || exFtyDate || '')
-                        : (getRawVal('cancelDate') || exFtyDate || '')))
+                        : (brandKey === 'obermeyer'
+                            ? (obermeyerDeliveryDate || getRawVal('cancelDate') || exFtyDate || '')
+                            : (getRawVal('cancelDate') || exFtyDate || ''))))
             ) as Date | string;
             const poIssuanceDate = getVal('poIssuanceDate') || buyDate || exFtyDate || '';
             const statusRaw = this.normalizeStatus(getVal('status'), inferredBrand || brand);
@@ -3250,12 +3514,16 @@ export class ExcelEngine {
                     : (productMatch?.colourName || productMatch?.colour || peakPerformanceColourSource || colour);
             } else if (brandKey === 'dynafit') {
                 resolvedColour = productMatch?.productName || productMatch?.colour || colour;
+            } else if (brandKey === 'obermeyer') {
+                resolvedColour = obermeyerColorName || productMatch?.colourName || productMatch?.colour || colour;
             } else {
                 resolvedColour = plmMissing ? colour : (productMatch?.colour || colour);
             }
             const customerNameForResolve = manualCustomerName || customerNameRaw || (inferredBrand ? (BRAND_CUSTOMER_MAP[(inferredBrand).toLowerCase()] || '') : '') || (brand ? (BRAND_CUSTOMER_MAP[brand.toLowerCase()] || '') : '');
             const customerName = brandKey === 'prana'
                 ? 'Prana'
+                : brandKey === 'obermeyer'
+                ? 'Obermeyer'
                 : brandKey === 'peak performance'
                 ? 'Peak Performance'
                 : plmMissing
@@ -3265,11 +3533,13 @@ export class ExcelEngine {
 
             const transportMethod = brandKey === 'dynafit'
                 ? (dynafitContext?.transportMethod || 'Courier')
+                : (brandKey === 'obermeyer'
+                ? 'Sea'
                 : (brandKey === '66 degrees north'
                 ? (transportRaw ? this.normalizeTransportMethod(transportRaw) : 'Air')
                 : (brandKey === 'cotopaxi' && transportRaw.trim().toLowerCase() === 'international distributor'
                 ? 'Courier'
-                : this.normalizeTransportMethod(transportRaw)));
+                : this.normalizeTransportMethod(transportRaw))));
             const brandConfig = mloMap.find((m: any) => (m.brand || '').trim().toLowerCase() === brandKey);
             const resolvedOrdersTemplate = this.resolveOrdersTemplate(inferredBrand || brand, templateRaw);
             const resolvedLinesTemplate = this.resolveLinesTemplate(inferredBrand || brand, templateRaw);
@@ -3292,9 +3562,13 @@ export class ExcelEngine {
                     ? (manualKeyDate || this.formatDateString(buyDate as any) || poIssuanceDate)
                     : (brandKey === 'dynafit'
                         ? (manualKeyDate || this.formatDateString(this.shiftDate(exFtyDate, -84) || exFtyDate) || poIssuanceDate)
+                    : (brandKey === 'obermeyer'
+                        ? (manualKeyDate || this.formatDateString(workbookSourceDate as any) || poIssuanceDate)
+                    : (isHHBrand
+                        ? (manualKeyDate || hhHeaderKeyDate || poIssuanceDate)
                     : (brandKey === 'jack wolfskin'
                         ? this.resolveJackWolfskinKeyDate(season, manualKeyDate || poIssuanceDate)
-                        : (manualKeyDate || poIssuanceDate))))
+                        : (manualKeyDate || poIssuanceDate))))))
                 ;
             const keyDateFormat: "manual" | "standard" = manualKeyDate ? "manual" : "standard";
             const commentBrand = isHHBrand ? 'HH' : (inferredBrand || brand || detectedCustomer);
@@ -3382,7 +3656,7 @@ export class ExcelEngine {
                                 linesTemplate,
                                 keyDate,
                                 keyDateFormat,
-                                comments: manualComments || this.buildComments(commentBrand, productRange, commentBuyRound, buyDate, ordersTemplate),
+                                comments: manualComments || this.buildComments(commentBrand, productRange, commentBuyRound, buyDate || this.formatDateString(workbookSourceDate as any), ordersTemplate),
                                 currency: 'USD',
                                 keyUser1: evoKeyUsers.k1,
                                 keyUser2: evoKeyUsers.k2,
@@ -3460,7 +3734,7 @@ export class ExcelEngine {
             const poKey = poNumber;
             let orderKey = `${poNumber}||${customerKey}`;
             if (isHHBrand) {
-                orderKey = `${poNumber}||${customerKey}||${destCountry}`;
+                orderKey = `${poNumber}||${customerKey}||${hhOrderDestination || effectiveTransportLocation}`;
             } else if (brandKey === 'll bean') {
                 orderKey = `${poNumber}||${customerKey}||${llbDestinationLabel || llbDestination}`;
             } else if (brandKey === 'vuori') {
@@ -3479,9 +3753,9 @@ export class ExcelEngine {
                     header: {
                         purchaseOrder: brandKey === 'dynafit' ? dynafitExportPurchaseOrder : poNumber, brandKey, productSupplier, status: 'Confirmed', customer: llbCustomerName || customerName,
                         transportMethod, transportLocation: isHHBrand
-                            ? (hhDestinationCountry || destCountry || hhDestinationSource || effectiveTransportLocation)
+                            ? (hhOrderDestination || hhDestinationSource || effectiveTransportLocation)
                             : effectiveTransportLocation, ordersTemplate, linesTemplate, keyDate, keyDateFormat,
-                        comments: manualComments || this.buildComments(commentBrand, productRange, commentBuyRound, buyDate, ordersTemplate),
+                        comments: manualComments || this.buildComments(commentBrand, productRange, commentBuyRound, buyDate || this.formatDateString(workbookSourceDate as any), ordersTemplate),
                         currency: 'USD', keyUser1: keyUsers.k1, keyUser2: keyUsers.k2, keyUser3: keyUsers.k3,
                         keyUser4: keyUsers.k4, keyUser5: keyUsers.k5, keyUser6: keyUsers.k6, keyUser7: keyUsers.k7, keyUser8: keyUsers.k8,
                     },
@@ -3500,7 +3774,7 @@ export class ExcelEngine {
                     customerName: llbCustomerName || customerName,
                     transportLocation: brandKey === 'hunter'
                         ? this.normalizeHunterOrderTransportLocation(hunterPackingSplit, poNumberRaw)
-                        : (isHHBrand ? (hhDestinationCountry || destCountry || hhDestinationSource || effectiveTransportLocation) : effectiveTransportLocation),
+                        : (isHHBrand ? (hhOrderDestination || hhDestinationSource || effectiveTransportLocation) : effectiveTransportLocation),
                     transportMethod,
                     ordersTemplate
                 });
@@ -3533,7 +3807,7 @@ export class ExcelEngine {
                     hhConfirmedDeliveryDate: hhCancelDate || undefined,
                     transportLocation: brandKey === 'hunter'
                         ? hunterLineTransportLocation
-                        : (isHHBrand ? (hhDestinationCountry || destCountry || hhDestinationSource || effectiveTransportLocation) : effectiveTransportLocation),
+                        : (isHHBrand ? (hhOrderDestination || hhDestinationSource || effectiveTransportLocation) : effectiveTransportLocation),
                     styleColor: inlineStyleColor || undefined,
                     rawColour: colour || undefined,
                     ourReference: ourReference || undefined,
@@ -3559,8 +3833,8 @@ export class ExcelEngine {
                     if (!existingLine.hhStartDate && hhStartDate) existingLine.hhStartDate = hhStartDate;
                     if (!existingLine.hhCancelDate && hhCancelDate) existingLine.hhCancelDate = hhCancelDate;
                     if (!existingLine.hhConfirmedDeliveryDate && hhCancelDate) existingLine.hhConfirmedDeliveryDate = hhCancelDate;
-                    if (!existingLine.transportLocation && (hhDestinationCountry || destCountry || hhDestinationSource || effectiveTransportLocation)) {
-                        existingLine.transportLocation = hhDestinationCountry || destCountry || hhDestinationSource || effectiveTransportLocation;
+                    if (!existingLine.transportLocation && (hhOrderDestination || hhDestinationSource || effectiveTransportLocation)) {
+                        existingLine.transportLocation = hhOrderDestination || hhDestinationSource || effectiveTransportLocation;
                     }
                 }
                 if (brandKey === 'dynafit' && !existingLine.dynafitLineKeyDate) {
@@ -3870,7 +4144,7 @@ export class ExcelEngine {
                                         ? jwsDeliveryDate
                                             : isDynafit
                                                 ? (this.formatDateString(line.cancelDate) || this.formatDateString(line.startDate) || dynafitDeliveryDate)
-                                            : ((brandKey === '66 degrees north' || brandKey === 'cotopaxi' || brandKey === 'hunter' || brandKey === 'marmot')
+                                            : ((brandKey === '66 degrees north' || brandKey === 'cotopaxi' || brandKey === 'hunter' || brandKey === 'marmot' || brandKey === 'obermeyer')
                                                 ? (this.formatDateString(line.cancelDate) || this.formatDateString(line.startDate) || '')
                                                 : this.formatDateString(line.startDate));
                         const lineKeyDate = isOnAg
