@@ -159,6 +159,12 @@ const PLANT_COUNTRY_MAP: Record<string, string> = {
     't909': 'Japan',
     'd060': 'BELGIUM',
     'd080': 'UK',
+    'eccn': 'China',
+    't007': 'Taiwan',
+    't912': 'Thailand',
+    't949': 'Australia',
+    't953': 'Hong Kong',
+    't970': 'China',
     'vd60': 'Dubai',
     '0010': 'USA',
     '0011': 'Canada',
@@ -638,6 +644,14 @@ export class ExcelEngine {
         if (looksLikeVuoriProductSheet) productScore += 5;
         if (looksLikeVansBuySheet) return { isProductSheet: false, headerRow };
         if (looksLikePeakPerformanceBuySheet) return { isProductSheet: false, headerRow };
+        
+        // TNF (The North Face) buy file detection
+        const looksLikeTNFBuySheet = 
+            (headerVals.has('style#') || headerVals.has('style #')) &&
+            (headerVals.has('style color') || headerVals.has('material')) &&
+            (headerVals.has('size 1') || headerVals.has('size 2') || headerVals.has('total quantity') || headerVals.has('master po#'));
+        if (looksLikeTNFBuySheet) return { isProductSheet: false, headerRow };
+        
         if (strongBuyScore >= 2 && !looksLikeVuoriProductSheet) return { isProductSheet: false, headerRow };
         return { isProductSheet: productScore >= 3 && (buyScore <= 1 || looksLikeVuoriProductSheet), headerRow };
     }
@@ -1312,7 +1326,8 @@ export class ExcelEngine {
         const size = this.stripBrackets(rawSize || '').trim();
         if (!size) return 'One Size';
         const sizeKey = size.toLowerCase().replace(/\s+/g, ' ');
-        if (size.toLowerCase() === 'os') return 'One Size';
+        // Handle TNF 0OS format and other OS variants
+        if (size.toLowerCase() === '0os' || size.toLowerCase() === 'os') return 'One Size';
         if (size.toLowerCase() === 'o/s') return 'One Size';
         if (size.toLowerCase() === 'ons') return 'One Size';
         if (/^one\s*size$/i.test(size) || /^onesize$/i.test(size)) return 'One Size';
@@ -3107,7 +3122,8 @@ export class ExcelEngine {
             const hasInlineProductData = hasArcInlineProductData || hasBurtonInlineProductData || has66NorthInlineProductData;
             const hasPlmMap = Object.keys(productSheetMap).length > 0;
             let plmMissing = false;
-            if (!effectiveStyle && hasPlmMap && !hasInlineProductData) { this.errors.push({ field: 'PLM', row: rowNumber, message: `Row ${rowNumber} PO ${poNumber}: JDE Style missing; PLM fields left blank.`, severity: 'WARNING' }); plmMissing = true; }
+            // Only report JDE Style missing if both jdeStyle and productField are empty
+            if (!effectiveStyle && !productField && hasPlmMap && !hasInlineProductData) { this.errors.push({ field: 'PLM', row: rowNumber, message: `Row ${rowNumber} PO ${poNumber}: JDE Style missing; PLM fields left blank.`, severity: 'WARNING' }); plmMissing = true; }
             if (productMatches.length === 0 && !plmMissing && hasPlmMap && !hasInlineProductData) { this.errors.push({ field: 'PLM', row: rowNumber, message: `Row ${rowNumber} PO ${poNumber}: JDE ${effectiveStyle} color ${colour} not found in PLM sheet; PLM fields left blank.`, severity: 'WARNING' }); plmMissing = true; }
 
             const productMatch = !plmMissing && productMatches.length === 1 ? productMatches[0] : undefined;
