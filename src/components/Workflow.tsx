@@ -19,7 +19,7 @@ import { motion, AnimatePresence } from "framer-motion";
 
 const PROCESSING_API_BASE_URL = (
     process.env.NEXT_PUBLIC_PROCESSING_API_URL
-    || (process.env.NODE_ENV === "production" ? "https://po-cutting.5-223-78-194.sslip.io" : "")
+    || (process.env.NODE_ENV === "production" ? "https://po-cutting-api.5-223-78-194.sslip.io" : "")
 ).replace(/\/+$/, "");
 
 function cn(...inputs: ClassValue[]) {
