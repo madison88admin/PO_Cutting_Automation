@@ -86,11 +86,19 @@ export async function POST(req: NextRequest) {
     let runId: string | null = null;
     let stage = "start";
     try {
-        stage = "auth";
-        // Simple auth guard (skipped if no UPLOAD_API_KEY is configured)
-        const apiKey = req.headers.get('x-api-key') || '';
-        if (process.env.UPLOAD_API_KEY && (!apiKey || apiKey !== process.env.UPLOAD_API_KEY)) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        stage = "origin_check";
+        if (process.env.NODE_ENV === "production") {
+            const requestOrigin = req.headers.get("origin");
+            let isSameOrigin = false;
+            try {
+                isSameOrigin = Boolean(requestOrigin)
+                    && new URL(requestOrigin!).host === req.nextUrl.host;
+            } catch {
+                isSameOrigin = false;
+            }
+            if (!isSameOrigin) {
+                return NextResponse.json({ error: "Invalid request origin" }, { status: 403 });
+            }
         }
 
         stage = "rate_limit";
