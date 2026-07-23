@@ -11,7 +11,7 @@ const COMMENT_OPTIONS = [
 ];
 
 import { useEffect, useRef, useState } from "react";
-import { Upload, FileCheck, AlertCircle, Download, ChevronRight, ChevronLeft, Settings, History, Loader2, CheckCircle2, CloudUpload, ArrowRight, ShieldCheck, FileText } from "lucide-react";
+import { Upload, FileCheck, AlertCircle, Download, ChevronRight, ChevronLeft, Settings, History, Loader2, CheckCircle2, CloudUpload, ArrowRight, ShieldCheck, FileText, X, Copy, Eye, PackageCheck } from "lucide-react";
 import { saveTemplate } from "@/lib/templates/template-store";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -179,6 +179,85 @@ export default function Workflow() {
     const [manualBrand, setManualBrand] = useState("");
     const [manualDestination, setManualDestination] = useState("");
     const [showAdvanced, setShowAdvanced] = useState(false);
+    const [isDragging, setIsDragging] = useState(false);
+    const [processingStage, setProcessingStage] = useState(0);
+    const [acknowledgedLines, setAcknowledgedLines] = useState<Record<string, boolean>>({});
+    const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+    const processingStages = [
+        "Reading Excel sheets and headers",
+        "Extracting orders, lines, and sizes",
+        "Searching products and colours in NextGen",
+        "Checking matches and required fields",
+        "Preparing the three Excel output files",
+    ];
+
+    useEffect(() => {
+        if (!isProcessing) {
+            setProcessingStage(0);
+            return;
+        }
+        const timer = window.setInterval(() => {
+            setProcessingStage((stage) => Math.min(stage + 1, processingStages.length - 1));
+        }, 2600);
+        return () => window.clearInterval(timer);
+    }, [isProcessing, processingStages.length]);
+
+    useEffect(() => {
+        try {
+            const saved = JSON.parse(window.localStorage.getItem("po-cutting-form-preferences") || "{}");
+            const preference = saved.last || {};
+            if (!manualTemplate && preference.ordersTemplate) setManualTemplate(preference.ordersTemplate);
+            if (!manualLinesTemplate && preference.linesTemplate) setManualLinesTemplate(preference.linesTemplate);
+            if (!manualComments && preference.comments) setManualComments(preference.comments);
+        } catch {
+            // A malformed local preference should never block PO processing.
+        }
+    }, []);
+
+    const rememberSelections = (detectedBrand?: string) => {
+        try {
+            const key = (detectedBrand || manualBrand || "last").trim().toLowerCase();
+            const current = JSON.parse(window.localStorage.getItem("po-cutting-form-preferences") || "{}");
+            const preference = {
+                ordersTemplate: manualTemplate,
+                linesTemplate: manualLinesTemplate,
+                comments: manualComments,
+            };
+            current.last = preference;
+            current[key] = preference;
+            window.localStorage.setItem("po-cutting-form-preferences", JSON.stringify(current));
+        } catch {
+            // Local storage can be unavailable in private browsing.
+        }
+    };
+
+    const loadBrandSelections = (brand: string) => {
+        try {
+            const saved = JSON.parse(window.localStorage.getItem("po-cutting-form-preferences") || "{}");
+            const preference = saved[brand.trim().toLowerCase()];
+            if (!preference) return;
+            setManualTemplate(preference.ordersTemplate || "");
+            setManualLinesTemplate(preference.linesTemplate || "");
+            setManualComments(preference.comments || "");
+        } catch {
+            // Keep the current values when preferences cannot be read.
+        }
+    };
+
+    const handleFilesSelected = (files: FileList | null) => {
+        if (!files?.length) return;
+        setBuyFiles(files);
+        const filename = files[0].name.toLowerCase();
+        const filenameBrand = BRAND_OPTIONS.find((brand) =>
+            filename.includes(brand.toLowerCase().replace(/\s+/g, ""))
+            || filename.includes(brand.toLowerCase())
+        );
+        if (filenameBrand) {
+            setManualBrand(filenameBrand);
+            loadBrandSelections(filenameBrand);
+        }
+    };
 
     const incrementPoNumber = (po: string): string => {
         if (!po.trim()) return "PO000001";
@@ -396,11 +475,11 @@ export default function Workflow() {
     }, [buyFiles, manualSeason]);
 
     const steps: { key: Step; label: string; icon: any }[] = [
-        { key: "UPLOAD", label: "Input", icon: CloudUpload },
-        { key: "RUN", label: "AI Extract", icon: Loader2 },
-        { key: "VALIDATE", label: "Nexgen Check", icon: ShieldCheck },
-        { key: "REVIEW", label: "Quality Review", icon: FileCheck },
-        { key: "DOWNLOAD", label: "Excel Output", icon: Download },
+        { key: "UPLOAD", label: "Add Buy File", icon: CloudUpload },
+        { key: "RUN", label: "Reading Buy File", icon: Loader2 },
+        { key: "VALIDATE", label: "Check Products", icon: ShieldCheck },
+        { key: "REVIEW", label: "Review Results", icon: FileCheck },
+        { key: "DOWNLOAD", label: "Download Files", icon: Download },
     ];
 
     const currentStepIndex = steps.findIndex(s => s.key === currentStep);
@@ -420,6 +499,14 @@ export default function Workflow() {
         manualBrand,
         manualDestination,
     ].filter((value) => value.trim()).length;
+    const requiredFieldsComplete = Boolean(
+        (buyFiles?.length || ocrResults?.length)
+        && manualPo.trim()
+        && manualTemplate.trim()
+        && manualLinesTemplate.trim()
+        && manualComments.trim()
+        && (manualComments !== "[Other]" || customComment.trim())
+    );
 
     const handleProcessOcr = async () => {
         if (!ocrFile) return;
@@ -709,6 +796,9 @@ export default function Workflow() {
 
             const dataWithColorNames = await fillColorNamesFromNextGen(result);
             const variantSummary = result.nexgenVariantSummary || { requested: 0, resolved: 0 };
+            const detectedBrand = result?.fileSummary?.flatMap((file: any) => file.brands || [])?.[0];
+            if (detectedBrand) setManualBrand(detectedBrand);
+            rememberSelections(detectedBrand);
             setUploadData(dataWithColorNames);
             setErrors(result.errors || []);
             setNextgenValidation({
@@ -748,11 +838,10 @@ export default function Workflow() {
                 }]);
             }
 
-            // Simulate progress for dramatic effect
             setTimeout(() => {
                 setIsProcessing(false);
                 setCurrentStep("VALIDATE");
-            }, 3000);
+            }, 450);
 
         } catch (err) {
             console.error(err);
@@ -851,6 +940,38 @@ export default function Workflow() {
         }
     };
 
+    const handleDownloadAll = () => {
+        (["orders", "lines", "sizes"] as const).forEach((fileType) => {
+            void handleDownload(fileType);
+        });
+    };
+
+    const confirmExcludedLine = (item: any, index: number) => {
+        const key = `${item.purchaseOrder}-${item.lineItem}-${index}`;
+        setAcknowledgedLines((current) => ({ ...current, [key]: true }));
+        setErrors((current) => {
+            const remaining = current.filter((error) => !(
+                error.severity === "CRITICAL"
+                && String(error.message || "").includes(`PO ${item.purchaseOrder} line ${item.lineItem}`)
+            ));
+            if (!remaining.some((error) => error.severity === "CRITICAL")) {
+                setUploadData((data: any) => data ? { ...data, canProceed: true } : data);
+            }
+            return remaining;
+        });
+    };
+
+    const startAnotherFile = () => {
+        setBuyFiles(null);
+        setUploadData(null);
+        setErrors([]);
+        setNextgenValidation(null);
+        setAcknowledgedLines({});
+        setExtractedPo("");
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        setCurrentStep("UPLOAD");
+    };
+
     const base64ToXlsxBlob = (base64: string) => {
         const binary = window.atob(base64);
         const bytes = new Uint8Array(binary.length);
@@ -876,6 +997,20 @@ export default function Workflow() {
         blockerConditions.blankCriticalFields && "Blank pricing/delivery/payment fields found in export files.",
         blockerConditions.validationFailed && "Validation failure blocking progression. Resolve all critical errors first.",
     ].filter(Boolean);
+    const detectedBrands = Array.from(new Set(
+        (uploadData?.fileSummary || []).flatMap((file: any) => file.brands || [])
+    )) as string[];
+    const variantSummary = uploadData?.nexgenVariantSummary || nextgenValidation?.matchSummary || {};
+    const transportMethods = Array.from(new Set(
+        (uploadData?.output || []).flatMap((po: any) =>
+            (po.lines || []).map((line: any) => line.transportMethod).filter(Boolean)
+        )
+    )) as string[];
+    const attentionItems = (uploadData?.needsAttention || [])
+        .map((item: any, index: number) => ({ ...item, _attentionIndex: index }))
+        .filter((item: any) =>
+            !acknowledgedLines[`${item.purchaseOrder}-${item.lineItem}-${item._attentionIndex}`]
+        );
 
     return (
         <div className="w-full max-w-7xl mx-auto space-y-10 px-4 transition-colors duration-300 text-[hsl(var(--foreground))]">
@@ -907,7 +1042,7 @@ export default function Workflow() {
                             >
                                 <div
                                     className={cn(
-                                        "w-16 h-16 rounded-2xl flex items-center justify-center transition-all duration-700 ease-out",
+                                        "w-11 h-11 md:w-16 md:h-16 rounded-xl md:rounded-2xl flex items-center justify-center transition-all duration-700 ease-out",
                                         isActive ? "bg-blue-600 shadow-[0_0_40px_rgba(37,99,235,0.4)] scale-110 ring-4 ring-blue-500/20" :
                                             isCompleted ? "bg-emerald-600 shadow-[0_0_30px_rgba(16,185,129,0.2)] scale-100" : "bg-slate-900 border border-white/5 scale-90"
                                     )}
@@ -915,7 +1050,7 @@ export default function Workflow() {
                                     {isActive && isProcessing ? (
                                         <Loader2 className="w-7 h-7 animate-[spin_2s_linear_infinite] text-white" />
                                     ) : (
-                                        <Icon className={cn("w-7 h-7 transition-colors duration-500", (isActive || isCompleted) ? "text-white" : "text-slate-600 translate-y-0")} />
+                                        <Icon className={cn("w-5 h-5 md:w-7 md:h-7 transition-colors duration-500", (isActive || isCompleted) ? "text-white" : "text-slate-600 translate-y-0")} />
                                     )}
 
                                     {isCompleted && (
@@ -929,7 +1064,7 @@ export default function Workflow() {
                                     )}
                                 </div>
                                 <span className={cn(
-                                    "step-label mt-6 text-[10px] font-black uppercase tracking-[0.3em] transition-all duration-700",
+                                    "step-label mt-3 md:mt-6 max-w-[64px] md:max-w-none text-center text-[8px] md:text-[10px] font-black uppercase tracking-[0.12em] md:tracking-[0.3em] transition-all duration-700",
                                     isActive ? "text-blue-400 opacity-100 translate-y-0" : isCompleted ? "text-emerald-400 opacity-80" : "text-slate-700 opacity-50"
                                 )}>
                                     {step.label}
@@ -973,27 +1108,81 @@ export default function Workflow() {
                             </div>
 
                             <div className="space-y-6">
-                                <h2 className="text-5xl font-black tracking-tight text-[hsl(var(--foreground))] leading-tight">
-                                    BUY FILE <br /> <span className="bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 via-blue-400 to-indigo-400">AI EXTRACTION</span>
+                                <h2 className="text-4xl md:text-5xl font-black tracking-tight text-[hsl(var(--foreground))] leading-tight">
+                                    Create PO Cutting Files
                                 </h2>
-                                <p className="text-[hsl(var(--muted))] text-xl font-medium max-w-xl mx-auto">
-                                    Add the buyer Excel. Qwen maps unfamiliar headers automatically, Nexgen validates product and colour data directly, then the system prepares Orders, Lines, and Order Sizes.
+                                <p className="text-[hsl(var(--muted))] text-base md:text-lg font-medium max-w-xl mx-auto">
+                                    Upload the buyer Excel, confirm the required settings, and the system will check NextGen and prepare all three files.
                                 </p>
                             </div>
 
                             <div className="grid grid-cols-1 gap-4 max-w-3xl mx-auto text-left">
                                 <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-300">Buyer Excel <span className="text-rose-400">Required</span></label>
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-300">Buy File <span className="text-rose-400">Required</span></label>
                                     <input
+                                        ref={fileInputRef}
                                         type="file"
                                         accept=".xlsx"
                                         multiple
-                                        onChange={(e) => setBuyFiles(e.target.files)}
-                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white file-input"
+                                        onChange={(e) => handleFilesSelected(e.target.files)}
+                                        className="sr-only"
                                     />
-                                    {buyFiles && buyFiles.length > 0 && (
-                                        <div className="text-[10px] text-slate-400">
-                                            {Array.from(buyFiles).map((f) => f.name).join(", ")}
+                                    <div
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={() => fileInputRef.current?.click()}
+                                        onKeyDown={(event) => {
+                                            if (event.key === "Enter" || event.key === " ") fileInputRef.current?.click();
+                                        }}
+                                        onDragEnter={(event) => { event.preventDefault(); setIsDragging(true); }}
+                                        onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }}
+                                        onDragLeave={(event) => { event.preventDefault(); setIsDragging(false); }}
+                                        onDrop={(event) => {
+                                            event.preventDefault();
+                                            setIsDragging(false);
+                                            handleFilesSelected(event.dataTransfer.files);
+                                        }}
+                                        className={cn(
+                                            "min-h-[150px] rounded-3xl border-2 border-dashed p-5 flex items-center justify-center cursor-pointer transition-all",
+                                            isDragging ? "border-blue-400 bg-blue-500/15 scale-[1.01]" : "border-white/15 bg-white/[0.03] hover:border-blue-500/50 hover:bg-blue-500/[0.06]"
+                                        )}
+                                    >
+                                        {buyFiles?.length ? (
+                                            <div className="w-full flex items-center gap-4 text-left">
+                                                <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/20 p-3">
+                                                    <FileCheck className="w-7 h-7 text-emerald-400" />
+                                                </div>
+                                                <div className="min-w-0 flex-1">
+                                                    <p className="font-black text-sm text-[hsl(var(--foreground))] truncate">{buyFiles[0].name}</p>
+                                                    <p className="text-xs text-[hsl(var(--muted))] mt-1">
+                                                        {(buyFiles[0].size / 1024).toFixed(1)} KB{buyFiles.length > 1 ? ` · ${buyFiles.length} files selected` : ""}
+                                                    </p>
+                                                    <p className="text-[10px] text-blue-400 font-bold uppercase tracking-widest mt-2">Click to replace</p>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    aria-label="Remove selected file"
+                                                    onClick={(event) => {
+                                                        event.stopPropagation();
+                                                        setBuyFiles(null);
+                                                        if (fileInputRef.current) fileInputRef.current.value = "";
+                                                    }}
+                                                    className="rounded-full border border-white/10 p-2 text-slate-400 hover:text-white hover:bg-white/10"
+                                                >
+                                                    <X className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <div className="text-center">
+                                                <Upload className="w-8 h-8 text-blue-400 mx-auto mb-3" />
+                                                <p className="font-black text-sm text-[hsl(var(--foreground))]">Drop the buyer Excel here</p>
+                                                <p className="text-xs text-[hsl(var(--muted))] mt-1">or click to choose an .xlsx file</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                    {buyFiles && buyFiles.length > 1 && (
+                                        <div className="text-[10px] text-slate-400 break-words">
+                                            {Array.from(buyFiles).slice(1).map((file) => file.name).join(", ")}
                                         </div>
                                     )}
                                 </div>
@@ -1022,7 +1211,7 @@ export default function Workflow() {
                                     )}
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-300">Orders Template <span className="normal-case tracking-normal text-slate-500">manual input</span></label>
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-300">Orders Template <span className="text-rose-400">Required</span></label>
                                     <select
                                         value={manualTemplate}
                                         onChange={e => setManualTemplate(e.target.value)}
@@ -1036,7 +1225,7 @@ export default function Workflow() {
                                     </select>
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-300">Lines Template <span className="normal-case tracking-normal text-slate-500">manual input</span></label>
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-300">Lines Template <span className="text-rose-400">Required</span></label>
                                     <select
                                         value={manualLinesTemplate}
                                         onChange={e => setManualLinesTemplate(e.target.value)}
@@ -1050,7 +1239,7 @@ export default function Workflow() {
                                     </select>
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-300">Order Comments <span className="normal-case tracking-normal text-slate-500">manual input</span></label>
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-300">Order Comments <span className="text-rose-400">Required</span></label>
                                     <select
                                         value={manualComments}
                                         onChange={e => {
@@ -1076,15 +1265,6 @@ export default function Workflow() {
                                         />
                                     )}
                                 </div>
-                                <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Order Key Date <span className="normal-case tracking-normal">(defaults to today)</span></label>
-                                    <input
-                                        value={manualKeyDate}
-                                        onChange={(e) => setManualKeyDate(e.target.value)}
-                                        placeholder="6/12/2026"
-                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-                                    />
-                                </div>
                                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
                                     <div>
                                         <div className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Advanced overrides</div>
@@ -1102,6 +1282,15 @@ export default function Workflow() {
                                 </div>
                                 {showAdvanced && (
                                     <div className="space-y-4 rounded-3xl border border-white/10 bg-black/20 p-4 md:p-6">
+                                        <div className="space-y-2">
+                                            <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Order Key Date <span className="normal-case tracking-normal">(auto: today)</span></label>
+                                            <input
+                                                value={manualKeyDate}
+                                                onChange={(e) => setManualKeyDate(e.target.value)}
+                                                placeholder="Leave blank to use today's date"
+                                                className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                                            />
+                                        </div>
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                             <div className="space-y-2">
                                                 <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">KeyUser1</label>
@@ -1229,24 +1418,21 @@ export default function Workflow() {
                                 {DESTINATION_OPTIONS.map(option => <option key={option} value={option} />)}
                             </datalist>
 
-                            <div className="flex flex-col items-center gap-6">
+                            <div className="sticky bottom-3 z-30 md:static flex flex-col items-center gap-4 rounded-2xl md:rounded-none border border-white/10 md:border-0 bg-[hsl(var(--panel)/0.96)] md:bg-transparent p-3 md:p-0 backdrop-blur-xl md:backdrop-blur-none">
                                 <button
                                     onClick={() => handleStartUpload()}
-                                    disabled={(!buyFiles || buyFiles.length === 0) && (!ocrResults || ocrResults.length === 0)}
-                                    className="primary-button inline-flex items-center gap-4 bg-blue-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                                    disabled={!requiredFieldsComplete}
+                                    className="primary-button w-full md:w-auto inline-flex justify-center items-center gap-4 bg-blue-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
                                     style={{ background: "linear-gradient(90deg, #2563eb, #1d4ed8)" }}
                                 >
-                                    <span>Extract and validate</span>
+                                    <span>Process Buy File</span>
                                     <ArrowRight className="w-4 h-4" />
                                 </button>
-
-                                <div className="flex items-center gap-10 opacity-70">
-                                    {['Qwen extraction', 'Nexgen match', 'Excel output'].map((tech, i) => (
-                                        <div key={tech} className="flex items-center gap-2.5 text-[10px] font-black tracking-[0.3em] uppercase text-[hsl(var(--muted))]" style={{ opacity: i === 0 ? 1 : 0.85 }}>
-                                            <div className="w-2 h-2 rounded-full bg-blue-500" /> {tech}
-                                        </div>
-                                    ))}
-                                </div>
+                                {!requiredFieldsComplete && (
+                                    <p className="text-[10px] text-center text-amber-400 font-bold">
+                                        Add the file and complete the required fields to continue.
+                                    </p>
+                                )}
                             </div>
                         </motion.div>
                     )}
@@ -1256,31 +1442,47 @@ export default function Workflow() {
                             key="run"
                             initial={{ opacity: 0, scale: 0.95 }}
                             animate={{ opacity: 1, scale: 1 }}
-                            className="text-center space-y-12"
+                            className="max-w-2xl mx-auto space-y-8"
                         >
-                            <div className="relative w-32 h-32 mx-auto">
+                            <div className="relative w-24 h-24 mx-auto">
                                 <div className="absolute inset-0 bg-blue-500/20 blur-3xl animate-pulse" />
                                 <Loader2 className="w-full h-full text-blue-500 animate-[spin_4s_linear_infinite]" />
-                                <div className="absolute inset-0 flex items-center justify-center">
-                                    <div className="w-2 h-2 bg-white rounded-full shadow-[0_0_15px_#fff]" />
-                                </div>
                             </div>
 
-                            <div className="space-y-6">
-                                <h3 className="text-3xl font-black tracking-[0.2em] uppercase text-white">Executing Engine</h3>
-                                <div className="flex flex-col items-center gap-3">
-                                    <div className="px-6 py-2 bg-white/5 border border-white/5 rounded-full">
-                                        <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest">Status: <span className="text-blue-400">Transforming Data Nodes</span></p>
-                                    </div>
-                                    <div className="w-64 h-1 bg-white/5 rounded-full overflow-hidden">
+                            <div className="text-center space-y-3">
+                                <h3 className="text-3xl font-black text-white">Processing your buy file</h3>
+                                <p className="text-sm text-slate-400">Keep this page open. The system is extracting and validating the file.</p>
+                            </div>
+
+                            <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-5 md:p-7 space-y-3">
+                                {processingStages.map((label, index) => {
+                                    const complete = index < processingStage;
+                                    const active = index === processingStage;
+                                    return (
+                                        <div key={label} className={cn(
+                                            "flex items-center gap-4 rounded-2xl border px-4 py-3 text-left transition-all",
+                                            active ? "border-blue-500/40 bg-blue-500/10" : complete ? "border-emerald-500/20 bg-emerald-500/[0.06]" : "border-white/5 opacity-50"
+                                        )}>
+                                            {complete ? (
+                                                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                                            ) : active ? (
+                                                <Loader2 className="w-5 h-5 text-blue-400 animate-spin shrink-0" />
+                                            ) : (
+                                                <div className="w-5 h-5 rounded-full border border-white/20 shrink-0" />
+                                            )}
+                                            <span className={cn("text-sm font-semibold", active ? "text-blue-200" : complete ? "text-emerald-200" : "text-slate-500")}>
+                                                {label}
+                                            </span>
+                                        </div>
+                                    );
+                                })}
+                                <div className="pt-3">
+                                    <div className="h-2 bg-white/5 rounded-full overflow-hidden">
                                         <motion.div
-                                            initial={{ x: "-100%" }}
-                                            animate={{ x: "100%" }}
-                                            transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}
-                                            className="w-1/2 h-full bg-blue-500"
+                                            animate={{ width: `${((processingStage + 1) / processingStages.length) * 100}%` }}
+                                            className="h-full bg-gradient-to-r from-blue-600 to-cyan-400 rounded-full"
                                         />
                                     </div>
-                                    <p className="text-slate-600 text-[9px] font-mono tracking-tighter opacity-70">NODE_RESOLVER :: BUSS_LOGIC_V4 :: OK</p>
                                 </div>
                             </div>
                         </motion.div>
@@ -1299,16 +1501,16 @@ export default function Workflow() {
                                         <ShieldCheck className="w-8 h-8 text-amber-500" />
                                     </div>
                                     <div>
-                                        <h2 className="text-3xl font-black tracking-tight text-white uppercase">Data Audit Node</h2>
-                                        <p className="text-[10px] text-slate-500 font-black uppercase tracking-[0.3em] mt-1">Integrity verification protocol complete</p>
+                                        <h2 className="text-3xl font-black tracking-tight text-white">Validation Results</h2>
+                                        <p className="text-sm text-slate-400 mt-1">Products, colours, and required data have been checked.</p>
                                     </div>
                                 </div>
                                 <div className="flex flex-row items-center gap-4">
                                     <button
-                                        onClick={() => setCurrentStep("UPLOAD")}
+                                        onClick={startAnotherFile}
                                         className="inline-flex items-center gap-2 text-slate-500 hover:text-white transition-colors text-[10px] font-black uppercase tracking-widest mr-4 group"
                                     >
-                                        <History className="w-4 h-4 group-hover:-rotate-90 transition-transform" /> RE-ACQUIRE SOURCE
+                                        <History className="w-4 h-4 group-hover:-rotate-90 transition-transform" /> Upload Another File
                                     </button>
                                     <div className="flex flex-col items-end gap-2">
                                         <button
@@ -1319,11 +1521,11 @@ export default function Workflow() {
                                                 errors.some(e => e.severity === "CRITICAL") && "opacity-50 cursor-not-allowed grayscale"
                                             )}
                                         >
-                                            <span>COMMIT TO REVIEW</span> <ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                                            <span>Continue to Review</span> <ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                                         </button>
                                         {errors.some(e => e.severity === "CRITICAL") && (
                                             <p className="text-[9px] font-black text-red-500 uppercase tracking-widest mt-2 animate-pulse">
-                                                [CRITICAL ERRORS DETECTED] RESOLVE SOURCE FILE DATA
+                                                Resolve or exclude the highlighted lines to continue
                                             </p>
                                         )}
                                     </div>
@@ -1338,8 +1540,8 @@ export default function Workflow() {
                                             <ShieldCheck className="w-5 h-5 text-blue-400" />
                                         </div>
                                         <div>
-                                            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">NextGen Validation</p>
-                                            <p className="text-sm font-medium text-slate-300">Cross-reference uploaded data with NextGen PO</p>
+                                            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">NextGen Product &amp; Colour Check</p>
+                                            <p className="text-sm font-medium text-slate-300">The buyer references were matched against NextGen.</p>
                                         </div>
                                     </div>
                                     <button
@@ -1348,7 +1550,7 @@ export default function Workflow() {
                                         className="inline-flex items-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-5 py-3 text-xs font-bold uppercase tracking-widest text-blue-200 hover:bg-blue-500/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
                                         {isValidatingNextgen ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
-                                        {isValidatingNextgen ? "VALIDATING..." : "VALIDATE WITH NEXTGEN"}
+                                        {isValidatingNextgen ? "Checking..." : "Check Again"}
                                     </button>
                                 </div>
 
@@ -1382,19 +1584,19 @@ export default function Workflow() {
                                 )}
                             </div>
 
-                            {uploadData?.needsAttention?.length > 0 && (
+                            {attentionItems.length > 0 && (
                                 <div className="rounded-[28px] border border-red-500/25 bg-red-500/[0.06] p-7 space-y-5">
                                     <div className="flex items-start gap-4">
                                         <AlertCircle className="w-6 h-6 text-red-400 mt-0.5" />
                                         <div>
-                                            <h3 className="text-sm font-black uppercase tracking-[0.22em] text-red-300">Needs Attention</h3>
+                                            <h3 className="text-sm font-black uppercase tracking-[0.22em] text-red-300">Unresolved Buyer References</h3>
                                             <p className="text-xs text-slate-400 mt-2">
                                                 These unresolved lines were excluded from the final Excel files to prevent an incorrect Nexgen import.
                                             </p>
                                         </div>
                                     </div>
                                     <div className="grid gap-3">
-                                        {uploadData.needsAttention.map((item: any, index: number) => (
+                                        {attentionItems.map((item: any, index: number) => (
                                             <div key={`${item.purchaseOrder}-${item.lineItem}-${index}`} className="rounded-2xl border border-white/5 bg-slate-950/50 px-5 py-4">
                                                 <div className="flex flex-wrap items-center gap-3">
                                                     <span className="text-[9px] font-black uppercase tracking-widest text-red-400">{item.code}</span>
@@ -1403,8 +1605,31 @@ export default function Workflow() {
                                                 </div>
                                                 <p className="text-xs text-slate-400 mt-2">{item.message}</p>
                                                 <p className="text-[10px] font-mono text-slate-500 mt-2">
-                                                    Style: {item.style || "(blank)"} · Colour: {item.colour || "(blank)"}
+                                                    Buyer style: {item.style || "(blank)"} · Buyer colour: {item.colour || "(blank)"}
                                                 </p>
+                                                <div className="mt-4 flex flex-wrap gap-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setCurrentStep("UPLOAD")}
+                                                        className="inline-flex items-center gap-2 rounded-xl border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-blue-200 hover:bg-blue-500/20"
+                                                    >
+                                                        <Upload className="w-3.5 h-3.5" /> Correct source &amp; retry
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => navigator.clipboard?.writeText(`PO ${item.purchaseOrder}, line ${item.lineItem}, style ${item.style || "(blank)"}, colour ${item.colour || "(blank)"}: ${item.message}`)}
+                                                        className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-slate-300 hover:bg-white/10"
+                                                    >
+                                                        <Copy className="w-3.5 h-3.5" /> Copy details
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => confirmExcludedLine(item, item._attentionIndex)}
+                                                        className="inline-flex items-center gap-2 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-amber-200 hover:bg-amber-500/20"
+                                                    >
+                                                        <Eye className="w-3.5 h-3.5" /> Keep line excluded
+                                                    </button>
+                                                </div>
                                             </div>
                                         ))}
                                     </div>
@@ -1502,7 +1727,7 @@ export default function Workflow() {
                             key="review"
                             initial={{ opacity: 0, scale: 0.95 }}
                             animate={{ opacity: 1, scale: 1 }}
-                            className="text-center max-w-2xl mx-auto space-y-16"
+                            className="text-center max-w-4xl mx-auto space-y-10"
                         >
                             <div className="relative mx-auto w-40 h-40">
                                 <div className="absolute inset-0 bg-emerald-500/20 blur-[60px] animate-pulse rounded-full" />
@@ -1512,16 +1737,22 @@ export default function Workflow() {
                             </div>
 
                             <div className="space-y-6">
-                                <h2 className="text-5xl font-black tracking-tighter uppercase text-white">Transformation <br /> <span className="text-emerald-500">Confirmed</span></h2>
-                                <div className="flex items-center justify-center gap-6">
-                                    <div className="bg-white/5 border border-white/10 rounded-2xl px-6 py-4 backdrop-blur-md">
-                                        <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500 mb-1">Entity Count</p>
-                                        <p className="text-2xl font-black text-blue-400">{uploadData?.mergedSummary?.orders || uploadData?.dataCount || '---'} <span className="text-[10px] text-slate-600">HEADERS</span></p>
-                                    </div>
-                                    <div className="bg-white/5 border border-white/10 rounded-2xl px-6 py-4 backdrop-blur-md">
-                                        <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500 mb-1">Standard</p>
-                                        <p className="text-2xl font-black text-emerald-500">NG <span className="text-[10px] text-slate-600">COMPLIANT</span></p>
-                                    </div>
+                                <h2 className="text-4xl md:text-5xl font-black tracking-tight text-white">Review Results</h2>
+                                <p className="text-slate-400">Confirm the summary below before downloading the NextGen Excel files.</p>
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-left">
+                                    {[
+                                        { label: "Brand detected", value: detectedBrands.join(", ") || manualBrand || "Not detected" },
+                                        { label: "Buyer file", value: buyFiles?.[0]?.name || uploadData?.fileSummary?.[0]?.filename || "Uploaded file" },
+                                        { label: "Purchase orders", value: uploadData?.mergedSummary?.orders || 0 },
+                                        { label: "Products matched", value: `${variantSummary.resolved || 0} / ${variantSummary.requested || 0}` },
+                                        { label: "Unresolved items", value: attentionItems.length },
+                                        { label: "Transport methods", value: transportMethods.join(", ") || "From buy file" },
+                                    ].map((item) => (
+                                        <div key={item.label} className="rounded-2xl border border-white/10 bg-white/5 p-4 min-w-0">
+                                            <p className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-500 mb-2">{item.label}</p>
+                                            <p className="text-sm font-black text-white break-words">{item.value}</p>
+                                        </div>
+                                    ))}
                                 </div>
 
                                 {uploadData?.fileSummary?.length > 0 && (
@@ -1595,13 +1826,13 @@ export default function Workflow() {
                                     onClick={() => setCurrentStep("DOWNLOAD")}
                                     className="primary-button w-full flex items-center justify-center gap-4 text-sm py-6 group"
                                 >
-                                    <span>Prepare Excel outputs</span> <Download className="w-6 h-6 group-hover:-translate-y-1 transition-transform" />
+                                    <span>Continue to Downloads</span> <Download className="w-6 h-6 group-hover:-translate-y-1 transition-transform" />
                                 </button>
                                 <button
                                     onClick={() => setCurrentStep("VALIDATE")}
                                     className="flex items-center gap-3 text-slate-600 hover:text-white transition-all text-[11px] font-black tracking-[0.4em] uppercase group"
                                 >
-                                    <ChevronLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" /> BACK TO AUDIT DATA
+                                    <ChevronLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" /> Back to Validation
                                 </button>
                             </div>
                         </motion.div>
@@ -1615,8 +1846,18 @@ export default function Workflow() {
                             className="w-full space-y-16"
                         >
                             <div className="text-center space-y-4">
-                                <h2 className="text-4xl font-black uppercase tracking-tighter text-white">Repository Synchronization</h2>
-                                <p className="text-slate-500 text-lg font-medium opacity-80">Download automated templates for NextGen high-speed ingestion.</p>
+                                <h2 className="text-4xl font-black tracking-tight text-white">Excel Files Ready</h2>
+                                <p className="text-slate-400 text-lg font-medium">Download all three files together or choose an individual file.</p>
+                            </div>
+
+                            <div className="max-w-xl mx-auto">
+                                <button
+                                    onClick={handleDownloadAll}
+                                    className="primary-button w-full py-6 flex items-center justify-center gap-4 text-sm"
+                                >
+                                    <PackageCheck className="w-6 h-6" />
+                                    Download All Excel Files
+                                </button>
                             </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -1642,7 +1883,7 @@ export default function Workflow() {
                                             onClick={() => handleDownload(file.key as any)}
                                             className="secondary-button w-full py-4 text-[10px] tracking-[0.3em] group/btn overflow-hidden relative download-package-btn"
                                         >
-                                            <span className="relative z-10">DOWNLOAD PACKAGE</span>
+                                            <span className="relative z-10">Download {file.label}</span>
                                             <div className="absolute inset-0 bg-blue-500 translate-y-full group-hover/btn:translate-y-0 transition-transform duration-300" />
                                         </button>
                                     </motion.div>
@@ -1655,13 +1896,13 @@ export default function Workflow() {
                                         onClick={() => setCurrentStep("REVIEW")}
                                         className="flex items-center gap-3 text-slate-600 hover:text-white transition-all text-[11px] font-black tracking-[0.4em] uppercase group"
                                     >
-                                        <ChevronLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" /> BACK TO REVIEW
+                                        <ChevronLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" /> Back to Review
                                     </button>
                                     <button
-                                        onClick={() => setCurrentStep("UPLOAD")}
+                                        onClick={startAnotherFile}
                                         className="flex items-center gap-3 text-slate-600 hover:text-white transition-all text-[11px] font-black tracking-[0.4em] uppercase group"
                                     >
-                                        <History className="w-5 h-5 group-hover:-rotate-90 transition-transform duration-500" /> RESET ENGINE WORKFLOW
+                                        <History className="w-5 h-5 group-hover:-rotate-90 transition-transform duration-500" /> Process Another File
                                     </button>
                                 </div>
                             </div>
