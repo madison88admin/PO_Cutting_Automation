@@ -137,7 +137,13 @@ export default function Home() {
                 <div className="absolute top-[40%] left-[70%] w-[30vw] h-[30vw] bg-sky-500/5 rounded-full blur-[120px]" />
 
                 {/* Noise and Texture */}
-                <div className="absolute inset-0 opacity-[0.1] mix-blend-overlay pointer-events-none bg-[url('https://grainy-gradients.vercel.app/noise.svg')]" />
+                <div
+                    className="absolute inset-0 opacity-[0.1] mix-blend-overlay pointer-events-none"
+                    style={{
+                        backgroundImage: "radial-gradient(rgba(255,255,255,0.28) 0.5px, transparent 0.5px)",
+                        backgroundSize: "4px 4px",
+                    }}
+                />
                 <div className="absolute inset-0 bg-gradient-to-b from-transparent via-black/20 to-[rgba(0,0,0,0.4)] pointer-events-none" />
             </div>
 
