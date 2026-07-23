@@ -89,10 +89,27 @@ export async function POST(req: NextRequest) {
         stage = "origin_check";
         if (process.env.NODE_ENV === "production") {
             const requestOrigin = req.headers.get("origin");
+            const fetchSite = (req.headers.get("sec-fetch-site") || "").toLowerCase();
+            const allowedHosts = new Set<string>();
+            const addHost = (value: string | null | undefined) => {
+                if (!value) return;
+                try {
+                    allowedHosts.add(new URL(value.includes("://") ? value : `https://${value.split(",")[0].trim()}`).host);
+                } catch {
+                    // Ignore malformed proxy/environment host values.
+                }
+            };
+            addHost(req.headers.get("x-forwarded-host"));
+            addHost(req.headers.get("host"));
+            addHost(req.nextUrl.host);
+            addHost(process.env.URL);
+            addHost(process.env.DEPLOY_PRIME_URL);
+            addHost(process.env.DEPLOY_URL);
+
             let isSameOrigin = false;
             try {
-                isSameOrigin = Boolean(requestOrigin)
-                    && new URL(requestOrigin!).host === req.nextUrl.host;
+                isSameOrigin = fetchSite === "same-origin"
+                    || (Boolean(requestOrigin) && allowedHosts.has(new URL(requestOrigin!).host));
             } catch {
                 isSameOrigin = false;
             }
