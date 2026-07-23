@@ -17,6 +17,8 @@ import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { motion, AnimatePresence } from "framer-motion";
 
+const PROCESSING_API_BASE_URL = (process.env.NEXT_PUBLIC_PROCESSING_API_URL || "").replace(/\/+$/, "");
+
 function cn(...inputs: ClassValue[]) {
     return twMerge(clsx(inputs));
 }
@@ -683,7 +685,7 @@ export default function Workflow() {
         if (manualDestination.trim()) formData.append("manualDestination", manualDestination.trim());
 
         try {
-            const res = await fetch("/api/upload", {
+            const res = await fetch(`${PROCESSING_API_BASE_URL}/api/upload`, {
                 method: "POST",
                 body: formData,
             });

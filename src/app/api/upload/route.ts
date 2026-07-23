@@ -91,6 +91,12 @@ export async function POST(req: NextRequest) {
             const requestOrigin = req.headers.get("origin");
             const fetchSite = (req.headers.get("sec-fetch-site") || "").toLowerCase();
             const allowedHosts = new Set<string>();
+            const allowedOrigins = new Set(
+                (process.env.ALLOWED_UPLOAD_ORIGINS || "")
+                    .split(",")
+                    .map((origin) => origin.trim().replace(/\/+$/, ""))
+                    .filter(Boolean)
+            );
             const addHost = (value: string | null | undefined) => {
                 if (!value) return;
                 try {
@@ -109,7 +115,10 @@ export async function POST(req: NextRequest) {
             let isSameOrigin = false;
             try {
                 isSameOrigin = fetchSite === "same-origin"
-                    || (Boolean(requestOrigin) && allowedHosts.has(new URL(requestOrigin!).host));
+                    || (Boolean(requestOrigin) && (
+                        allowedOrigins.has(requestOrigin!.replace(/\/+$/, ""))
+                        || allowedHosts.has(new URL(requestOrigin!).host)
+                    ));
             } catch {
                 isSameOrigin = false;
             }
