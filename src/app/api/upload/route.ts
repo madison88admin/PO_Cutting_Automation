@@ -95,15 +95,14 @@ export async function POST(req: NextRequest) {
 
         stage = "rate_limit";
         const userIdHeader = req.headers.get('x-user-id') || '';
-        const userId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(userIdHeader)
+        const userId: string | null = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(userIdHeader)
             ? userIdHeader
-            : (await getDefaultWorkflowUserId() || "");
-        if (!userId) {
-            return NextResponse.json({
-                error: "No active workflow user found in Supabase users table.",
-            }, { status: 500 });
-        }
-        if (!checkRateLimit(userId)) {
+            : await getDefaultWorkflowUserId();
+        const rateLimitKey = userId
+            || req.headers.get('x-nf-client-connection-ip')
+            || req.headers.get('x-forwarded-for')
+            || 'anonymous';
+        if (!checkRateLimit(rateLimitKey)) {
             return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
         }
 
@@ -157,23 +156,34 @@ export async function POST(req: NextRequest) {
 
         // Create run history record for this upload
         stage = "create_run";
-        runId = await createRun({
-            user_id: userId,
-            filename: files.map((f) => f.name).join(", "),
-            status: 'Processing'
-        });
+        if (userId) {
+            try {
+                runId = await createRun({
+                    user_id: userId,
+                    filename: files.map((f) => f.name).join(", "),
+                    status: 'Processing'
+                });
+            } catch (error) {
+                console.warn("[upload] run history unavailable; continuing without audit run", error);
+                runId = null;
+            }
+        } else {
+            console.warn("[upload] no Supabase workflow user; continuing without audit/run history");
+        }
         console.log("[upload] run created", { runId });
 
         const fileBuffers: Array<{ file: File; buffer: Buffer }> = [];
         const referenceSizesBuffers: Buffer[] = [];
         stage = "buffer_files";
         for (const file of files) {
-            await logEvent({
-                eventName: "BUY_FILE_UPLOADED",
-                userId,
-                runId,
-                metadata: { filename: file.name, size: file.size }
-            });
+            if (userId) {
+                await logEvent({
+                    eventName: "BUY_FILE_UPLOADED",
+                    userId,
+                    runId: runId || undefined,
+                    metadata: { filename: file.name, size: file.size }
+                });
+            }
             const buffer = Buffer.from(await file.arrayBuffer());
             fileBuffers.push({ file, buffer });
             const lowerName = file.name.toLowerCase();
@@ -183,12 +193,14 @@ export async function POST(req: NextRequest) {
         }
 
         stage = "workflow_started";
-        await logEvent({
-            eventName: "WORKFLOW_STARTED",
-            userId,
-            runId,
-            metadata: { files: files.map((f) => f.name) }
-        });
+        if (userId) {
+            await logEvent({
+                eventName: "WORKFLOW_STARTED",
+                userId,
+                runId: runId || undefined,
+                metadata: { files: files.map((f) => f.name) }
+            });
+        }
 
         const mergedPOsMap = new Map<string, ProcessedPO>();
         const allErrors: ValidationError[] = [];
@@ -205,7 +217,7 @@ export async function POST(req: NextRequest) {
 
         stage = "analysis";
         for (const entry of fileBuffers) {
-            const engine = new ExcelEngine(runId || undefined, userId);
+            const engine = new ExcelEngine(runId || undefined, userId || undefined);
             const analysis = await engine.analyzeWorkbook(entry.buffer);
             console.log("[upload] analysis", {
                 filename: entry.file.name,
@@ -236,7 +248,7 @@ export async function POST(req: NextRequest) {
         stage = "process_buy";
         for (const entry of buyFiles) {
             const { file, buffer } = entry;
-            const engine = new ExcelEngine(runId || undefined, userId);
+            const engine = new ExcelEngine(runId || undefined, userId || undefined);
             console.log("[upload] processing buy file", {
                 filename: file.name,
                 mergedProductSheetKeys: Object.keys(productSheetMap || {}).length,
@@ -406,7 +418,7 @@ export async function POST(req: NextRequest) {
                 return { ...po, lines, sizes };
             })
             .filter((po) => po.lines.length > 0);
-        const engine = new ExcelEngine(runId || undefined, userId);
+        const engine = new ExcelEngine(runId || undefined, userId || undefined);
         const outputs = await engine.generateOutputs(exportData);
 
         const hasCritical = allErrors.some(e => e.severity === "CRITICAL");
@@ -423,12 +435,14 @@ export async function POST(req: NextRequest) {
             });
         }
 
-        await logEvent({
-            eventName: "DATA_EXTRACTION_COMPLETE",
-            userId,
-            runId: runId || undefined,
-            metadata: { rows_extracted: mergedData.length, file_count: files.length }
-        });
+        if (userId) {
+            await logEvent({
+                eventName: "DATA_EXTRACTION_COMPLETE",
+                userId,
+                runId: runId || undefined,
+                metadata: { rows_extracted: mergedData.length, file_count: files.length }
+            });
+        }
 
         const filesOut = {
             orders: Buffer.from(outputs.orders as any).toString('base64'),
