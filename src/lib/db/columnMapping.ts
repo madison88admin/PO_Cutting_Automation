@@ -277,7 +277,13 @@ export async function getColumnMappings(customer?: string): Promise<ColumnMappin
     if (customer) query = query.eq('customer', customer);
 
     const { data, error } = await query;
-    if (error) throw error;
+    if (error) {
+        console.warn('[column-mapping] Supabase read unavailable; using built-in fallback:', error.message);
+        if (!customer) return MOCK_COLUMNS;
+        const customerRows = MOCK_COLUMNS.filter(m => m.customer === customer);
+        const defaultRows = MOCK_COLUMNS.filter(m => m.customer === 'DEFAULT');
+        return customerRows.length ? [...defaultRows, ...customerRows] : defaultRows;
+    }
     return data || [];
 }
 

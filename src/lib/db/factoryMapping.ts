@@ -23,7 +23,10 @@ export async function getFactoryMappings(): Promise<FactoryMapping[]> {
         .select('*')
         .order('brand');
 
-    if (error) throw error;
+    if (error) {
+        console.warn('[factory-mapping] Supabase read unavailable; using built-in fallback:', error.message);
+        return MOCK_FACTORIES;
+    }
     return data || [];
 }
 
