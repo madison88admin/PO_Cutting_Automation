@@ -10,8 +10,9 @@ const COMMENT_OPTIONS = [
     "[Other]"
 ];
 
-import { useEffect, useState } from "react";
-import { Upload, FileCheck, AlertCircle, Download, ChevronRight, ChevronLeft, Settings, History, Loader2, Info, CheckCircle2, CloudUpload, ArrowRight, ShieldCheck, FileText } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Upload, FileCheck, AlertCircle, Download, ChevronRight, ChevronLeft, Settings, History, Loader2, CheckCircle2, CloudUpload, ArrowRight, ShieldCheck, FileText } from "lucide-react";
+import { saveTemplate } from "@/lib/templates/template-store";
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { motion, AnimatePresence } from "framer-motion";
@@ -147,9 +148,17 @@ export default function Workflow() {
     const [isProcessing, setIsProcessing] = useState(false);
     const [errors, setErrors] = useState<any[]>([]);
     const [uploadData, setUploadData] = useState<any>(null);
+    const [nextgenValidation, setNextgenValidation] = useState<any>(null);
+    const [isValidatingNextgen, setIsValidatingNextgen] = useState(false);
+    const [ocrFile, setOcrFile] = useState<File | null>(null);
+    const [ocrResults, setOcrResults] = useState<any[] | null>(null);
+    const [ocrNextgenUsed, setOcrNextgenUsed] = useState(false);
+    const [isProcessingOcr, setIsProcessingOcr] = useState(false);
     const [buyFiles, setBuyFiles] = useState<FileList | null>(null);
-    const [productSheetFile, setProductSheetFile] = useState<File | null>(null);
     const [manualPo, setManualPo] = useState("");
+    const manualPoRef = useRef(manualPo);
+    useEffect(() => { manualPoRef.current = manualPo; }, [manualPo]);
+    const [extractedPo, setExtractedPo] = useState("");
     const [manualTemplate, setManualTemplate] = useState("");
     const [manualLinesTemplate, setManualLinesTemplate] = useState("");
     const [manualComments, setManualComments] = useState("");
@@ -165,6 +174,197 @@ export default function Workflow() {
     const [manualBrand, setManualBrand] = useState("");
     const [manualDestination, setManualDestination] = useState("");
     const [showAdvanced, setShowAdvanced] = useState(false);
+
+    const incrementPoNumber = (po: string): string => {
+        if (!po.trim()) return "PO000001";
+        // Find the last numeric sequence in the PO number and increment it
+        // e.g., VUOUS0925B -> VUOUS0926B, PO002739-Marketing -> PO002740-Marketing
+        const match = po.match(/^(.*)(\d+)([^\d]*)$/);
+        if (!match) return po;
+        const prefix = match[1];
+        const num = match[2];
+        const suffix = match[3];
+        const next = String(Number(num) + 1).padStart(num.length, "0");
+        return `${prefix}${next}${suffix}`;
+    };
+
+    const parseColorName = (value: string): { code: string | null; name: string | null } => {
+        if (!value) return { code: null, name: null };
+        const raw = value.trim();
+        // Generic brand format: "BRAND CODE Color Name" or "BRAND-CODE-Color Name"
+        // Examples: TNF E6Q TNF Black YOTG Patch, TNF-JK3-TNF Black, VANS 0B8 Mineral Magenta
+        const match = raw.match(/^([A-Z][A-Z0-9]*)[-\s]([A-Z0-9]{2,4})[-\s](.+)$/i);
+        if (match) {
+            return { code: match[2], name: match[3] };
+        }
+        return { code: null, name: null };
+    };
+
+    const extractColorCodeFromSKU = (style: string, sku: string): string | null => {
+        if (!style || !sku) return null;
+        const styleUpper = style.toUpperCase().trim();
+        const skuUpper = sku.toUpperCase().trim();
+        if (skuUpper.startsWith(styleUpper)) {
+            return skuUpper.slice(styleUpper.length);
+        }
+        return null;
+    };
+
+    const applyColorNamesFromResponse = (data: any, colorNames: Record<string, string | null>): any => {
+        if (!data?.output?.length || !colorNames) return data;
+        return {
+            ...data,
+            output: data.output.map((po: any) => ({
+                ...po,
+                lines: (po.lines || []).map((line: any) => {
+                    const sku = (line.productExternalRef || line.sku || line.rawColour || line.colour || line.color || '').trim();
+                    const key = Object.keys(colorNames).find((k) => k.toLowerCase() === sku.toLowerCase());
+                    const colorName = key ? colorNames[key] : null;
+                    if (!colorName) return line;
+                    return {
+                        ...line,
+                        colourName: colorName,
+                        colorName: colorName,
+                    };
+                }),
+            })),
+        };
+    };
+
+    const fillColorNamesFromNextGen = async (data: any): Promise<any> => {
+        if (!data?.output?.length) return data;
+
+        return {
+            ...data,
+            output: data.output.map((po: any, poIdx: number) => ({
+                ...po,
+                lines: (po.lines || []).map((line: any, lineIdx: number) => {
+                    const style = (line.styleNumber || line.style || '').trim();
+                    const sku = line.colour || line.color || line.styleColor || line.colourName || line.colourDisplay || '';
+                    console.log(`[workflow] color parse [po ${poIdx} line ${lineIdx}] style:`, style, 'sku:', sku, 'line keys:', Object.keys(line));
+
+                    // 1. Try to parse a color name string (e.g., "TNF E6Q TNF Black YOTG Patch")
+                    const nameCandidates = [line.colourName, line.colourDisplay, line.colour, line.color, line.styleColor].filter(Boolean) as string[];
+                    let bestCode: string | null = null;
+                    let bestName: string | null = null;
+                    let bestSource: string | null = null;
+                    for (const source of nameCandidates) {
+                        const { code, name } = parseColorName(source);
+                        if (code) {
+                            bestCode = code;
+                            bestName = name;
+                            bestSource = source;
+                            break;
+                        }
+                    }
+
+                    // 2. Fallback: extract color code from SKU by stripping style prefix
+                    if (!bestCode && style && sku) {
+                        const extractedCode = extractColorCodeFromSKU(style, sku);
+                        if (extractedCode) {
+                            bestCode = extractedCode;
+                            bestSource = sku;
+                        }
+                    }
+
+                    console.log(`[workflow] color parse result [po ${poIdx} line ${lineIdx}] bestCode:`, bestCode, 'bestName:', bestName, 'bestSource:', bestSource);
+                    if (!bestCode || !bestSource) return line;
+                    return {
+                        ...line,
+                        rawColour: bestSource,
+                        colour: bestCode,
+                        color: bestCode,
+                        colourName: bestName || line.colourName,
+                        colourDisplay: bestName || line.colourDisplay,
+                    };
+                }),
+            })),
+        };
+    };
+
+    const buildUploadDataFromGeminiBuyItems = (items: any[]): any => {
+        if (!items?.length) return null;
+
+        const get = (item: any, oldKey: string, newKey: string) => {
+            const val = item[oldKey] !== undefined ? item[oldKey] : item[newKey];
+            return val === null || val === undefined ? '' : String(val).trim();
+        };
+
+        const poGroups = new Map<string, any[]>();
+        for (const item of items) {
+            const po = get(item, 'po_number', 'poNumber') || 'UNKNOWN';
+            if (!poGroups.has(po)) poGroups.set(po, []);
+            poGroups.get(po)!.push(item);
+        }
+
+        const output = Array.from(poGroups.entries()).map(([poNumber, lines]) => ({
+            id: `gemini-buy-${poNumber}`,
+            poNumber,
+            header: {
+                purchaseOrder: poNumber,
+                customer: lines[0]?.customer || '',
+                currency: lines[0]?.currency || 'USD',
+            },
+            lines: lines.map((item) => ({
+                styleNumber: get(item, 'buyer_style_number', 'style'),
+                productExternalRef: get(item, 'sku', 'sku'),
+                productCustomerRef: get(item, 'buyer_style_number', 'style'),
+                colour: get(item, 'color', 'color') || get(item, 'color_code', 'colorCode'),
+                color: get(item, 'color', 'color') || get(item, 'color_code', 'colorCode'),
+                colourName: get(item, 'color', 'color') || null,
+                styleColor: get(item, 'color_code', 'colorCode') || null,
+                rawColour: get(item, 'color', 'color') || get(item, 'color_code', 'colorCode'),
+                season: get(item, 'season', 'season'),
+                exFtyDate: get(item, 'delivery_date', 'deliveryDate'),
+                factory: get(item, 'factory', 'factory'),
+                customer: get(item, 'customer', 'customer'),
+                cost: item.unit_cost != null ? String(item.unit_cost) : item.unitCost != null ? String(item.unitCost) : '',
+                sourceSheet: get(item, 'source_sheet', 'sourceSheet'),
+                sourceRow: get(item, 'source_row', 'sourceRow'),
+            })),
+            sizes: lines.map((item) => [
+                {
+                    productSize: String(item.size || 'One Size'),
+                    sizeName: String(item.size || 'One Size'),
+                    quantity: Number(item.quantity) || 0,
+                },
+            ]),
+        }));
+
+        return {
+            mergedSummary: { orders: output.length, lines: items.length, sizes: items.length },
+            output,
+            errors: [],
+            formatDetection: {
+                'gemini-buy': {
+                    detectedCustomer: items[0]?.customer || 'Unknown',
+                    detectedFormat: 'Qwen Excel Extractor',
+                    unmappedColumns: [],
+                },
+            },
+            fileSummary: [
+                {
+                    filename: 'gemini-buy',
+                    orderCount: output.length,
+                    lineCount: items.length,
+                    sizeCount: items.length,
+                },
+            ],
+        };
+    };
+
+    const fetchLatestPOFromNextGen = async (): Promise<string | null> => {
+        try {
+            const res = await fetch("/api/nextgen-latest-po");
+            const result = await res.json();
+            if (!res.ok || result.error || !result.poNumber) return null;
+            return incrementPoNumber(result.poNumber);
+        } catch (err) {
+            console.error("Failed to fetch latest PO from NextGen:", err);
+            return null;
+        }
+    };
+
     const applyTheme = (nextTheme: "dark" | "light") => {
       document.documentElement.classList.remove("light", "dark");
       document.documentElement.classList.add(nextTheme);
@@ -179,6 +379,11 @@ export default function Workflow() {
     }, []);
 
     useEffect(() => {
+        const today = new Date().toISOString().split("T")[0];
+        setManualKeyDate(today);
+    }, []);
+
+    useEffect(() => {
         if (manualSeason.trim()) return;
         const firstFileName = buyFiles?.[0]?.name || "";
         const inferredSeason = inferSeasonFromFilename(firstFileName);
@@ -186,11 +391,11 @@ export default function Workflow() {
     }, [buyFiles, manualSeason]);
 
     const steps: { key: Step; label: string; icon: any }[] = [
-        { key: "UPLOAD", label: "Acquisition", icon: CloudUpload },
-        { key: "RUN", label: "Engine", icon: Loader2 },
-        { key: "VALIDATE", label: "Audit", icon: ShieldCheck },
-        { key: "REVIEW", label: "Review", icon: FileCheck },
-        { key: "DOWNLOAD", label: "Export", icon: Download },
+        { key: "UPLOAD", label: "Input", icon: CloudUpload },
+        { key: "RUN", label: "AI Extract", icon: Loader2 },
+        { key: "VALIDATE", label: "Nexgen Check", icon: ShieldCheck },
+        { key: "REVIEW", label: "Quality Review", icon: FileCheck },
+        { key: "DOWNLOAD", label: "Excel Output", icon: Download },
     ];
 
     const currentStepIndex = steps.findIndex(s => s.key === currentStep);
@@ -211,28 +416,250 @@ export default function Workflow() {
         manualDestination,
     ].filter((value) => value.trim()).length;
 
-    const handleStartUpload = async () => {
-        if (!buyFiles || buyFiles.length === 0) return;
-        if (!manualPo.trim()) {
+    const handleProcessOcr = async () => {
+        if (!ocrFile) return;
+
+        // Route Excel files through the local Qwen-assisted Buy File Extractor
+        if (ocrFile.name.toLowerCase().endsWith('.xlsx')) {
+            setIsProcessingOcr(true);
+            try {
+                const formData = new FormData();
+                formData.append("file", ocrFile);
+                const res = await fetch("/api/extract-buy-file", {
+                    method: "POST",
+                    body: formData,
+                });
+                const result = await res.json();
+                if (!res.ok || result.error) {
+                    setErrors([{
+                        field: "Qwen Excel Extractor",
+                        row: 0,
+                        message: result.error || "Buy file extraction failed",
+                        severity: "CRITICAL"
+                    }]);
+                    setOcrResults(null);
+                    return;
+                }
+
+                const extractedItems = result.result?.items || [];
+                const productData = result.result?.productData || [];
+                const files = result.result?.files || {};
+                const unmappedColumns = result.result?.unmappedColumns || [];
+                const templateUsed = result.result?.templateUsed || false;
+                const headers = result.result?.headers || [];
+                const mapping = result.result?.mapping || {};
+                const matchIssues = result.result?.matchIssues || [];
+
+                // Save template client-side so future uploads can skip AI
+                if (headers.length && Object.keys(mapping).length && !templateUsed) {
+                    saveTemplate(headers, mapping, extractedItems[0]?.customer || null);
+                }
+
+                if (!files?.orders || !files?.lines || !files?.sizes) {
+                    console.error("[workflow] AI extract files missing from response", files);
+                    setErrors([{
+                        field: "AI Extract",
+                        row: 0,
+                        message: "Extracted data but failed to generate downloadable Excel files. Please try again.",
+                        severity: "CRITICAL"
+                    }]);
+                    setIsProcessingOcr(false);
+                    return;
+                }
+
+                const uploadData = buildUploadDataFromGeminiBuyItems(extractedItems);
+                const colorNames = result.result?.colorNames || {};
+                const dataWithColorNames = applyColorNamesFromResponse(uploadData, colorNames);
+                const dataWithFiles = {
+                    ...dataWithColorNames,
+                    files,
+                    formatDetection: {
+                        'ai-buy': {
+                            detectedCustomer: extractedItems[0]?.customer || 'Unknown',
+                            detectedFormat: templateUsed ? 'Template (learned)' : 'AI header mapping',
+                            unmappedColumns,
+                        },
+                    },
+                };
+                setUploadData(dataWithFiles);
+
+                if (result.result?.warning || matchIssues.length) {
+                    const extractionWarnings = result.result?.warning ? [{
+                        field: "AI Extract",
+                        row: 0,
+                        message: result.result.warning,
+                        severity: "WARNING"
+                    }] : [];
+                    setErrors([...matchIssues, ...extractionWarnings]);
+                } else {
+                    setErrors([]);
+                }
+
+                setOcrResults(extractedItems.map((item: any) => ({
+                    poNumber: item.po_number || item.poNumber || '',
+                    style: item.buyer_style_number || item.style || '',
+                    color: item.color || '',
+                    size: item.size || '',
+                    quantity: Number(item.quantity) || 0,
+                    factory: item.factory || '',
+                    customer: item.customer || '',
+                    season: item.season || '',
+                    exFtyDate: item.delivery_date || item.deliveryDate || '',
+                    transportMethod: '',
+                    plant: '',
+                })));
+                setOcrNextgenUsed(false);
+
+                const filePo = extractedItems.length > 0 ? (extractedItems[0].po_number || extractedItems[0].poNumber || '') : '';
+                const nextPoFromNextGen = result.result?.latestPO?.poNumber || null;
+                let newPoNumber = '';
+                if (nextPoFromNextGen) {
+                    newPoNumber = nextPoFromNextGen;
+                    setManualPo(newPoNumber);
+                    setExtractedPo(filePo || `NextGen latest → ${newPoNumber}`);
+                } else if (filePo) {
+                    newPoNumber = incrementPoNumber(filePo);
+                    setExtractedPo(filePo);
+                    setManualPo(newPoNumber);
+                }
+
+                setTimeout(() => {
+                    setIsProcessingOcr(false);
+                    setCurrentStep("VALIDATE");
+                    handleValidateNextgen(dataWithFiles, newPoNumber || manualPoRef.current);
+                }, 1500);
+                return;
+            } catch (err) {
+                console.error("Qwen buy extraction failed:", err);
+                setErrors([{
+                    field: "Qwen Excel Extractor",
+                    row: 0,
+                    message: "Buy file extraction request failed",
+                    severity: "CRITICAL"
+                }]);
+                setIsProcessingOcr(false);
+                return;
+            }
+        }
+
+        setIsProcessingOcr(true);
+        try {
+            const formData = new FormData();
+            formData.append("file", ocrFile);
+            formData.append("fillFromNextgen", "true");
+            const res = await fetch("/api/ocr-gemini", {
+                method: "POST",
+                body: formData,
+            });
+            const result = await res.json();
+            if (!res.ok || result.error) {
+                setErrors([{
+                    field: "Gemini OCR",
+                    row: 0,
+                    message: result.error || "OCR failed",
+                    severity: "CRITICAL"
+                }]);
+                setOcrResults(null);
+            } else {
+                const merged = result.mergedResults || result.ocrResults || [];
+                setOcrResults(merged);
+                setOcrNextgenUsed(!!result.nextgenUsed);
+
+                const filePo = merged.length > 0 && merged[0].poNumber ? merged[0].poNumber : '';
+                const nextPoFromNextGen = await fetchLatestPOFromNextGen();
+                let newPoNumber = '';
+                if (nextPoFromNextGen) {
+                    newPoNumber = nextPoFromNextGen;
+                    setManualPo(newPoNumber);
+                    setExtractedPo(filePo || `NextGen latest → ${newPoNumber}`);
+                } else if (filePo) {
+                    newPoNumber = incrementPoNumber(filePo);
+                    setExtractedPo(filePo);
+                    setManualPo(newPoNumber);
+                }
+                setErrors([]);
+            }
+        } catch (err) {
+            console.error("OCR failed:", err);
             setErrors([{
-                field: "Manual PO",
+                field: "Gemini OCR",
                 row: 0,
-                message: "Manual PO is required before upload.",
+                message: "OCR request failed",
                 severity: "CRITICAL"
             }]);
-            setCurrentStep("VALIDATE");
+        } finally {
+            setIsProcessingOcr(false);
+        }
+    };
+
+    const handleStartUpload = async (files: FileList | null = buyFiles) => {
+        // If no Excel files but OCR results exist, build uploadData from OCR and proceed
+        if ((!files || files.length === 0) && ocrResults && ocrResults.length > 0) {
+            setIsProcessing(true);
+            setCurrentStep("RUN");
+
+            const orders = ocrResults.map((line, idx) => ({
+                id: `ocr-${idx}`,
+                poNumber: manualPo,
+                style: line.style,
+                color: line.color,
+                size: line.size,
+                quantity: line.quantity,
+                factory: line.factory,
+                plant: line.plant,
+                customer: line.customer,
+                season: line.season,
+                exFtyDate: line.exFtyDate,
+                transportMethod: line.transportMethod,
+            }));
+
+            const result = {
+                mergedSummary: { orders: orders.length, lines: orders.length, sizes: orders.length },
+                output: orders.map((line, idx) => ({
+                    id: `ocr-${idx}`,
+                    poNumber: manualPo,
+                    lines: [{
+                        style: line.style,
+                        colour: line.color,
+                        color: line.color,
+                        factory: line.factory,
+                        plant: line.plant,
+                        customer: line.customer,
+                        season: line.season,
+                        exFtyDate: line.exFtyDate,
+                        transportMethod: line.transportMethod,
+                    }],
+                    sizes: [{
+                        productSize: line.size,
+                        sizeName: line.size,
+                        quantity: line.quantity,
+                    }],
+                })),
+                errors: [],
+                formatDetection: { 'ocr-gemini': { detectedCustomer: 'OCR', detectedFormat: 'Gemini OCR', unmappedColumns: [] } },
+                fileSummary: [{ filename: 'ocr-gemini', orderCount: orders.length, lineCount: orders.length, sizeCount: orders.length }],
+            };
+
+            const dataWithColorNames = await fillColorNamesFromNextGen(result);
+            setUploadData(dataWithColorNames);
+            setErrors([]);
+
+            setTimeout(() => {
+                setIsProcessing(false);
+                setCurrentStep("VALIDATE");
+                handleValidateNextgen(dataWithColorNames, manualPoRef.current);
+            }, 1500);
             return;
         }
+
+        if (!files || files.length === 0) return;
 
         setIsProcessing(true);
         setCurrentStep("RUN");
 
         const formData = new FormData();
-        for (let i = 0; i < buyFiles.length; i++) {
-            formData.append("file", buyFiles[i]);
-        }
-        if (productSheetFile) {
-            formData.append("file", productSheetFile);
+        for (let i = 0; i < files.length; i++) {
+            formData.append("file", files[i]);
         }
         if (manualPo.trim()) formData.append("manualPo", manualPo.trim());
         if (manualTemplate.trim()) formData.append("manualTemplate", manualTemplate.trim());
@@ -275,8 +702,46 @@ export default function Workflow() {
                 return;
             }
 
-            setUploadData(result);
+            const dataWithColorNames = await fillColorNamesFromNextGen(result);
+            const variantSummary = result.nexgenVariantSummary || { requested: 0, resolved: 0 };
+            setUploadData(dataWithColorNames);
             setErrors(result.errors || []);
+            setNextgenValidation({
+                exists: true,
+                mode: "direct-product-validation",
+                matched: Array.from({ length: variantSummary.resolved }, (_, index) => ({ index })),
+                missing: Array.from({ length: Math.max(0, variantSummary.requested - variantSummary.resolved) }, (_, index) => ({ index })),
+                extra: [],
+                matchSummary: variantSummary,
+            });
+
+            const extractedPo =
+                result?.output?.[0]?.header?.purchaseOrder ||
+                result?.output?.[0]?.header?.poNumber ||
+                result?.output?.[0]?.purchaseOrder ||
+                result?.output?.[0]?.poNumber ||
+                result?.mergedSummary?.orders?.[0]?.poNumber ||
+                result?.mergedSummary?.orders?.[0]?.purchaseOrder ||
+                '';
+
+            // Always get latest PO from NextGen and increment for the new PO number
+            const nextPoFromNextGen = await fetchLatestPOFromNextGen();
+            let newPoNumber = '';
+            if (nextPoFromNextGen) {
+                newPoNumber = nextPoFromNextGen;
+                setExtractedPo(extractedPo || `NextGen latest → ${newPoNumber}`);
+            } else if (extractedPo) {
+                // Fallback: increment from file PO if NextGen fails
+                newPoNumber = incrementPoNumber(extractedPo);
+                setExtractedPo(extractedPo);
+            } else {
+                setErrors([{
+                    field: "Auto PO",
+                    row: 0,
+                    message: "Could not get latest PO from NextGen or file.",
+                    severity: "CRITICAL"
+                }]);
+            }
 
             // Simulate progress for dramatic effect
             setTimeout(() => {
@@ -291,11 +756,73 @@ export default function Workflow() {
         }
     };
 
+    const handleValidateNextgen = async (data: any = uploadData, explicitPoNumber?: string) => {
+        if (!data?.mergedSummary?.orders) return;
+        setIsValidatingNextgen(true);
+        try {
+            console.log('[workflow] validate debug first PO lines:', data?.output?.[0]?.lines?.slice(0, 3));
+            const lines = data?.output?.flatMap((po: any) => {
+                const sizeEntries = Array.isArray(po.sizes)
+                    ? po.sizes.map((sz: any, idx: number) => ({ lineIdx: idx, size: sz }))
+                    : Object.entries(po.sizes || {}).map(([lineIdx, sizes]: [string, any]) =>
+                        (sizes as any[]).map((sz: any) => ({ lineIdx: Number(lineIdx), size: sz }))
+                    ).flat();
+                return sizeEntries.map(({ lineIdx, size }: { lineIdx: number; size: any }) => ({
+                    style: po.lines?.[lineIdx]?.styleNumber || po.lines?.[lineIdx]?.style || po.lines?.[lineIdx]?.product || po.lines?.[lineIdx]?.productExternalRef || po.lines?.[0]?.styleNumber || po.lines?.[0]?.style || po.lines?.[0]?.product || po.lines?.[0]?.productExternalRef || '',
+                    color: po.lines?.[lineIdx]?.colour || po.lines?.[lineIdx]?.color || po.lines?.[lineIdx]?.styleColor || po.lines?.[0]?.colour || po.lines?.[0]?.color || po.lines?.[0]?.styleColor || '',
+                    size: size.productSize || size.sizeName || '',
+                    quantity: Number(size.quantity) || 0,
+                }));
+            }) || [];
+            console.log('[workflow] validate debug lines:', lines.slice(0, 5));
+            const res = await fetch("/api/validate-nextgen", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ poNumber: explicitPoNumber || manualPoRef.current, lines }),
+            });
+            const result = await res.json();
+            setNextgenValidation(result);
+
+            // Merge missing fields from NextGen matched lines into upload data
+            if (result.exists && result.matched?.length > 0 && data?.output) {
+                const mergedOutput = data.output.map((po: any) => ({
+                    ...po,
+                    lines: (po.lines || []).map((line: any) => {
+                        const ngMatch = result.matched.find((ng: any) =>
+                            (line.style || line.product || '').toLowerCase().trim() === (ng.style || '').toLowerCase().trim() &&
+                            (line.colour || line.color || '').toLowerCase().trim() === (ng.color || '').toLowerCase().trim()
+                        );
+                        if (!ngMatch) return line;
+                        return {
+                            ...line,
+                            factory: line.factory || ngMatch.factory || '',
+                            plant: line.plant || ngMatch.plant || '',
+                            customer: line.customer || ngMatch.customer || '',
+                            season: line.season || ngMatch.season || '',
+                            exFtyDate: line.exFtyDate || ngMatch.exFtyDate || '',
+                            transportMethod: line.transportMethod || ngMatch.transportMethod || '',
+                        };
+                    }),
+                }));
+                setUploadData({ ...data, output: mergedOutput, files: data?.files });
+            } else {
+                setUploadData({ ...data, files: data?.files });
+            }
+        } catch (err) {
+            console.error("NextGen validation failed:", err);
+            setNextgenValidation({ error: "Failed to validate with NextGen" });
+        } finally {
+            setIsValidatingNextgen(false);
+        }
+    };
+
     const handleDownload = async (fileType: "orders" | "lines" | "sizes") => {
         try {
-            console.log(`Initializing download for ${fileType}...`);
+            console.log(`[workflow] Initializing download for ${fileType}...`);
+            console.log("[workflow] uploadData keys:", uploadData ? Object.keys(uploadData) : null);
+            console.log("[workflow] uploadData.files keys:", uploadData?.files ? Object.keys(uploadData.files) : null);
             if (!uploadData?.files?.[fileType]) {
-                console.error("No file data found in uploadData");
+                console.error("[workflow] No file data found in uploadData", fileType, uploadData?.files);
                 alert("Walang generated file payload. Paki-run ulit at i-check ang validation result.");
                 return;
             }
@@ -306,7 +833,8 @@ export default function Workflow() {
             const url = window.URL.createObjectURL(blob);
             const link = document.createElement("a");
             link.href = url;
-            link.download = `${fileType.toUpperCase()}_NG_TEMPLATE_${new Date().toISOString().split('T')[0]}.xlsx`;
+            const generatedAt = new Date().toISOString().replace(/[:.]/g, "-");
+            link.download = `${fileType.toUpperCase()}_NEXGEN_VALIDATED_${generatedAt}.xlsx`;
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
@@ -315,30 +843,6 @@ export default function Workflow() {
         } catch (err) {
             console.error("Download failed:", err);
             alert("Failed to generate download. Please try re-running the workflow.");
-        }
-    };
-
-    const handleFileDownload = async (filename: string, fileType: "orders" | "lines" | "sizes") => {
-        try {
-            if (!uploadData?.fileOutputs?.[filename]?.[fileType]) {
-                console.error("No per-file output data found", filename, fileType);
-                alert("Walang per-file payload para sa file na ito.");
-                return;
-            }
-            const base64 = uploadData.fileOutputs[filename][fileType];
-            const blob = base64ToXlsxBlob(base64);
-            const url = window.URL.createObjectURL(blob);
-            const link = document.createElement("a");
-            link.href = url;
-            const safeName = filename.replace(/[^a-zA-Z0-9_-]/g, "_");
-            link.download = `${safeName}_${fileType.toUpperCase()}.xlsx`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            window.URL.revokeObjectURL(url);
-        } catch (err) {
-            console.error("Per-file download failed:", err);
-            alert("Failed to generate per-file export. Please try again.");
         }
     };
 
@@ -369,7 +873,7 @@ export default function Workflow() {
     ].filter(Boolean);
 
     return (
-        <div className="w-full max-w-7xl mx-auto space-y-20 px-4 transition-colors duration-300 text-[hsl(var(--foreground))]">
+        <div className="w-full max-w-7xl mx-auto space-y-10 px-4 transition-colors duration-300 text-[hsl(var(--foreground))]">
             {/* Progress Stepper - Redesigned */}
             <div className="relative pt-12">
                 <div className="absolute top-[calc(3rem+28px)] left-[10%] w-[80%] h-px bg-white/10 progress-line" />
@@ -434,7 +938,7 @@ export default function Workflow() {
             {/* Content Stage */}
             <motion.div
                 layout
-                className="glass-panel rounded-[48px] relative overflow-hidden p-10 md:p-20 min-h-[600px] flex items-center justify-center border-white/[0.08]"
+                className="glass-panel rounded-[32px] relative overflow-hidden p-6 md:p-12 min-h-[600px] flex items-center justify-center border-white/[0.08]"
             >
                 <div className="scanline" />
 
@@ -454,27 +958,27 @@ export default function Workflow() {
                             initial={{ opacity: 0, y: 30 }}
                             animate={{ opacity: 1, y: 0 }}
                             exit={{ opacity: 0, y: -30 }}
-                            className="text-center max-w-3xl mx-auto space-y-12"
+                            className="text-center max-w-4xl mx-auto space-y-8"
                         >
                             <div className="relative inline-block group">
                                 <div className="absolute inset-0 bg-blue-500/20 blur-[80px] rounded-full group-hover:bg-blue-500/30 transition-all duration-500" />
-                                <div className="relative w-40 h-40 bg-[hsl(var(--panel))] border border-[hsl(var(--border))] rounded-[38%] flex items-center justify-center mx-auto transition-all duration-500 group-hover:scale-105 group-hover:border-blue-500/50 group-hover:shadow-[0_0_50px_rgba(59,130,246,0.3)] shadow-2xl">
-                                    <CloudUpload className="w-16 h-16 text-blue-500 group-hover:text-blue-400 group-hover:-translate-y-1 transition-all" />
+                                <div className="relative w-24 h-24 bg-[hsl(var(--panel))] border border-[hsl(var(--border))] rounded-3xl flex items-center justify-center mx-auto transition-all duration-500 group-hover:scale-105 group-hover:border-blue-500/50 shadow-2xl">
+                                    <CloudUpload className="w-10 h-10 text-cyan-400 group-hover:-translate-y-1 transition-all" />
                                 </div>
                             </div>
 
                             <div className="space-y-6">
                                 <h2 className="text-5xl font-black tracking-tight text-[hsl(var(--foreground))] leading-tight">
-                                    INITIALIZE <br /> <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-500 via-sky-400 to-indigo-500">SYSTEM ACQUISITION</span>
+                                    BUY FILE <br /> <span className="bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 via-blue-400 to-indigo-400">AI EXTRACTION</span>
                                 </h2>
                                 <p className="text-[hsl(var(--muted))] text-xl font-medium max-w-xl mx-auto">
-                                    Upload your buy file and optional product sheet. Use both for PLM-enriched outputs.
+                                    Add the buyer Excel. Qwen maps unfamiliar headers automatically, Nexgen validates product and colour data directly, then the system prepares Orders, Lines, and Order Sizes.
                                 </p>
                             </div>
 
                             <div className="grid grid-cols-1 gap-4 max-w-3xl mx-auto text-left">
                                 <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Buy File (.xlsx) — Required</label>
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-300">Buyer Excel <span className="text-rose-400">Required</span></label>
                                     <input
                                         type="file"
                                         accept=".xlsx"
@@ -489,29 +993,31 @@ export default function Workflow() {
                                     )}
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Product Sheet / PLM (.xlsx) — Optional</label>
+                                    <div className="flex items-center justify-between">
+                                        <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">PO Number <span className="text-rose-400">*</span></label>
+                                        <button
+                                            type="button"
+                                            onClick={() => setManualPo(incrementPoNumber(manualPo))}
+                                            className="text-[10px] font-bold uppercase tracking-widest text-blue-400 hover:text-blue-300 transition-colors"
+                                        >
+                                            Auto +1
+                                        </button>
+                                    </div>
                                     <input
-                                        type="file"
-                                        accept=".xlsx"
-                                        onChange={(e) => setProductSheetFile(e.target.files?.[0] || null)}
-                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white file-input"
+                                        value={manualPo}
+                                        onChange={(e) => setManualPo(e.target.value.toUpperCase())}
+                                        placeholder="PO002954"
+                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
                                     />
-                                    {productSheetFile && (
-                                        <div className="text-[10px] text-slate-400">{productSheetFile.name}</div>
+                                    {extractedPo && (
+                                        <div className="flex items-center justify-between text-[10px]">
+                                            <span className="text-slate-500">Extracted from file:</span>
+                                            <span className="text-slate-400 font-mono">{extractedPo}</span>
+                                        </div>
                                     )}
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Manual PO <span className="text-rose-400">*</span></label>
-                                    <input
-                                        value={manualPo}
-                                        onChange={(e) => setManualPo(e.target.value)}
-                                        placeholder="PO002954"
-                                        required
-                                        className="w-full rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Template</label>
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-300">Orders Template <span className="normal-case tracking-normal text-slate-500">manual input</span></label>
                                     <select
                                         value={manualTemplate}
                                         onChange={e => setManualTemplate(e.target.value)}
@@ -525,7 +1031,7 @@ export default function Workflow() {
                                     </select>
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Lines Template</label>
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-300">Lines Template <span className="normal-case tracking-normal text-slate-500">manual input</span></label>
                                     <select
                                         value={manualLinesTemplate}
                                         onChange={e => setManualLinesTemplate(e.target.value)}
@@ -539,7 +1045,7 @@ export default function Workflow() {
                                     </select>
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Comments</label>
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-cyan-300">Order Comments <span className="normal-case tracking-normal text-slate-500">manual input</span></label>
                                     <select
                                         value={manualComments}
                                         onChange={e => {
@@ -566,7 +1072,7 @@ export default function Workflow() {
                                     )}
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Orders KeyDate</label>
+                                    <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">Order Key Date <span className="normal-case tracking-normal">(defaults to today)</span></label>
                                     <input
                                         value={manualKeyDate}
                                         onChange={(e) => setManualKeyDate(e.target.value)}
@@ -720,17 +1226,17 @@ export default function Workflow() {
 
                             <div className="flex flex-col items-center gap-6">
                                 <button
-                                    onClick={handleStartUpload}
-                                    disabled={!buyFiles || buyFiles.length === 0 || !manualPo.trim()}
+                                    onClick={() => handleStartUpload()}
+                                    disabled={(!buyFiles || buyFiles.length === 0) && (!ocrResults || ocrResults.length === 0)}
                                     className="primary-button inline-flex items-center gap-4 bg-blue-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
                                     style={{ background: "linear-gradient(90deg, #2563eb, #1d4ed8)" }}
                                 >
-                                    <span>START UPLOAD</span>
+                                    <span>Extract and validate</span>
                                     <ArrowRight className="w-4 h-4" />
                                 </button>
 
                                 <div className="flex items-center gap-10 opacity-70">
-                                    {['exceljs', 'validation', 'supabase'].map((tech, i) => (
+                                    {['Qwen extraction', 'Nexgen match', 'Excel output'].map((tech, i) => (
                                         <div key={tech} className="flex items-center gap-2.5 text-[10px] font-black tracking-[0.3em] uppercase text-[hsl(var(--muted))]" style={{ opacity: i === 0 ? 1 : 0.85 }}>
                                             <div className="w-2 h-2 rounded-full bg-blue-500" /> {tech}
                                         </div>
@@ -818,6 +1324,87 @@ export default function Workflow() {
                                     </div>
                                 </div>
                             </div>
+
+                            {/* NextGen Validation Panel */}
+                            <div className="mb-8 rounded-3xl border border-white/10 bg-slate-900/60 p-6">
+                                <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+                                    <div className="flex items-center gap-3">
+                                        <div className="p-3 bg-blue-500/10 rounded-2xl border border-blue-500/20">
+                                            <ShieldCheck className="w-5 h-5 text-blue-400" />
+                                        </div>
+                                        <div>
+                                            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">NextGen Validation</p>
+                                            <p className="text-sm font-medium text-slate-300">Cross-reference uploaded data with NextGen PO</p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={handleValidateNextgen}
+                                        disabled={isValidatingNextgen || !uploadData?.mergedSummary?.orders}
+                                        className="inline-flex items-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-5 py-3 text-xs font-bold uppercase tracking-widest text-blue-200 hover:bg-blue-500/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {isValidatingNextgen ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+                                        {isValidatingNextgen ? "VALIDATING..." : "VALIDATE WITH NEXTGEN"}
+                                    </button>
+                                </div>
+
+                                {nextgenValidation && (
+                                    <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+                                        <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4">
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-500 mb-1">Matched</p>
+                                            <p className="text-2xl font-black text-emerald-300">{nextgenValidation.matched?.length || 0}</p>
+                                        </div>
+                                        <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4">
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-amber-500 mb-1">Missing in NextGen</p>
+                                            <p className="text-2xl font-black text-amber-300">{nextgenValidation.missing?.length || 0}</p>
+                                        </div>
+                                        <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-4">
+                                            <p className="text-[10px] font-black uppercase tracking-widest text-rose-500 mb-1">Extra in Upload</p>
+                                            <p className="text-2xl font-black text-rose-300">{nextgenValidation.extra?.length || 0}</p>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {nextgenValidation?.error && (
+                                    <p className="mt-4 text-xs font-black text-rose-500 uppercase tracking-widest">{nextgenValidation.error}</p>
+                                )}
+
+                                {nextgenValidation && !nextgenValidation.exists && !nextgenValidation.error && (
+                                    <p className="mt-4 text-xs font-black text-rose-500 uppercase tracking-widest">PO not found in NextGen</p>
+                                )}
+
+                                {nextgenValidation?.exists && nextgenValidation.foundBy === 'styleColor' && (
+                                    <p className="mt-4 text-xs font-black text-blue-400 uppercase tracking-widest">PO matched by style + colorway</p>
+                                )}
+                            </div>
+
+                            {uploadData?.needsAttention?.length > 0 && (
+                                <div className="rounded-[28px] border border-red-500/25 bg-red-500/[0.06] p-7 space-y-5">
+                                    <div className="flex items-start gap-4">
+                                        <AlertCircle className="w-6 h-6 text-red-400 mt-0.5" />
+                                        <div>
+                                            <h3 className="text-sm font-black uppercase tracking-[0.22em] text-red-300">Needs Attention</h3>
+                                            <p className="text-xs text-slate-400 mt-2">
+                                                These unresolved lines were excluded from the final Excel files to prevent an incorrect Nexgen import.
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="grid gap-3">
+                                        {uploadData.needsAttention.map((item: any, index: number) => (
+                                            <div key={`${item.purchaseOrder}-${item.lineItem}-${index}`} className="rounded-2xl border border-white/5 bg-slate-950/50 px-5 py-4">
+                                                <div className="flex flex-wrap items-center gap-3">
+                                                    <span className="text-[9px] font-black uppercase tracking-widest text-red-400">{item.code}</span>
+                                                    <span className="text-[10px] font-mono text-slate-300">PO {item.purchaseOrder}</span>
+                                                    <span className="text-[10px] font-mono text-slate-500">LINE {item.lineItem}</span>
+                                                </div>
+                                                <p className="text-xs text-slate-400 mt-2">{item.message}</p>
+                                                <p className="text-[10px] font-mono text-slate-500 mt-2">
+                                                    Style: {item.style || "(blank)"} · Colour: {item.colour || "(blank)"}
+                                                </p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
 
                             <div className="glass-card rounded-[32px] overflow-hidden flex-1 border-white/5 bg-slate-950/40 relative">
                                 {/* Format Detection Panel */}
@@ -1003,7 +1590,7 @@ export default function Workflow() {
                                     onClick={() => setCurrentStep("DOWNLOAD")}
                                     className="primary-button w-full flex items-center justify-center gap-4 text-sm py-6 group"
                                 >
-                                    <span>INITIALIZE TEMPLATE GENERATION</span> <Download className="w-6 h-6 group-hover:-translate-y-1 transition-transform" />
+                                    <span>Prepare Excel outputs</span> <Download className="w-6 h-6 group-hover:-translate-y-1 transition-transform" />
                                 </button>
                                 <button
                                     onClick={() => setCurrentStep("VALIDATE")}
@@ -1057,27 +1644,6 @@ export default function Workflow() {
                                 ))}
                             </div>
 
-                            {uploadData?.fileOutputs && (
-                                <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-4 text-left text-xs text-slate-300 file-export-panel">
-                                    <div className="font-black text-white uppercase tracking-[0.2em] text-[10px] mb-2 file-export-title">Per-file Template Export</div>
-                                    <div className="space-y-3">
-                                        {Object.entries(uploadData.fileOutputs).map(([fname, payload]: any) => (
-                                            <div key={fname} className="flex flex-wrap items-center gap-3 bg-slate-800/40 border border-white/10 rounded-lg px-3 py-2 file-export-row">
-                                                <div className="text-[11px] font-black text-emerald-300 truncate max-w-[240px] file-export-name">{fname}</div>
-                                                {['orders','lines','sizes'].map((type) => (
-                                                    <button
-                                                        key={`${fname}-${type}`}
-                                                        onClick={() => handleFileDownload(fname, type as any)}
-                                                        className="px-2 py-1 text-[10px] uppercase tracking-[0.2em] font-black border border-slate-500 rounded-md bg-blue-500/15 hover:bg-blue-500/35 file-export-btn"
-                                                    >
-                                                        {type.toUpperCase()}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
                             <div className="flex flex-col items-center gap-6">
                                 <div className="flex justify-center gap-10">
                                     <button

@@ -3,8 +3,8 @@
 @theme {
   --color-brand-blue: #3b82f6;
   --color-brand-slate: #020617;
-  --font-inter: var(--font-inter);
-  --font-outfit: var(--font-outfit);
+  --font-inter: "Inter", "Segoe UI", Arial, sans-serif;
+  --font-outfit: "Outfit", "Segoe UI", Arial, sans-serif;
 }
 
 :root {

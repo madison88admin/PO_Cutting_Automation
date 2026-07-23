@@ -3,6 +3,7 @@ import { ExcelEngine, ProcessedPO, POLine, ValidationError, FormatDetection } fr
 import { logEvent } from "@/lib/audit";
 import { createRun, updateRun } from "@/lib/db/runHistory";
 import { getDefaultWorkflowUserId } from "@/lib/db/users";
+import { NextGenCachedClient } from "@/lib/nextgen/client";
 
 const uploadRateLimitMap = new Map<string, number[]>();
 const MAX_UPLOADS_PER_MINUTE = 10;
@@ -127,10 +128,6 @@ export async function POST(req: NextRequest) {
         const manualBrand = (formData.get("manualBrand")?.toString() || "").trim();
         const inferredManualCustomer = manualCustomer || (files.some((f) => /vuori/i.test(f.name)) ? "Vuori" : "");
 
-        if (!manualPo) {
-            return NextResponse.json({ error: "Manual PO is required." }, { status: 400 });
-        }
-
         console.log("[upload] received request", {
             userId,
             fileCount: files?.length || 0,
@@ -196,7 +193,6 @@ export async function POST(req: NextRequest) {
         const mergedPOsMap = new Map<string, ProcessedPO>();
         const allErrors: ValidationError[] = [];
         const fileSummaries: Array<{ filename: string; orders: number; lines: number; sizes: number; errors: number; warnings: number; brands: string[]; }> = [];
-        const perFileExports: Record<string, { orders: string; lines: string; sizes: string }> = {};
         const poMap = new Map<string, string>();
         const perFileFormatDetection: Record<string, FormatDetection> = {};
 
@@ -324,12 +320,6 @@ export async function POST(req: NextRequest) {
                 allErrors.push(copy);
             });
 
-            const exported = await engine.generateOutputs(data);
-            perFileExports[file.name] = {
-                orders: Buffer.from(exported.orders as any).toString('base64'),
-                lines: Buffer.from(exported.lines as any).toString('base64'),
-                sizes: Buffer.from(exported.sizes as any).toString('base64'),
-            };
             if (formatDetection) {
                 perFileFormatDetection[file.name] = formatDetection;
             }
@@ -337,8 +327,87 @@ export async function POST(req: NextRequest) {
 
         stage = "generate_outputs";
         const mergedData = Array.from(mergedPOsMap.values());
+        const needsAttention: Array<{
+            code: "MISSING_STYLE" | "MISSING_COLOUR" | "AMBIGUOUS_NEXGEN_MATCH" | "NEXGEN_MATCH_NOT_FOUND";
+            purchaseOrder: string;
+            lineItem: number;
+            style: string;
+            colour: string;
+            message: string;
+        }> = [];
+        const nextgenClient = process.env.NEXTGEN_ENABLED !== 'false' ? new NextGenCachedClient() : null;
+        const variantCache = new Map<string, Awaited<ReturnType<NextGenCachedClient["searchVariant"]>>>();
+        if (nextgenClient) {
+            const variantRequests = new Map<string, { style: string; color: string }>();
+            for (const po of mergedData) {
+                for (const line of po.lines) {
+                    const style = String(line.styleNumber || line.productCustomerRef || '').trim();
+                    const color = String(line.styleColor || line.rawColour || line.colour || '').trim();
+                    if (style && color) variantRequests.set(`${style.toLowerCase()}|${color.toLowerCase()}`, { style, color });
+                }
+            }
+            await Promise.all([...variantRequests.entries()].map(async ([key, request]) => {
+                variantCache.set(key, await nextgenClient.searchVariant(request.style, request.color));
+            }));
+            for (const po of mergedData) {
+                for (const line of po.lines) {
+                    const style = String(line.styleNumber || line.productCustomerRef || '').trim();
+                    const color = String(line.styleColor || line.rawColour || line.colour || '').trim();
+                    const match = variantCache.get(`${style.toLowerCase()}|${color.toLowerCase()}`);
+                    let code: typeof needsAttention[number]["code"] | null = null;
+                    let message = "";
+                    if (!style) {
+                        code = "MISSING_STYLE";
+                        message = "No buyer style, material, SKU, or product reference was found.";
+                    } else if (!color) {
+                        code = "MISSING_COLOUR";
+                        message = "No colour code, SKU suffix, or colour description was found.";
+                    } else if (match?.matchStatus === "ambiguous") {
+                        code = "AMBIGUOUS_NEXGEN_MATCH";
+                        message = match.matchReason || "Multiple Nexgen records have the same best match.";
+                    } else if (!match?.product || !match?.colorName) {
+                        code = "NEXGEN_MATCH_NOT_FOUND";
+                        message = "No reliable Nexgen product-and-colour combination was found.";
+                    } else {
+                        line.styleNumber = match.product;
+                        line.colour = match.colorName;
+                        line.productExternalRef = match.productExternalRef || line.productExternalRef;
+                        line.productCustomerRef = match.productCustomerRef || line.productCustomerRef || style;
+                    }
+
+                    if (code) {
+                        const item = {
+                            code,
+                            purchaseOrder: po.header.purchaseOrder,
+                            lineItem: line.lineItem,
+                            style,
+                            colour: color,
+                            message,
+                        };
+                        needsAttention.push(item);
+                        allErrors.push({
+                            field: code,
+                            row: line.lineItem,
+                            message: `PO ${item.purchaseOrder} line ${item.lineItem}: ${message} Style="${style || "(blank)"}", Colour="${color || "(blank)"}". This line was excluded from final Excel output.`,
+                            severity: "CRITICAL",
+                        });
+                    }
+                }
+            }
+        }
+        const blockedLines = new Set(needsAttention.map((item) => `${item.purchaseOrder}|${item.lineItem}`));
+        const exportData = mergedData
+            .map((po) => {
+                const lines = po.lines.filter((line) => !blockedLines.has(`${po.header.purchaseOrder}|${line.lineItem}`));
+                const allowedLineItems = new Set(lines.map((line) => line.lineItem));
+                const sizes = Object.fromEntries(
+                    Object.entries(po.sizes).filter(([lineItem]) => allowedLineItems.has(Number(lineItem)))
+                );
+                return { ...po, lines, sizes };
+            })
+            .filter((po) => po.lines.length > 0);
         const engine = new ExcelEngine(runId || undefined, userId);
-        const outputs = await engine.generateOutputs(mergedData);
+        const outputs = await engine.generateOutputs(exportData);
 
         const hasCritical = allErrors.some(e => e.severity === "CRITICAL");
 
@@ -367,6 +436,22 @@ export async function POST(req: NextRequest) {
             sizes: Buffer.from(outputs.sizes as any).toString('base64')
         };
 
+        const debugLines = mergedData.slice(0, 2).map((po: any) => ({
+            po: po.header?.purchaseOrder,
+            lines: po.lines?.slice(0, 2).map((line: any) => ({
+                styleNumber: line.styleNumber,
+                style: line.style,
+                product: line.product,
+                colour: line.colour,
+                color: line.color,
+                styleColor: line.styleColor,
+                colourName: line.colourName,
+                colourDisplay: line.colourDisplay,
+                rawColour: line.rawColour,
+            })),
+        }));
+        console.log('[upload] output line debug:', JSON.stringify(debugLines, null, 2));
+
         const summary = fileSummaries;
         return NextResponse.json({
             success: true,
@@ -376,6 +461,7 @@ export async function POST(req: NextRequest) {
             canProceed: !hasCritical,
             files: filesOut,
             fileSummary: summary,
+            output: mergedData,
             mergedSummary: {
                 orders: mergedData.length,
                 lines: mergedData.reduce((a, p) => a + p.lines.length, 0),
@@ -383,9 +469,14 @@ export async function POST(req: NextRequest) {
                 errors: allErrors.filter(e => e.severity === 'CRITICAL').length,
                 warnings: allErrors.filter(e => e.severity === 'WARNING').length,
             },
-            fileOutputs: perFileExports,
             formatDetection: perFileFormatDetection,
             dynafitDebug,
+            needsAttention,
+            nexgenVariantSummary: {
+                requested: variantCache.size,
+                resolved: [...variantCache.values()].filter((match) => Boolean(match?.product && match?.colorName)).length,
+                blocked: needsAttention.length,
+            },
         });
 
     } catch (error: any) {

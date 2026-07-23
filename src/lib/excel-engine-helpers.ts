@@ -121,6 +121,7 @@ export const FALLBACK_COLUMN_ALIASES: Record<string, string> = {
     'issue date': 'buyDate',
     'transportmethod': 'transportMethod',
     'transport method': 'transportMethod',
+    'order transport': 'transportMethod',
     'ship mode': 'transportMethod',
     'shipping instr.': 'transportMethod',
     'mode of delivery': 'transportMethod',

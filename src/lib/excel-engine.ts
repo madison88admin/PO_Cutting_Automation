@@ -2,6 +2,7 @@
 import { logEvent } from "@/lib/audit";
 import { getFactoryMapping, getMloMapping, getColumnMapping, getAllColumnMappings } from "@/lib/data-loader";
 import { updateRun } from "@/lib/db/runHistory";
+import { mapHeaders } from "@/lib/ai/header-mapper";
 import {
     FALLBACK_COLUMN_ALIASES,
     detectPivotFormatFromHeaders,
@@ -52,6 +53,7 @@ export interface POLine {
     hhStartDate?: string;
     hhCancelDate?: string;
     hhConfirmedDeliveryDate?: string;
+    transportMethod?: string;
     transportLocation?: string;
     styleColor?: string;
     rawColour?: string;
@@ -67,13 +69,14 @@ export interface POSize {
     quantity: number;
 }
 
-interface ProductSheetRow {
+export interface ProductSheetRow {
     colour: string;
     colourName?: string;
     sizeName?: string;
     factory?: string;
     cost?: string | number;
     sell?: string | number;
+    costingReference?: string;
     customerName?: string;
     productName?: string;
     productExternalRef?: string;
@@ -304,6 +307,8 @@ const TRANSPORT_MAP: Record<string, string> = {
     "s1 - seafreight": "Sea",
     "s1": "Sea",
     "v": "Sea",
+    "01": "Sea",
+    "1": "Sea",
     "air": "Air",
     "air freight": "Air",
     "airfreight": "Air",
@@ -318,6 +323,8 @@ const TRANSPORT_MAP: Record<string, string> = {
     "private parcel": "Courier",
     "private parcel service": "Courier",
     "parcel": "Courier",
+    "09": "Courier",
+    "9": "Courier",
     "international distributor": "Sea",
     "maersk ocean": "Sea",
     "maersk": "Sea",
@@ -571,6 +578,7 @@ export class ExcelEngine {
             'color name': 'colourName', 'colour name': 'colourName', 'color': 'colour', 'colour': 'colour',
             'factory': 'factory', 'vendor code': 'factory', 'vendorcode': 'factory',
             'cost': 'cost', 'sell': 'sell', 'customer name': 'customerName', 'customer': 'customerName', 'cust': 'customerName',
+            'costing reference': 'costingReference', 'costing ref': 'costingReference',
             'product name': 'productName', 'style name': 'productName', 'ng style name': 'productName', 'product': 'productName',
             'name': 'productExternalRef',
             'size name': 'sizeName', 'size': 'sizeName',
@@ -656,7 +664,7 @@ export class ExcelEngine {
         return { isProductSheet: productScore >= 3 && (buyScore <= 1 || looksLikeVuoriProductSheet), headerRow };
     }
 
-    private normalizeColourKey(value: string): string {
+    public normalizeColourKey(value: string): string {
         const raw = this.stripBrackets(value || '').toLowerCase().trim();
         if (!raw) return '';
         const dynafitCodeMatch = raw.match(/^dyn\s*-\s*([a-z0-9]{4})\b/i);
@@ -672,6 +680,8 @@ export class ExcelEngine {
         }
         const dashParts = raw.split('-');
         if (dashParts.length >= 2 && dashParts[0].trim() === 'tnf') return dashParts[1].trim();
+        const tnfSpacedCodeMatch = raw.match(/^tnf[\s-]+([a-z0-9]{2,4})\b/i);
+        if (tnfSpacedCodeMatch?.[1]) return tnfSpacedCodeMatch[1].toLowerCase();
         const upperRaw = value.trim().toUpperCase();
         const tnfMaterialMatch = upperRaw.match(/^NF0[A-Z0-9]{5}([A-Z0-9]{2,4})$/);
         if (tnfMaterialMatch) return tnfMaterialMatch[1].toLowerCase();
@@ -990,6 +1000,8 @@ export class ExcelEngine {
                     sizeName: getRaw('sizeName')?.toString().trim() || '',
                     factory: getRaw('factory')?.toString().trim() || '',
                     cost: (() => { const c = getRaw('cost'); return typeof c === 'number' ? c : c?.toString().trim(); })(),
+                    sell: (() => { const s = getRaw('sell'); return typeof s === 'number' ? s : s?.toString().trim(); })(),
+                    costingReference: getRaw('costingReference')?.toString().trim() || '',
                     customerName: getRaw('customerName')?.toString().trim() || '',
                     productName: getRaw('productName')?.toString().trim() || '',
                     productExternalRef: getRaw('productExternalRef')?.toString().trim() || '',
@@ -1674,6 +1686,15 @@ export class ExcelEngine {
         return raw ? raw.trim() : 'Sea';
     }
 
+    private mergeOrderTransportMethod(current: string | undefined, incoming: string | undefined): string {
+        const priority: Record<string, number> = { Courier: 1, Air: 2, Sea: 3 };
+        const currentNormalized = this.normalizeTransportMethod(current);
+        const incomingNormalized = this.normalizeTransportMethod(incoming);
+        return (priority[incomingNormalized] || 0) > (priority[currentNormalized] || 0)
+            ? incomingNormalized
+            : currentNormalized;
+    }
+
     private normalizeTransportLocation(raw: string | undefined): string {
         const cleaned = this.stripBrackets(raw || '').trim();
         if (!cleaned) return '';
@@ -1822,7 +1843,7 @@ export class ExcelEngine {
         return `${mm}/${dd}/${date.getFullYear()}`;
     }
 
-    private stripBrackets(value: string): string {
+    public stripBrackets(value: string): string {
         if (!value) return value;
         return value.replace(/\[([^\]]+)\]/g, '$1').replace(/\[|\]/g, '').replace(/\s+/g, ' ').trim();
     }
@@ -2465,6 +2486,68 @@ export class ExcelEngine {
             }
         });
 
+        // Unknown brand layouts are mapped into the same internal schema used by
+        // established brands. Known layouts remain deterministic and do not wait
+        // for the LLM.
+        const canonicalHeaders = Array.from({ length: maxColNumber }, (_, index) =>
+            headerRow.getCell(index + 1).value?.toString().trim() || ''
+        ).filter(Boolean);
+        const hasUnmappedTransportCandidate = !headerMap['transportMethod']
+            && canonicalHeaders.some(header => /\b(?:transport|shipment|shipping|ship\s*(?:mode|via)|freight\s*mode|mode\s*of\s*delivery)\b/i.test(header));
+        const needsCanonicalMapping = !headerMap['product']
+            || (!headerMap['quantity'] && !headerMap['finalQty'])
+            || (!manualPurchaseOrder && !headerMap['purchaseOrder'])
+            || hasUnmappedTransportCandidate;
+        if (needsCanonicalMapping) {
+            try {
+                const aiResult = await mapHeaders(canonicalHeaders);
+                const canonicalToInternal: Record<string, string[]> = {
+                    buyer_style_number: ['product', 'productCustomerRef'],
+                    buyer_style_name: ['productName'],
+                    sku: ['productExternalRef'],
+                    product_description: ['productDescription'],
+                    color: ['colourName', 'colour'],
+                    color_code: ['inlineStyleColor'],
+                    size: ['sizeName'],
+                    quantity: ['quantity'],
+                    delivery_date: ['exFtyDate'],
+                    season: ['season'],
+                    customer: ['customerName'],
+                    factory: ['productSupplier'],
+                    currency: ['currency'],
+                    unit_cost: ['cost'],
+                    po_number: ['purchaseOrder', 'buyerPoNumber'],
+                    buyer_po_number: ['buyerPoNumber'],
+                    start_date: ['exFtyDate'],
+                    cancel_date: ['cancelDate'],
+                    transport_method: ['transportMethod'],
+                };
+                const headerColumns = new Map<string, number>();
+                headerRow.eachCell((cell, colNumber) => {
+                    const text = cell.value?.toString().trim();
+                    if (text) headerColumns.set(normalizeHeaderText(text), colNumber);
+                });
+                Object.entries(aiResult.mapping).forEach(([canonicalField, sourceHeader]) => {
+                    if (!sourceHeader) return;
+                    const colNumber = headerColumns.get(normalizeHeaderText(sourceHeader));
+                    if (!colNumber) return;
+                    for (const internalField of canonicalToInternal[canonicalField] || []) {
+                        if (!headerMap[internalField]) headerMap[internalField] = colNumber;
+                    }
+                });
+                if (Object.keys(aiResult.mapping).length > 0) {
+                    this.errors.push({
+                        field: 'AI Mapping',
+                        row: headerRowNumber,
+                        message: `Auto-mapped ${Object.keys(aiResult.mapping).length} columns for this buy-file layout (${aiResult.confidence}% confidence).`,
+                        severity: 'WARNING',
+                    });
+                }
+            } catch (error) {
+                console.warn('[excel-engine] canonical AI mapping failed:', error);
+            }
+        }
+
         const sourceNameKey = (options?.sourceFilename || '').toLowerCase();
         if (!headerMap['product'] && headerMap['foxMaterialCode'] && sourceNameKey.includes('fox racing')) {
             headerMap['product'] = headerMap['foxMaterialCode'];
@@ -2826,7 +2909,9 @@ export class ExcelEngine {
             } else if (isHHBrand && plantDerivedCountry) {
                 poDestination = plantDerivedCountry;
             }
-            let poNumber = this.formatPurchaseOrder(poNumberRaw, poPlantPart, poDestination);
+            let poNumber = brandKey === 'cotopaxi'
+                ? this.collapseRepeatedPurchaseOrder(this.stripBrackets(poNumberRaw || '').trim())
+                : this.formatPurchaseOrder(poNumberRaw, poPlantPart, poDestination);
             if (brandKey === 'vans') {
                 poDestination = '';
                 poNumber = this.formatVansPurchaseOrder(poNumberRaw, rawPlant || plant || whsCode, plantName || customerNameRaw || poPlantPart);
@@ -3572,20 +3657,9 @@ export class ExcelEngine {
             const productRange = brandKey === 'dynafit'
                 ? (dynafitContext?.productRange || 'FH:2027')
                 : this.formatProductRange(season);
-            const keyDate = brandKey === 'hunter'
-                ? ''
-                : (brandKey === 'll bean'
-                    ? (manualKeyDate || this.formatDateString(buyDate as any) || poIssuanceDate)
-                    : (brandKey === 'dynafit'
-                        ? (manualKeyDate || this.formatDateString(this.shiftDate(exFtyDate, -84) || exFtyDate) || poIssuanceDate)
-                    : (brandKey === 'obermeyer'
-                        ? (manualKeyDate || this.formatDateString(workbookSourceDate as any) || poIssuanceDate)
-                    : (isHHBrand
-                        ? (manualKeyDate || hhHeaderKeyDate || poIssuanceDate)
-                    : (brandKey === 'jack wolfskin'
-                        ? this.resolveJackWolfskinKeyDate(season, manualKeyDate || poIssuanceDate)
-                        : (manualKeyDate || poIssuanceDate))))))
-                ;
+            // Global PO-cutting rule for every brand. The processing date is
+            // used unless the operator intentionally supplies a manual key date.
+            const keyDate = manualKeyDate || this.formatDateString(new Date());
             const keyDateFormat: "manual" | "standard" = manualKeyDate ? "manual" : "standard";
             const commentBrand = isHHBrand ? 'HH' : (inferredBrand || brand || detectedCustomer);
             const commentBuyRound = isHHBrand && !buyRound
@@ -3781,6 +3855,12 @@ export class ExcelEngine {
             }
 
             const po = results.get(poKey)!;
+            po.header.transportMethod = this.mergeOrderTransportMethod(po.header.transportMethod, transportMethod);
+            for (const existingOrder of po.orderKeys || []) {
+                if (`${existingOrder.purchaseOrder}||${existingOrder.customer}` === `${brandKey === 'dynafit' ? dynafitExportPurchaseOrder : hhOrderPurchaseOrder}||${customerKey}`) {
+                    existingOrder.transportMethod = this.mergeOrderTransportMethod(existingOrder.transportMethod, transportMethod);
+                }
+            }
             if (!seenOrderKeys.has(orderKey)) {
                 seenOrderKeys.add(orderKey);
                 if (!po.orderKeys) po.orderKeys = [];
@@ -3814,13 +3894,16 @@ export class ExcelEngine {
                     productRange,
                     styleNumber: styleNumber || '',
                     supplierProfile: 'DEFAULT_PROFILE',
-                    buyerPoNumber: brandKey === 'dynafit' ? dynafitBuyerPoNumberValue : dynafitBuyerPoNumber,
+                    buyerPoNumber: brandKey === 'cotopaxi'
+                        ? buyerPoNumber
+                        : (brandKey === 'dynafit' ? dynafitBuyerPoNumberValue : dynafitBuyerPoNumber),
                     dynafitLineKeyDate: brandKey === 'dynafit' ? ((dynafitContext?.lineKeyDate as string | Date | undefined) || dynafitLineKeyDateRaw || exFtyDate || undefined) : undefined,
                     startDate: (isHHBrand ? (hhStartDateRaw || '') : (brandKey === 'll bean' ? (llbFinalDeliveryDateRaw || '') : (brandKey === 'jack wolfskin' ? (jwsStartDateRaw || '') : (brandKey === 'dynafit' ? (dynafitContext?.startDate || dynafitCrdRaw || exFtyDate || '') : (exFtyDate || ''))))) as Date | string,
                     cancelDate: (isHHBrand ? (hhCancelDateRaw || '') : (brandKey === 'll bean' ? (llbFinalDeliveryDateRaw || '') : (brandKey === 'jack wolfskin' ? (jwsCancelDateRaw || '') : (brandKey === 'dynafit' ? (dynafitContext?.cancelDate || dynafitCrdRaw || exFtyDate || '') : (cancelDate || ''))))) as Date | string,
                     hhStartDate: hhStartDate || undefined,
                     hhCancelDate: hhCancelDate || undefined,
                     hhConfirmedDeliveryDate: hhCancelDate || undefined,
+                    transportMethod,
                     transportLocation: brandKey === 'hunter'
                         ? hunterLineTransportLocation
                         : (isHHBrand ? (hhOrderDestination || hhDestinationSource || effectiveTransportLocation) : effectiveTransportLocation),
@@ -4005,6 +4088,8 @@ export class ExcelEngine {
     }
 
     async generateOutputs(data: ProcessedPO[]) {
+        const processingDate = new Date();
+        const currentDeliveryDate = `${processingDate.getMonth() + 1}/${processingDate.getDate()}/${processingDate.getFullYear()}`;
         const ordersWb = new ExcelJS.Workbook();
         const linesWb = new ExcelJS.Workbook();
         const sizesWb = new ExcelJS.Workbook();
@@ -4081,9 +4166,11 @@ export class ExcelEngine {
                     ordersSheet.addRow({
                         purchaseOrder: entry.purchaseOrder || po.header.purchaseOrder, productSupplier: po.header.productSupplier,
                         status: 'Confirmed', customer: entry.customerName || entry.customer,
-                        transportMethod: entry.transportMethod, transportLocation: hhTransportLocation,
+                        transportMethod: this.normalizeTransportMethod(entry.transportMethod), transportLocation: hhTransportLocation,
                         paymentTerm: '', template: entry.ordersTemplate,
-                        keyDate: po.header.keyDateFormat === 'manual' ? this.formatManualDateString(po.header.keyDate) : this.formatDateString(po.header.keyDate),
+                        keyDate: po.header.keyDateFormat === 'manual'
+                            ? this.formatManualDateString(po.header.keyDate)
+                            : this.formatDateString(po.header.keyDate),
                         closedDate: '', defaultDeliveryDate: '', comments: po.header.comments, currency: 'USD',
                         keyUser1: po.header.keyUser1, keyUser2: po.header.keyUser2, keyUser3: po.header.keyUser3,
                         keyUser4: po.header.keyUser4, keyUser5: po.header.keyUser5, keyUser6: po.header.keyUser6,
@@ -4117,9 +4204,7 @@ export class ExcelEngine {
                     linesForEntry.forEach(line => {
                         const isOnAg = (po.header.customer || '').trim().toLowerCase() === 'on ag';
                         const normalizedCustomer = (po.header.customer || '').trim().toLowerCase();
-                        const isArcteryx = normalizedCustomer === 'arcteryx' || normalizedCustomer === "arc'teryx";
                         const isJackWolfskin = normalizedCustomer === 'jack wolfskin' || brandKey === 'jack wolfskin';
-                        const isBurton = (po.header.brandKey || '').trim().toLowerCase() === 'burton';
                         const isHunter = (po.header.brandKey || '').trim().toLowerCase() === 'hunter';
                         const isHH = brandKey === 'hh' || brandKey === 'helly hansen' || normalizedCustomer === 'helly hansen';
                         const isLlBean = brandKey === 'll bean' || normalizedCustomer === 'll bean';
@@ -4166,20 +4251,28 @@ export class ExcelEngine {
                         const lineKeyDate = isOnAg
                             ? (this.shiftDate(line.startDate, -1) || line.startDate)
                             : (manualLineKeyDate || (isDynafit ? dynafitLineKeyDate : line.startDate));
+                        const cotopaxiExportDate = brandKey === 'cotopaxi'
+                            ? (this.parseDate(line.cancelDate as any) || this.parseDate(line.startDate as any))
+                            : null;
+                        const udfDateFromOrderKeyDate = this.shiftDate(po.header.keyDate, 30);
                         linesSheet.addRow({
                             purchaseOrder: entry.purchaseOrder || po.header.purchaseOrder, lineItem: lineItemMap.get(line.lineItem) || line.lineItem, productRange: line.productRange,
                             product: line.styleNumber, customer: entry.customerName || entry.customer || po.header.customer,
-                            deliveryDate: exportDeliveryDate,
-                            transportMethod: po.header.transportMethod, transportLocation: isHunter ? (line.transportLocation || '') : hhTransportLocation,
-                            status: 'Confirmed', purchasePrice: line.cost ?? '', sellingPrice: '',
-                            template: po.header.linesTemplate, keyDate: this.formatDateString(manualLineKeyDate || jwsLineKeyDate || lineKeyDate),
+                            deliveryDate: currentDeliveryDate,
+                            transportMethod: this.normalizeTransportMethod(line.transportMethod || po.header.transportMethod), transportLocation: isHunter ? (line.transportLocation || '') : hhTransportLocation,
+                            status: brandKey === 'cotopaxi' ? '' : 'Confirmed', purchasePrice: line.cost ?? '', sellingPrice: '',
+                            template: po.header.linesTemplate, keyDate: cotopaxiExportDate || this.formatDateString(manualLineKeyDate || jwsLineKeyDate || lineKeyDate),
                             supplierProfile: line.supplierProfile, closedDate: '', comments: '', currency: 'USD',
-                            archiveDate: '', productExternalRef: (isArcteryx || isHunter || isBurton || isJackWolfskin) ? '' : (line.productExternalRef || ''), productCustomerRef: (isArcteryx || isJackWolfskin) ? '' : (line.productCustomerRef || ''),
-                            purchaseUOM: '', sellingUOM: '', udfBuyerPoNumber: isDynafit
+                            archiveDate: '', productExternalRef: '', productCustomerRef: '',
+                            purchaseUOM: '', sellingUOM: '', udfBuyerPoNumber: brandKey === 'cotopaxi'
+                                ? (/^\d+$/.test(String(line.buyerPoNumber || '').trim())
+                                    ? Number(String(line.buyerPoNumber).trim())
+                                    : line.buyerPoNumber)
+                                : isDynafit
                                 ? (line.buyerPoNumber?.toString?.() || '')
                                 : (String(line.buyerPoNumber || '')),
-                            udfStartDate: exportDeliveryDate || this.formatDateString(line.startDate) || this.formatDateString(line.cancelDate) || '',
-                            udfCanelDate: exportDeliveryDate || this.formatDateString(line.startDate) || this.formatDateString(line.cancelDate) || '',
+                            udfStartDate: udfDateFromOrderKeyDate || cotopaxiExportDate || exportDeliveryDate || this.formatDateString(line.startDate) || this.formatDateString(line.cancelDate) || '',
+                            udfCanelDate: udfDateFromOrderKeyDate || cotopaxiExportDate || exportDeliveryDate || this.formatDateString(line.startDate) || this.formatDateString(line.cancelDate) || '',
                             udfInspectionResult: '', udfReportType: '', udfInspector: '', udfApprovalStatus: '',
                             udfSubmittedInspectionDate: '', findField_Product: '',
                         }).commit();

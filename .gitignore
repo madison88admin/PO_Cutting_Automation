@@ -5,9 +5,11 @@
 
 # testing
 /coverage
+/verification-output/
 
 # next.js
 /.next/
+/.next-corrupt-*/
 /out/
 
 # production

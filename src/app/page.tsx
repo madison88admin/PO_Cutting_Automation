@@ -142,7 +142,7 @@ export default function Home() {
             </div>
 
             {/* Top Navigation Bar */}
-            <nav className="w-full max-w-7xl flex flex-col md:flex-row justify-between items-center gap-10 mb-24 relative z-50">
+            <nav className="w-full max-w-7xl flex flex-col md:flex-row justify-between items-center gap-8 mb-12 relative z-50">
                 <motion.div
                     initial={{ opacity: 0, x: -30 }}
                     animate={{ opacity: 1, x: 0 }}
@@ -157,14 +157,14 @@ export default function Home() {
                         <div className="flex items-center gap-3 text-[10px] tracking-[0.4em] font-black uppercase">
                             <span className="text-[hsl(var(--foreground)/0.9)]">Madison 88 Solutions</span>
                             <span className="w-px h-3 bg-[hsl(var(--foreground)/0.15)]" />
-                            <span className="text-blue-400">System v2.0</span>
+                            <span className="text-cyan-400">AI Workspace</span>
                         </div>
                     </div>
 
-                    <h1 className="text-7xl md:text-9xl font-black tracking-tighter leading-[0.8] text-[hsl(var(--foreground))]">
+                    <h1 className="text-5xl md:text-7xl font-black tracking-tighter leading-[0.9] text-[hsl(var(--foreground))]">
                         PO CUTTING<br />
                         <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-500 via-sky-400 to-indigo-500">
-                            AUTOMATION
+                            AI WORKSPACE
                         </span>
                     </h1>
                 </motion.div>
@@ -242,8 +242,8 @@ export default function Home() {
                     <div className="flex gap-10">
                         {[
                             { icon: Shield, label: "Secure" },
-                            { icon: Zap, label: "Turbo" },
-                            { icon: Database, label: "NG-Sync" }
+                            { icon: Cpu, label: "Qwen AI" },
+                            { icon: Database, label: "Nexgen Ready" }
                         ].map((item, i) => (
                             <div key={i} className="flex items-center gap-2.5 text-[10px] font-black tracking-[0.2em] uppercase text-[hsl(var(--muted))] group cursor-default">
                                 <item.icon className="w-4 h-4 text-[hsl(var(--muted))] group-hover:text-blue-500 transition-colors" />
@@ -276,7 +276,7 @@ export default function Home() {
             <footer className="mt-40 w-full max-w-7xl pt-16 border-t border-[hsl(var(--border))] flex flex-col md:flex-row justify-between items-center gap-12 group">
                 <div className="flex flex-col md:flex-row items-center gap-6">
                     <div className="text-[10px] font-black uppercase tracking-[0.5em] text-[hsl(var(--muted))] group-hover:text-[hsl(var(--foreground))] transition-colors">
-                        Proprietary Automation Framework &bull; M88 Solutions
+                        Intelligent extraction &bull; Nexgen validation &bull; M88 Solutions
                     </div>
                 </div>
 
