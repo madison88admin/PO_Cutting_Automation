@@ -276,8 +276,9 @@ export default function Workflow() {
                 method: "POST",
                 body: formData,
             });
-            const result = await response.json();
-            if (!response.ok || result.error) throw new Error(result.error || "Could not preview headers");
+            const started = await response.json();
+            if (!response.ok || !started.jobId) throw new Error(started.error || "Could not start header preview");
+            const result = await waitForProcessingJob(started.jobId);
             setHeaderPreviews(result.previews || []);
         } catch (error) {
             setHeaderPreviews([]);

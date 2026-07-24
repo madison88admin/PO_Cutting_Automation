@@ -13,9 +13,9 @@ const backendBase = (
 export async function POST(req: NextRequest) {
     try {
         const formData = await req.formData();
-        const response = await fetch(`${backendBase}/api/header-preview`, {
+        const response = await fetch(`${backendBase}/api/header-preview-jobs`, {
             method: "POST",
-            headers: { Origin: "https://m88-po-cutting.netlify.app" },
+            headers: { "x-processing-key": process.env.ADMIN_PANEL_PASSWORD || "" },
             body: formData,
             cache: "no-store",
         });
@@ -30,6 +30,31 @@ export async function POST(req: NextRequest) {
     } catch (error) {
         return NextResponse.json({
             error: error instanceof Error ? error.message : "Could not preview headers",
+        }, { status: 502 });
+    }
+}
+
+export async function GET(req: NextRequest) {
+    try {
+        const id = req.nextUrl.searchParams.get("id") || "";
+        if (!/^[0-9a-f-]{36}$/i.test(id)) {
+            return NextResponse.json({ error: "Invalid preview job ID" }, { status: 400 });
+        }
+        const response = await fetch(`${backendBase}/api/processing-jobs/${id}`, {
+            headers: { "x-processing-key": process.env.ADMIN_PANEL_PASSWORD || "" },
+            cache: "no-store",
+        });
+        const body = await response.text();
+        return new NextResponse(body, {
+            status: response.status,
+            headers: {
+                "Content-Type": response.headers.get("content-type") || "application/json",
+                "Cache-Control": "no-store",
+            },
+        });
+    } catch (error) {
+        return NextResponse.json({
+            error: error instanceof Error ? error.message : "Could not check header preview",
         }, { status: 502 });
     }
 }
