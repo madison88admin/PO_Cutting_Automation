@@ -135,6 +135,28 @@ const DESTINATION_OPTIONS = [
     "Other",
 ];
 
+const HEADER_FIELD_OPTIONS = [
+    ["buyer_style_number", "Buyer style / article"],
+    ["buyer_style_name", "Style name"],
+    ["sku", "SKU / material"],
+    ["product_description", "Product description"],
+    ["color", "Colour name"],
+    ["color_code", "Colour code"],
+    ["size", "Size"],
+    ["quantity", "Quantity"],
+    ["delivery_date", "Delivery / ship date"],
+    ["season", "Season"],
+    ["customer", "Customer / brand"],
+    ["factory", "Factory / supplier"],
+    ["currency", "Currency"],
+    ["unit_cost", "Unit cost"],
+    ["po_number", "PO number"],
+    ["buyer_po_number", "Buyer PO number"],
+    ["start_date", "Start date"],
+    ["cancel_date", "Cancel date"],
+    ["transport_method", "Transport method"],
+] as const;
+
 function inferSeasonFromFilename(filename: string): string {
     const text = filename.toUpperCase();
     const explicitMatch = text.match(/\b((?:FW|FH|AW|AH|SS|SH|SP|SW)\s*\d{2})\b/);
@@ -182,6 +204,10 @@ export default function Workflow() {
     const [isDragging, setIsDragging] = useState(false);
     const [processingStage, setProcessingStage] = useState(0);
     const [acknowledgedLines, setAcknowledgedLines] = useState<Record<string, boolean>>({});
+    const [headerPreviews, setHeaderPreviews] = useState<any[]>([]);
+    const [isPreviewingHeaders, setIsPreviewingHeaders] = useState(false);
+    const [headerPreviewError, setHeaderPreviewError] = useState("");
+    const [nextgenOverrides, setNextgenOverrides] = useState<Record<string, any>>({});
     const fileInputRef = useRef<HTMLInputElement | null>(null);
 
     const processingStages = [
@@ -245,9 +271,32 @@ export default function Workflow() {
         }
     };
 
+    const previewHeaderMappings = async (files: FileList) => {
+        setIsPreviewingHeaders(true);
+        setHeaderPreviewError("");
+        try {
+            const formData = new FormData();
+            Array.from(files).forEach((file) => formData.append("file", file));
+            const response = await fetch(`${PROCESSING_API_BASE_URL}/api/header-preview`, {
+                method: "POST",
+                body: formData,
+            });
+            const result = await response.json();
+            if (!response.ok || result.error) throw new Error(result.error || "Could not preview headers");
+            setHeaderPreviews(result.previews || []);
+        } catch (error) {
+            setHeaderPreviews([]);
+            setHeaderPreviewError(error instanceof Error ? error.message : "Could not preview headers");
+        } finally {
+            setIsPreviewingHeaders(false);
+        }
+    };
+
     const handleFilesSelected = (files: FileList | null) => {
         if (!files?.length) return;
         setBuyFiles(files);
+        setHeaderPreviews([]);
+        void previewHeaderMappings(files);
         const filename = files[0].name.toLowerCase();
         const filenameBrand = BRAND_OPTIONS.find((brand) =>
             filename.includes(brand.toLowerCase().replace(/\s+/g, ""))
@@ -257,6 +306,24 @@ export default function Workflow() {
             setManualBrand(filenameBrand);
             loadBrandSelections(filenameBrand);
         }
+    };
+
+    const updateHeaderMapping = (previewIndex: number, field: string, header: string) => {
+        setHeaderPreviews((current) => current.map((preview, index) => {
+            if (index !== previewIndex) return preview;
+            const mapping = { ...(preview.mapping || {}) };
+            if (header) mapping[field] = header;
+            else delete mapping[field];
+            return {
+                ...preview,
+                mapping,
+                unmappedColumns: (preview.headers || []).filter(
+                    (candidate: string) => !Object.values(mapping).includes(candidate)
+                ),
+                source: "user confirmed",
+                confidence: 100,
+            };
+        }));
     };
 
     const incrementPoNumber = (po: string): string => {
@@ -506,6 +573,7 @@ export default function Workflow() {
         && manualLinesTemplate.trim()
         && manualComments.trim()
         && (manualComments !== "[Other]" || customComment.trim())
+        && !isPreviewingHeaders
     );
 
     const handleProcessOcr = async () => {
@@ -773,6 +841,20 @@ export default function Workflow() {
         if (manualCustomer.trim()) formData.append("manualCustomer", manualCustomer.trim());
         if (manualBrand.trim()) formData.append("manualBrand", manualBrand.trim());
         if (manualDestination.trim()) formData.append("manualDestination", manualDestination.trim());
+        if (headerPreviews.length) {
+            const confirmedMappings = Object.fromEntries(
+                headerPreviews
+                    .filter((preview) => !preview.error)
+                    .map((preview) => [preview.filename, {
+                        headers: preview.headers,
+                        mapping: preview.mapping,
+                    }])
+            );
+            formData.append("headerMappings", JSON.stringify(confirmedMappings));
+        }
+        if (Object.keys(nextgenOverrides).length) {
+            formData.append("nextgenOverrides", JSON.stringify(nextgenOverrides));
+        }
 
         try {
             const res = await fetch(`${PROCESSING_API_BASE_URL}/api/upload`, {
@@ -967,6 +1049,9 @@ export default function Workflow() {
         setErrors([]);
         setNextgenValidation(null);
         setAcknowledgedLines({});
+        setHeaderPreviews([]);
+        setHeaderPreviewError("");
+        setNextgenOverrides({});
         setExtractedPo("");
         if (fileInputRef.current) fileInputRef.current.value = "";
         setCurrentStep("UPLOAD");
@@ -1186,6 +1271,78 @@ export default function Workflow() {
                                         </div>
                                     )}
                                 </div>
+                                {(isPreviewingHeaders || headerPreviewError || headerPreviews.length > 0) && (
+                                    <div className="rounded-3xl border border-blue-500/20 bg-blue-500/[0.05] p-4 md:p-5 text-left">
+                                        {isPreviewingHeaders ? (
+                                            <div className="flex items-center gap-3 text-sm text-blue-200">
+                                                <Loader2 className="w-5 h-5 animate-spin" />
+                                                Detecting and mapping buyer headers…
+                                            </div>
+                                        ) : headerPreviewError ? (
+                                            <div className="flex flex-wrap items-center justify-between gap-3">
+                                                <p className="text-xs text-amber-300">{headerPreviewError}</p>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => buyFiles && void previewHeaderMappings(buyFiles)}
+                                                    className="rounded-xl border border-amber-500/20 px-3 py-2 text-[10px] font-black uppercase tracking-widest text-amber-200"
+                                                >
+                                                    Try preview again
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-4">
+                                                <div>
+                                                    <h3 className="font-black text-sm text-white">Confirm Header Mapping</h3>
+                                                    <p className="text-xs text-slate-400 mt-1">
+                                                        Check what each buyer column means. Confirmed corrections are learned automatically for future files.
+                                                    </p>
+                                                </div>
+                                                {headerPreviews.map((preview, previewIndex) => (
+                                                    <details key={`${preview.filename}-${previewIndex}`} open className="rounded-2xl border border-white/10 bg-black/15 p-4">
+                                                        <summary className="cursor-pointer list-none flex flex-wrap items-center justify-between gap-3">
+                                                            <div>
+                                                                <p className="text-xs font-black text-white">{preview.filename}</p>
+                                                                <p className="text-[10px] text-slate-500 mt-1">
+                                                                    Sheet: {preview.worksheet} · Header row {preview.headerRow}
+                                                                </p>
+                                                            </div>
+                                                            <div className="flex gap-2">
+                                                                <span className="rounded-full border border-blue-500/20 bg-blue-500/10 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-blue-200">
+                                                                    {preview.source}
+                                                                </span>
+                                                                <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-emerald-200">
+                                                                    {preview.confidence}% confidence
+                                                                </span>
+                                                            </div>
+                                                        </summary>
+                                                        <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                            {HEADER_FIELD_OPTIONS.map(([field, label]) => (
+                                                                <label key={`${preview.filename}-${field}`} className="space-y-1.5">
+                                                                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">{label}</span>
+                                                                    <select
+                                                                        value={preview.mapping?.[field] || ""}
+                                                                        onChange={(event) => updateHeaderMapping(previewIndex, field, event.target.value)}
+                                                                        className="w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-xs text-white focus:border-blue-500/50 focus:outline-none"
+                                                                    >
+                                                                        <option value="">Not mapped</option>
+                                                                        {(preview.headers || []).map((header: string, headerIndex: number) => (
+                                                                            <option key={`${header}-${headerIndex}`} value={header}>{header}</option>
+                                                                        ))}
+                                                                    </select>
+                                                                </label>
+                                                            ))}
+                                                        </div>
+                                                        {preview.unmappedColumns?.length > 0 && (
+                                                            <p className="mt-4 text-[10px] text-slate-500">
+                                                                Ignored columns: {preview.unmappedColumns.join(", ")}
+                                                            </p>
+                                                        )}
+                                                    </details>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                                 <div className="space-y-2">
                                     <div className="flex items-center justify-between">
                                         <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">PO Number <span className="text-rose-400">*</span></label>
@@ -1607,6 +1764,33 @@ export default function Workflow() {
                                                 <p className="text-[10px] font-mono text-slate-500 mt-2">
                                                     Buyer style: {item.style || "(blank)"} · Buyer colour: {item.colour || "(blank)"}
                                                 </p>
+                                                {item.candidates?.length > 0 && (
+                                                    <label className="mt-4 block space-y-2">
+                                                        <span className="text-[9px] font-black uppercase tracking-widest text-blue-300">Choose the correct NextGen match</span>
+                                                        <select
+                                                            value={nextgenOverrides[`${String(item.style).toLowerCase()}|${String(item.colour).toLowerCase()}`]
+                                                                ? JSON.stringify(nextgenOverrides[`${String(item.style).toLowerCase()}|${String(item.colour).toLowerCase()}`])
+                                                                : ""}
+                                                            onChange={(event) => {
+                                                                const key = `${String(item.style).toLowerCase()}|${String(item.colour).toLowerCase()}`;
+                                                                setNextgenOverrides((current) => {
+                                                                    const updated = { ...current };
+                                                                    if (event.target.value) updated[key] = JSON.parse(event.target.value);
+                                                                    else delete updated[key];
+                                                                    return updated;
+                                                                });
+                                                            }}
+                                                            className="w-full rounded-xl border border-blue-500/25 bg-slate-900 px-3 py-3 text-xs text-white"
+                                                        >
+                                                            <option value="">Select a NextGen product and colour</option>
+                                                            {item.candidates.map((candidate: any, candidateIndex: number) => (
+                                                                <option key={`${candidate.product}-${candidate.colorName}-${candidateIndex}`} value={JSON.stringify(candidate)}>
+                                                                    {candidate.product} · {candidate.colorName} · {candidate.score}% match
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                    </label>
+                                                )}
                                                 <div className="mt-4 flex flex-wrap gap-2">
                                                     <button
                                                         type="button"
@@ -1633,6 +1817,19 @@ export default function Workflow() {
                                             </div>
                                         ))}
                                     </div>
+                                    {Object.keys(nextgenOverrides).length > 0 && (
+                                        <div className="sticky bottom-3 rounded-2xl border border-blue-500/25 bg-slate-950/95 p-3 backdrop-blur-xl">
+                                            <button
+                                                type="button"
+                                                onClick={() => handleStartUpload()}
+                                                disabled={isProcessing}
+                                                className="primary-button w-full flex items-center justify-center gap-3"
+                                            >
+                                                {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+                                                Apply selected matches and regenerate
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
                             )}
 

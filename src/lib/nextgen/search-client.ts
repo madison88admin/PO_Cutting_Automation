@@ -132,7 +132,31 @@ export class NextGenSearchClient {
         // multiple historical products, use the newest product with that match.
         variantMatches.sort((a, b) => b.score - a.score || b.product.Id - a.product.Id);
         const selected = variantMatches[0];
-        const isAmbiguous = selected.ambiguousWithinProduct;
+        const runnerUp = variantMatches[1];
+        const isAmbiguous = selected.ambiguousWithinProduct || Boolean(
+            runnerUp
+            && runnerUp.score === selected.score
+            && String(runnerUp.product.Name || "") !== String(selected.product.Name || "")
+        );
+        const candidates = variantMatches
+            .map(({ product, option, score }) => ({
+                product: String(product.Name || ''),
+                colorName: String(option.ColourName || ''),
+                score,
+                productRange: product.RangeDisplayName || null,
+                productExternalRef: style,
+                productCustomerRef: product.FieldValue || style,
+                colorCode: colorCode || option.ColourCode || null,
+                colorExt: option.ColourExternalRef || null,
+                customer: option.CustomerName || null,
+            }))
+            .filter((candidate, index, rows) =>
+                Boolean(candidate.product && candidate.colorName)
+                && rows.findIndex((row) =>
+                    row.product === candidate.product && row.colorName === candidate.colorName
+                ) === index
+            )
+            .slice(0, 8);
         return {
             style,
             product: selected.product.Name,
@@ -156,9 +180,10 @@ export class NextGenSearchClient {
             matchStatus: isAmbiguous ? 'ambiguous' : 'matched',
             matchScore: selected.score,
             matchReason: isAmbiguous
-                ? 'Multiple Nexgen colours have the same best score for this product.'
+                ? 'Multiple Nexgen product or colour records have the same best score.'
                 : (colorCode ? 'Matched by Nexgen colour code.' : 'Matched by Nexgen colour description.'),
             candidateCount: variantMatches.length,
+            candidates,
         };
     }
 

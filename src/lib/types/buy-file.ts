@@ -91,6 +91,19 @@ export interface NextGenStyleInfo {
     matchScore?: number | null;
     matchReason?: string | null;
     candidateCount?: number;
+    candidates?: NextGenVariantCandidate[];
+}
+
+export interface NextGenVariantCandidate {
+    product: string;
+    colorName: string;
+    score: number;
+    productRange?: string | null;
+    productExternalRef?: string | null;
+    productCustomerRef?: string | null;
+    colorCode?: string | null;
+    colorExt?: string | null;
+    customer?: string | null;
 }
 
 // Single source of truth used by all generators

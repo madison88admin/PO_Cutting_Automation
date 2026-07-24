@@ -2045,6 +2045,7 @@ export class ExcelEngine {
         defaultQuantityIfMissing?: boolean; productSheetMap?: Record<string, ProductSheetRow[]>;
         llBeanReferenceSizesBuffer?: any;
         sourceFilename?: string;
+        manualHeaderMapping?: Record<string, string>;
     }): Promise<{ data: ProcessedPO[]; errors: ValidationError[]; formatDetection?: FormatDetection }> {
         const sourceFilename = (options?.sourceFilename || '').toLowerCase();
         if (sourceFilename.includes("product shi") && !sourceFilename.includes("dynafit")) {
@@ -2498,35 +2499,35 @@ export class ExcelEngine {
             || (!headerMap['quantity'] && !headerMap['finalQty'])
             || (!manualPurchaseOrder && !headerMap['purchaseOrder'])
             || hasUnmappedTransportCandidate;
+        const canonicalToInternal: Record<string, string[]> = {
+            buyer_style_number: ['product', 'productCustomerRef'],
+            buyer_style_name: ['productName'],
+            sku: ['productExternalRef'],
+            product_description: ['productDescription'],
+            color: ['colourName', 'colour'],
+            color_code: ['inlineStyleColor'],
+            size: ['sizeName'],
+            quantity: ['quantity'],
+            delivery_date: ['exFtyDate'],
+            season: ['season'],
+            customer: ['customerName'],
+            factory: ['productSupplier'],
+            currency: ['currency'],
+            unit_cost: ['cost'],
+            po_number: ['purchaseOrder', 'buyerPoNumber'],
+            buyer_po_number: ['buyerPoNumber'],
+            start_date: ['exFtyDate'],
+            cancel_date: ['cancelDate'],
+            transport_method: ['transportMethod'],
+        };
+        const headerColumns = new Map<string, number>();
+        headerRow.eachCell((cell, colNumber) => {
+            const text = cell.value?.toString().trim();
+            if (text) headerColumns.set(normalizeHeaderText(text), colNumber);
+        });
         if (needsCanonicalMapping) {
             try {
                 const aiResult = await mapHeaders(canonicalHeaders);
-                const canonicalToInternal: Record<string, string[]> = {
-                    buyer_style_number: ['product', 'productCustomerRef'],
-                    buyer_style_name: ['productName'],
-                    sku: ['productExternalRef'],
-                    product_description: ['productDescription'],
-                    color: ['colourName', 'colour'],
-                    color_code: ['inlineStyleColor'],
-                    size: ['sizeName'],
-                    quantity: ['quantity'],
-                    delivery_date: ['exFtyDate'],
-                    season: ['season'],
-                    customer: ['customerName'],
-                    factory: ['productSupplier'],
-                    currency: ['currency'],
-                    unit_cost: ['cost'],
-                    po_number: ['purchaseOrder', 'buyerPoNumber'],
-                    buyer_po_number: ['buyerPoNumber'],
-                    start_date: ['exFtyDate'],
-                    cancel_date: ['cancelDate'],
-                    transport_method: ['transportMethod'],
-                };
-                const headerColumns = new Map<string, number>();
-                headerRow.eachCell((cell, colNumber) => {
-                    const text = cell.value?.toString().trim();
-                    if (text) headerColumns.set(normalizeHeaderText(text), colNumber);
-                });
                 Object.entries(aiResult.mapping).forEach(([canonicalField, sourceHeader]) => {
                     if (!sourceHeader) return;
                     const colNumber = headerColumns.get(normalizeHeaderText(sourceHeader));
@@ -2546,6 +2547,22 @@ export class ExcelEngine {
             } catch (error) {
                 console.warn('[excel-engine] canonical AI mapping failed:', error);
             }
+        }
+        if (options?.manualHeaderMapping) {
+            Object.entries(options.manualHeaderMapping).forEach(([canonicalField, sourceHeader]) => {
+                if (!sourceHeader) return;
+                const colNumber = headerColumns.get(normalizeHeaderText(sourceHeader));
+                if (!colNumber) return;
+                for (const internalField of canonicalToInternal[canonicalField] || []) {
+                    headerMap[internalField] = colNumber;
+                }
+            });
+            this.errors.push({
+                field: 'Header Mapping',
+                row: headerRowNumber,
+                message: `Applied ${Object.keys(options.manualHeaderMapping).length} confirmed header mappings.`,
+                severity: 'WARNING',
+            });
         }
 
         const sourceNameKey = (options?.sourceFilename || '').toLowerCase();

@@ -4,12 +4,24 @@ import { logEvent } from "@/lib/audit";
 import { createRun, updateRun } from "@/lib/db/runHistory";
 import { getDefaultWorkflowUserId } from "@/lib/db/users";
 import { NextGenCachedClient } from "@/lib/nextgen/client";
+import { saveTemplateSupabase } from "@/lib/templates/supabase-store";
+import type { NextGenVariantCandidate } from "@/lib/types/buy-file";
 
 const uploadRateLimitMap = new Map<string, number[]>();
 const MAX_UPLOADS_PER_MINUTE = 10;
 const MAX_FILE_COUNT = 5;
 const MAX_FILE_SIZE = 30 * 1024 * 1024; // 30 MB per file
 const ALLOWED_MIME = new Set(["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel"]);
+
+function parseJsonRecord(value?: string | null): Record<string, any> {
+    if (!value) return {};
+    try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+        return {};
+    }
+}
 
 function isProductShiFile(filename: string): boolean {
     return filename.toLowerCase().includes("product shi");
@@ -159,6 +171,8 @@ export async function POST(req: NextRequest) {
         const effectiveManualProductRange = manualProductRange || manualSeason;
         const manualCustomer = (formData.get("manualCustomer")?.toString() || "").trim();
         const manualBrand = (formData.get("manualBrand")?.toString() || "").trim();
+        const headerMappings = parseJsonRecord(formData.get("headerMappings")?.toString());
+        const nextgenOverrides = parseJsonRecord(formData.get("nextgenOverrides")?.toString());
         const inferredManualCustomer = manualCustomer || (files.some((f) => /vuori/i.test(f.name)) ? "Vuori" : "");
 
         console.log("[upload] received request", {
@@ -307,7 +321,16 @@ export async function POST(req: NextRequest) {
                 productSheetMap,
                 llBeanReferenceSizesBuffer: referenceSizesBuffers[0],
                 sourceFilename: file.name,
+                manualHeaderMapping: headerMappings[file.name]?.mapping,
             });
+            const confirmedHeaderMapping = headerMappings[file.name];
+            if (confirmedHeaderMapping?.headers?.length && confirmedHeaderMapping?.mapping) {
+                await saveTemplateSupabase(
+                    confirmedHeaderMapping.headers,
+                    confirmedHeaderMapping.mapping,
+                    manualBrand || inferredManualCustomer || null,
+                );
+            }
 
             let allSizes = 0;
             let allLines = 0;
@@ -380,6 +403,7 @@ export async function POST(req: NextRequest) {
             style: string;
             colour: string;
             message: string;
+            candidates?: NextGenVariantCandidate[];
         }> = [];
         const nextgenClient = process.env.NEXTGEN_ENABLED !== 'false' ? new NextGenCachedClient() : null;
         const variantCache = new Map<string, Awaited<ReturnType<NextGenCachedClient["searchVariant"]>>>();
@@ -400,9 +424,15 @@ export async function POST(req: NextRequest) {
                     const style = String(line.styleNumber || line.productCustomerRef || '').trim();
                     const color = String(line.styleColor || line.rawColour || line.colour || '').trim();
                     const match = variantCache.get(`${style.toLowerCase()}|${color.toLowerCase()}`);
+                    const selectedOverride = nextgenOverrides[`${style.toLowerCase()}|${color.toLowerCase()}`] as NextGenVariantCandidate | undefined;
                     let code: typeof needsAttention[number]["code"] | null = null;
                     let message = "";
-                    if (!style) {
+                    if (selectedOverride?.product && selectedOverride?.colorName) {
+                        line.styleNumber = selectedOverride.product;
+                        line.colour = selectedOverride.colorName;
+                        line.productExternalRef = selectedOverride.productExternalRef || '';
+                        line.productCustomerRef = selectedOverride.productCustomerRef || style;
+                    } else if (!style) {
                         code = "MISSING_STYLE";
                         message = "No buyer style, material, SKU, or product reference was found.";
                     } else if (!color) {
@@ -429,6 +459,7 @@ export async function POST(req: NextRequest) {
                             style,
                             colour: color,
                             message,
+                            candidates: match?.candidates || [],
                         };
                         needsAttention.push(item);
                         allErrors.push({
@@ -522,7 +553,12 @@ export async function POST(req: NextRequest) {
             needsAttention,
             nexgenVariantSummary: {
                 requested: variantCache.size,
-                resolved: [...variantCache.values()].filter((match) => Boolean(match?.product && match?.colorName)).length,
+                resolved: [...variantCache.entries()].filter(([key, match]) =>
+                    Boolean(
+                        (match?.product && match?.colorName)
+                        || (nextgenOverrides[key]?.product && nextgenOverrides[key]?.colorName)
+                    )
+                ).length,
                 blocked: needsAttention.length,
             },
         });

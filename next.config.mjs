@@ -8,7 +8,7 @@ const nextConfig = {
     async headers() {
         return [
             {
-                source: '/api/upload',
+                source: '/api/:path*',
                 headers: [
                     { key: 'Access-Control-Allow-Origin', value: uploadAllowedOrigin },
                     { key: 'Access-Control-Allow-Methods', value: 'POST, OPTIONS' },
