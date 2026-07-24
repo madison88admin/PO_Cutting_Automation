@@ -17,11 +17,6 @@ import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
 import { motion, AnimatePresence } from "framer-motion";
 
-const PROCESSING_API_BASE_URL = (
-    process.env.NEXT_PUBLIC_PROCESSING_API_URL
-    || (process.env.NODE_ENV === "production" ? "https://po-cutting-api.5-223-78-194.sslip.io" : "")
-).replace(/\/+$/, "");
-
 function cn(...inputs: ClassValue[]) {
     return twMerge(clsx(inputs));
 }
@@ -277,7 +272,7 @@ export default function Workflow() {
         try {
             const formData = new FormData();
             Array.from(files).forEach((file) => formData.append("file", file));
-            const response = await fetch(`${PROCESSING_API_BASE_URL}/api/header-preview`, {
+            const response = await fetch("/api/processing/header-preview", {
                 method: "POST",
                 body: formData,
             });
@@ -752,6 +747,21 @@ export default function Workflow() {
         }
     };
 
+    const waitForProcessingJob = async (jobId: string) => {
+        const deadline = Date.now() + 15 * 60 * 1000;
+        while (Date.now() < deadline) {
+            await new Promise((resolve) => window.setTimeout(resolve, 1800));
+            const response = await fetch(`/api/processing/jobs?id=${encodeURIComponent(jobId)}`, {
+                cache: "no-store",
+            });
+            const job = await response.json();
+            if (!response.ok) throw new Error(job.error || "Could not check processing status");
+            if (job.status === "completed") return job.result;
+            if (job.status === "failed") throw new Error(job.error || job.result?.error || "PO processing failed");
+        }
+        throw new Error("Processing exceeded 15 minutes. Please try again.");
+    };
+
     const handleStartUpload = async (files: FileList | null = buyFiles) => {
         // If no Excel files but OCR results exist, build uploadData from OCR and proceed
         if ((!files || files.length === 0) && ocrResults && ocrResults.length > 0) {
@@ -857,14 +867,18 @@ export default function Workflow() {
         }
 
         try {
-            const res = await fetch(`${PROCESSING_API_BASE_URL}/api/upload`, {
+            const startResponse = await fetch("/api/processing/jobs", {
                 method: "POST",
                 body: formData,
             });
-            const result = await res.json();
+            const started = await startResponse.json();
+            if (!startResponse.ok || !started.jobId) {
+                throw new Error(started.error || "Could not start PO processing");
+            }
+            const result = await waitForProcessingJob(started.jobId);
 
-            if (!res.ok || result.error) {
-                console.error("Upload failed:", result.error || res.statusText);
+            if (result.error) {
+                console.error("Upload failed:", result.error);
                 setErrors([{
                     field: "System",
                     row: 0,
@@ -927,8 +941,14 @@ export default function Workflow() {
 
         } catch (err) {
             console.error(err);
+            setErrors([{
+                field: "Processing",
+                row: 0,
+                message: err instanceof Error ? err.message : "PO processing failed",
+                severity: "CRITICAL",
+            }]);
             setIsProcessing(false);
-            setCurrentStep("UPLOAD");
+            setCurrentStep("VALIDATE");
         }
     };
 
