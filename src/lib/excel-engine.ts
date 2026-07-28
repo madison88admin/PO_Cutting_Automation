@@ -1843,6 +1843,23 @@ export class ExcelEngine {
         return `${mm}/${dd}/${date.getFullYear()}`;
     }
 
+    /**
+     * PO Cutting operates on Madison88's Singapore business date. The API runs
+     * on a VPS whose system timezone may be UTC, so using `new Date()` directly
+     * can stamp yesterday's date during the first eight hours of the workday.
+     */
+    private getSingaporeBusinessDate(now = new Date()): Date {
+        const parts = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'Asia/Singapore',
+            year: 'numeric',
+            month: 'numeric',
+            day: 'numeric',
+        }).formatToParts(now);
+        const value = (type: Intl.DateTimeFormatPartTypes) =>
+            Number(parts.find(part => part.type === type)?.value || 0);
+        return new Date(value('year'), value('month') - 1, value('day'), 12, 0, 0, 0);
+    }
+
     public stripBrackets(value: string): string {
         if (!value) return value;
         return value.replace(/\[([^\]]+)\]/g, '$1').replace(/\[|\]/g, '').replace(/\s+/g, ' ').trim();
@@ -3676,7 +3693,7 @@ export class ExcelEngine {
                 : this.formatProductRange(season);
             // Global PO-cutting rule for every brand. The processing date is
             // used unless the operator intentionally supplies a manual key date.
-            const keyDate = manualKeyDate || this.formatDateString(new Date());
+            const keyDate = manualKeyDate || this.formatDateString(this.getSingaporeBusinessDate());
             const keyDateFormat: "manual" | "standard" = manualKeyDate ? "manual" : "standard";
             const commentBrand = isHHBrand ? 'HH' : (inferredBrand || brand || detectedCustomer);
             const commentBuyRound = isHHBrand && !buyRound
@@ -4105,7 +4122,7 @@ export class ExcelEngine {
     }
 
     async generateOutputs(data: ProcessedPO[]) {
-        const processingDate = new Date();
+        const processingDate = this.getSingaporeBusinessDate();
         const currentDeliveryDate = `${processingDate.getMonth() + 1}/${processingDate.getDate()}/${processingDate.getFullYear()}`;
         const ordersWb = new ExcelJS.Workbook();
         const linesWb = new ExcelJS.Workbook();

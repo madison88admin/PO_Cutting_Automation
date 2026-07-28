@@ -526,7 +526,15 @@ export default function Workflow() {
     }, []);
 
     useEffect(() => {
-        const today = new Date().toISOString().split("T")[0];
+        const dateParts = new Intl.DateTimeFormat("en-US", {
+            timeZone: "Asia/Singapore",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+        }).formatToParts(new Date());
+        const part = (type: Intl.DateTimeFormatPartTypes) =>
+            dateParts.find((item) => item.type === type)?.value || "";
+        const today = `${part("year")}-${part("month")}-${part("day")}`;
         setManualKeyDate(today);
     }, []);
 
