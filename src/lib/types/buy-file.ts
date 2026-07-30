@@ -18,6 +18,7 @@ export interface BuyFileItem {
     product: string | null;
     productExternalRef: string | null;
     costingReference: string | null;
+    buyInformation: string | null;
     matchStatus: 'matched' | 'ambiguous' | 'unmatched' | 'not_checked';
     matchScore: number | null;
     matchReason: string | null;
@@ -45,6 +46,7 @@ export interface ColumnMapping {
     start_date?: string;
     cancel_date?: string;
     transport_method?: string;
+    buy_information?: string;
 }
 
 export interface HeaderDetectionResult {
@@ -130,6 +132,7 @@ export interface ProductData {
     deliveryDate: string | null;
     unitCost: number | null;
     costingReference: string | null;
+    buyInformation: string | null;
     matchStatus: BuyFileItem['matchStatus'];
     matchScore: number | null;
     matchReason: string | null;

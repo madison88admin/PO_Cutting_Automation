@@ -8,6 +8,7 @@ const CANONICAL_FIELDS = new Set([
     'color', 'color_code', 'size', 'quantity', 'delivery_date', 'season',
     'customer', 'factory', 'currency', 'unit_cost', 'po_number',
     'buyer_po_number', 'start_date', 'cancel_date', 'transport_method',
+    'buy_information',
 ]);
 
 function normalizeMapping(mapping: Record<string, string>): ColumnMapping {
@@ -51,6 +52,7 @@ const HEADER_PATTERNS: { field: string; patterns: string[] }[] = [
     { field: 'currency', patterns: ['final currency', 'currency', 'curr'] },
     { field: 'unit_cost', patterns: ['fob', 'unit cost', 'unit price', 'factory cost', 'cost', 'price', 'production upcharges usd', 'material upcharges usd', 'upcharge', 'up charge'] },
     { field: 'transport_method', patterns: ['order transport', 'transport method', 'transportation mode', 'transport mode', 'shipment method', 'shipment mode', 'shipping method', 'ship mode', 'ship via', 'mode of delivery', 'freight mode'] },
+    { field: 'buy_information', patterns: ['buy information', 'buy info', 'buying information', 'buying info', 'purchase information', 'purchase info', 'po information', 'po info', 'buy details', 'buy detail'] },
 ];
 
 function patternToRegex(pattern: string): RegExp {
@@ -107,6 +109,7 @@ Canonical fields:
 - start_date
 - cancel_date
 - transport_method
+- buy_information
 
 Return ONLY valid JSON with this exact structure (canonical field as key, original header as value):
 {

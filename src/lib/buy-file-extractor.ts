@@ -60,6 +60,8 @@ const INTERNAL_TO_CANONICAL: Record<string, keyof ColumnMapping> = {
     sellingPrice: 'unit_cost',
     productionUpchargesUsd: 'unit_cost',
     materialUpchargesUsd: 'unit_cost',
+    buyInformation: 'buy_information',
+    buyInfo: 'buy_information',
 };
 
 function convertLegacyMapping(legacy: Record<string, string>): ColumnMapping {
@@ -598,6 +600,7 @@ function readAllRows(
             product: null,
             productExternalRef: null,
             costingReference: null,
+            buyInformation: get('buy_information'),
             matchStatus: 'not_checked',
             matchScore: null,
             matchReason: null,

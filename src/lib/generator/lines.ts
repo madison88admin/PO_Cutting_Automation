@@ -37,6 +37,7 @@ export function generateLinesSheet(products: ProductData[]): ExcelJS.Workbook {
         { header: 'UDF-Approval Status', key: 'udfApprovalStatus' },
         { header: 'UDF-Submitted inspection date', key: 'udfSubmittedInspectionDate' },
         { header: 'FindField_Product', key: 'findField_Product' },
+        { header: 'Buy Information', key: 'buyInformation' },
     ];
 
     const grouped: Record<string, ProductData[]> = {};
@@ -81,6 +82,7 @@ export function generateLinesSheet(products: ProductData[]): ExcelJS.Workbook {
                 udfApprovalStatus: '',
                 udfSubmittedInspectionDate: '',
                 findField_Product: product.product || '',
+                buyInformation: product.buyInformation || '',
             });
         });
     }

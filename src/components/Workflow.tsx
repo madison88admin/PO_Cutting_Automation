@@ -150,6 +150,7 @@ const HEADER_FIELD_OPTIONS = [
     ["start_date", "Start date"],
     ["cancel_date", "Cancel date"],
     ["transport_method", "Transport method"],
+    ["buy_information", "Buy Information"],
 ] as const;
 
 function inferSeasonFromFilename(filename: string): string {
@@ -466,6 +467,7 @@ export default function Workflow() {
                 factory: get(item, 'factory', 'factory'),
                 customer: get(item, 'customer', 'customer'),
                 cost: item.unit_cost != null ? String(item.unit_cost) : item.unitCost != null ? String(item.unitCost) : '',
+                buyInformation: get(item, 'buy_information', 'buyInformation'),
                 sourceSheet: get(item, 'source_sheet', 'sourceSheet'),
                 sourceRow: get(item, 'source_row', 'sourceRow'),
             })),

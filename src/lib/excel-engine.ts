@@ -62,6 +62,7 @@ export interface POLine {
     colour: string;
     productExternalRef: string;
     productCustomerRef: string;
+    buyInformation?: string;
 }
 
 export interface POSize {
@@ -2374,6 +2375,9 @@ export class ExcelEngine {
             if (headerKey === 'your reference' && !headerMap['ourReference']) {
                 headerMap['ourReference'] = colNumber;
             }
+            if (/^(?:buy|buying|purchase|po)\s*(?:information|info|details?)$/.test(headerKey) && !headerMap['buyInformation']) {
+                headerMap['buyInformation'] = colNumber;
+            }
             if (headerKey === 'size name' && headerMap['sizeName'] && !headerMap['inlineSizeName']) {
                 headerMap['inlineSizeName'] = colNumber;
             }
@@ -2536,6 +2540,7 @@ export class ExcelEngine {
             start_date: ['exFtyDate'],
             cancel_date: ['cancelDate'],
             transport_method: ['transportMethod'],
+            buy_information: ['buyInformation'],
         };
         const headerColumns = new Map<string, number>();
         headerRow.eachCell((cell, colNumber) => {
@@ -3007,6 +3012,7 @@ export class ExcelEngine {
             const marmotShortText = this.stripBrackets(getVal('marmotShortText') || '').trim();
             const marmotStyle = this.stripBrackets(getVal('marmotStyle') || '').trim();
             const ourReference = this.stripBrackets(getVal('ourReference') || '').trim();
+            const buyInformation = this.stripBrackets(getVal('buyInformation') || '').trim();
             const inlineFactory = this.stripBrackets(getVal('inlineFactory') || '').trim();
             const jwsPlantCode = this.stripBrackets(
                 (inlineFactory || poPlantPart)
@@ -3825,6 +3831,7 @@ export class ExcelEngine {
                         styleColor: inlineStyleColor || undefined,
                         rawColour: colour || undefined,
                         ourReference: ourReference || undefined,
+                        buyInformation: buyInformation || undefined,
                         cost: undefined,
                         colour: productMatch?.colour || colour,
                         productExternalRef,
@@ -3948,6 +3955,7 @@ export class ExcelEngine {
                     colour: brandKey === 'dynafit' ? (dynafitResolvedColourValue || '') : (resolvedColour || ''),
                     productExternalRef: (brandKey === 'arcteryx' || brandKey === 'hunter' || brandKey === 'burton') ? '' : productExternalRef,
                     productCustomerRef: brandKey === 'arcteryx' ? '' : productCustomerRef,
+                    buyInformation: buyInformation || undefined,
                 };
                 po.lines.push(existingLine as POLine);
             } else {
@@ -3962,6 +3970,7 @@ export class ExcelEngine {
                 if (!existingLine.styleColor && inlineStyleColor) existingLine.styleColor = inlineStyleColor;
                 if (!existingLine.rawColour && colour) existingLine.rawColour = colour;
                 if (!existingLine.ourReference && ourReference) existingLine.ourReference = ourReference;
+                if (!existingLine.buyInformation && buyInformation) existingLine.buyInformation = buyInformation;
                 if (isHHBrand) {
                     if (!existingLine.hhStartDate && hhStartDate) existingLine.hhStartDate = hhStartDate;
                     if (!existingLine.hhCancelDate && hhCancelDate) existingLine.hhCancelDate = hhCancelDate;
@@ -4164,6 +4173,7 @@ export class ExcelEngine {
             { header: 'UDF-Report Type', key: 'udfReportType' }, { header: 'UDF-Inspector', key: 'udfInspector' },
             { header: 'UDF-Approval Status', key: 'udfApprovalStatus' }, { header: 'UDF-Submitted inspection date', key: 'udfSubmittedInspectionDate' },
             { header: 'FindField_Product', key: 'findField_Product' },
+            { header: 'Buy Information', key: 'buyInformation' },
         ];
 
         sizesSheet.columns = [
@@ -4309,6 +4319,7 @@ export class ExcelEngine {
                             udfCanelDate: udfDateFromOrderKeyDate || cotopaxiExportDate || exportDeliveryDate || this.formatDateString(line.startDate) || this.formatDateString(line.cancelDate) || '',
                             udfInspectionResult: '', udfReportType: '', udfInspector: '', udfApprovalStatus: '',
                             udfSubmittedInspectionDate: '', findField_Product: '',
+                            buyInformation: line.buyInformation || '',
                         }).commit();
                     });
                 });

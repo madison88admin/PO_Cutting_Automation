@@ -57,6 +57,7 @@ export function mergeBuyFileWithNextGen(
             deliveryDate: first.deliveryDate || null,
             unitCost: first.unitCost || null,
             costingReference: first.costingReference || null,
+            buyInformation: first.buyInformation || null,
             matchStatus: first.matchStatus,
             matchScore: first.matchScore,
             matchReason: first.matchReason,
