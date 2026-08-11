@@ -281,21 +281,27 @@ export async function getColumnMappings(customer?: string): Promise<ColumnMappin
     return data || [];
 }
 
+const PLACEHOLDER_USER_IDS = ['anonymous', '00000000-0000-0000-0000-000000000001'];
+
 export async function upsertColumn(mapping: Partial<ColumnMapping>, userId: string): Promise<void> {
+    if (isMock) return;
+
     const { data: oldData } = await supabaseAdmin
         .from('column_mapping')
         .select('*')
         .eq('customer', mapping.customer)
         .eq('buy_file_column', mapping.buy_file_column)
-        .single();
+        .maybeSingle();
+
+    const updatedBy = PLACEHOLDER_USER_IDS.includes(userId) ? null : userId;
 
     const { error } = await supabaseAdmin
         .from('column_mapping')
         .upsert({
             ...mapping,
-            updated_by: userId,
+            updated_by: updatedBy,
             updated_at: new Date().toISOString()
-        });
+        }, { onConflict: 'customer,buy_file_column' });
 
     if (error) throw error;
 

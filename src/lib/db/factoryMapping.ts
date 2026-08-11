@@ -27,21 +27,27 @@ export async function getFactoryMappings(): Promise<FactoryMapping[]> {
     return data || [];
 }
 
+const PLACEHOLDER_USER_IDS = ['anonymous', '00000000-0000-0000-0000-000000000001'];
+
 export async function upsertFactory(mapping: Partial<FactoryMapping>, userId: string): Promise<void> {
+    if (isMock) return;
+
     const { data: oldData } = await supabaseAdmin
         .from('factory_mapping')
         .select('*')
         .eq('brand', mapping.brand)
         .eq('category', mapping.category)
-        .single();
+        .maybeSingle();
+
+    const updatedBy = PLACEHOLDER_USER_IDS.includes(userId) ? null : userId;
 
     const { error } = await supabaseAdmin
         .from('factory_mapping')
         .upsert({
             ...mapping,
-            updated_by: userId,
+            updated_by: updatedBy,
             updated_at: new Date().toISOString()
-        });
+        }, { onConflict: 'brand,category' });
 
     if (error) throw error;
 
@@ -57,6 +63,7 @@ export async function upsertFactory(mapping: Partial<FactoryMapping>, userId: st
 }
 
 export async function deleteFactory(id: string, userId: string): Promise<void> {
+    if (isMock) return;
     const { error } = await supabaseAdmin
         .from('factory_mapping')
         .delete()

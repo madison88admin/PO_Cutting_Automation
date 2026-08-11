@@ -37,7 +37,7 @@ export default function RootLayout({
                     }}
                 />
             </head>
-            <body className={`${inter.variable} ${outfit.variable} font-sans min-h-screen bg-[hsl(var(--background))] text-[hsl(var(--foreground))]`}>
+            <body className={`${inter.variable} ${outfit.variable} font-sans min-h-screen bg-[hsl(var(--background))] text-[hsl(var(--foreground))]`} suppressHydrationWarning>
                 <ThemeToggle />
                 {children}
             </body>

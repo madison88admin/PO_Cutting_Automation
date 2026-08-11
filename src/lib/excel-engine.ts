@@ -67,7 +67,7 @@ export interface POSize {
     quantity: number;
 }
 
-interface ProductSheetRow {
+export interface ProductSheetRow {
     colour: string;
     colourName?: string;
     sizeName?: string;
@@ -656,7 +656,7 @@ export class ExcelEngine {
         return { isProductSheet: productScore >= 3 && (buyScore <= 1 || looksLikeVuoriProductSheet), headerRow };
     }
 
-    private normalizeColourKey(value: string): string {
+    public normalizeColourKey(value: string): string {
         const raw = this.stripBrackets(value || '').toLowerCase().trim();
         if (!raw) return '';
         const dynafitCodeMatch = raw.match(/^dyn\s*-\s*([a-z0-9]{4})\b/i);
@@ -1822,7 +1822,7 @@ export class ExcelEngine {
         return `${mm}/${dd}/${date.getFullYear()}`;
     }
 
-    private stripBrackets(value: string): string {
+    public stripBrackets(value: string): string {
         if (!value) return value;
         return value.replace(/\[([^\]]+)\]/g, '$1').replace(/\[|\]/g, '').replace(/\s+/g, ' ').trim();
     }

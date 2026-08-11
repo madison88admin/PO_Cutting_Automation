@@ -49,5 +49,11 @@ export async function withAuth(
         );
     }
 
-    return handler(req, session);
+    try {
+        return await handler(req, session);
+    } catch (err) {
+        console.error("[withAuth] Handler error:", err);
+        const message = err instanceof Error ? err.message : "Internal server error";
+        return NextResponse.json({ error: message }, { status: 500 });
+    }
 }

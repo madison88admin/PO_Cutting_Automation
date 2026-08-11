@@ -127,10 +127,6 @@ export async function POST(req: NextRequest) {
         const manualBrand = (formData.get("manualBrand")?.toString() || "").trim();
         const inferredManualCustomer = manualCustomer || (files.some((f) => /vuori/i.test(f.name)) ? "Vuori" : "");
 
-        if (!manualPo) {
-            return NextResponse.json({ error: "Manual PO is required." }, { status: 400 });
-        }
-
         console.log("[upload] received request", {
             userId,
             fileCount: files?.length || 0,
@@ -367,6 +363,22 @@ export async function POST(req: NextRequest) {
             sizes: Buffer.from(outputs.sizes as any).toString('base64')
         };
 
+        const debugLines = mergedData.slice(0, 2).map((po: any) => ({
+            po: po.header?.purchaseOrder,
+            lines: po.lines?.slice(0, 2).map((line: any) => ({
+                styleNumber: line.styleNumber,
+                style: line.style,
+                product: line.product,
+                colour: line.colour,
+                color: line.color,
+                styleColor: line.styleColor,
+                colourName: line.colourName,
+                colourDisplay: line.colourDisplay,
+                rawColour: line.rawColour,
+            })),
+        }));
+        console.log('[upload] output line debug:', JSON.stringify(debugLines, null, 2));
+
         const summary = fileSummaries;
         return NextResponse.json({
             success: true,
@@ -376,6 +388,7 @@ export async function POST(req: NextRequest) {
             canProceed: !hasCritical,
             files: filesOut,
             fileSummary: summary,
+            output: mergedData,
             mergedSummary: {
                 orders: mergedData.length,
                 lines: mergedData.reduce((a, p) => a + p.lines.length, 0),
