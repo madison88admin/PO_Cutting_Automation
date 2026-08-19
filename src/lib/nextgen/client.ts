@@ -119,10 +119,10 @@ export class NextGenCachedClient {
         return this.searchStyleFallback(style);
     }
 
-    async searchVariant(style: string, colorHint: string): Promise<NextGenStyleInfo | null> {
-        const cacheKey = `${style}|${colorHint}`;
+    async searchVariant(style: string, colorHint: string, brand?: string): Promise<NextGenStyleInfo | null> {
+        const cacheKey = `${style}|${colorHint}|${brand || ''}`;
         if (this.cache.hasStyle(cacheKey)) return this.cache.getStyle(cacheKey) || null;
-        const info = await this.search.searchVariant(style, colorHint);
+        const info = await this.search.searchVariant(style, colorHint, brand);
         this.cache.setStyle(cacheKey, info || { style });
         return info;
     }

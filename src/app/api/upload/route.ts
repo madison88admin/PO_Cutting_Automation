@@ -408,20 +408,43 @@ export async function POST(req: NextRequest) {
         const nextgenClient = process.env.NEXTGEN_ENABLED !== 'false' ? new NextGenCachedClient() : null;
         const variantCache = new Map<string, Awaited<ReturnType<NextGenCachedClient["searchVariant"]>>>();
         if (nextgenClient) {
-            const variantRequests = new Map<string, { style: string; color: string }>();
+            // Determine the best style code to use for NextGen search.
+            // styleNumber from excel-engine is already the correct style code (NF0A8CGZ).
+            // Only fall back to styleColor if styleNumber is empty or a descriptive name.
+            const resolveStyleForSearch = (line: any): string => {
+                const sn = String(line.styleNumber || '').trim();
+                const sc = String(line.styleColor || '').trim();
+                const pcr = String(line.productCustomerRef || '').trim();
+                // styleNumber is already the correct code (set by excel-engine)
+                if (sn && /\d/.test(sn) && !/\s/.test(sn)) return sn;
+                // productCustomerRef might be a code
+                if (pcr && /\d/.test(pcr) && !/\s/.test(pcr)) return pcr;
+                // Fall back to styleColor — try to extract style part by removing color suffix
+                if (sc && /\d/.test(sc) && !/\s/.test(sc)) {
+                    // NF0A8CGZE8J → NF0A8CGZ (remove last 3-4 alphanumeric chars)
+                    const stripped = sc.replace(/[A-Z0-9]{3,4}$/, '');
+                    if (stripped && stripped.length >= 5) return stripped;
+                    return sc;
+                }
+                // Last resort: use styleNumber even if it's a name
+                return sn || sc || pcr;
+            };
+
+            const variantRequests = new Map<string, { style: string; color: string; brand: string }>();
             for (const po of mergedData) {
+                const poBrand = String(po.header?.brandKey || manualBrand || '').trim();
                 for (const line of po.lines) {
-                    const style = String(line.styleNumber || line.productCustomerRef || '').trim();
+                    const style = resolveStyleForSearch(line);
                     const color = String(line.styleColor || line.rawColour || line.colour || '').trim();
-                    if (style && color) variantRequests.set(`${style.toLowerCase()}|${color.toLowerCase()}`, { style, color });
+                    if (style && color) variantRequests.set(`${style.toLowerCase()}|${color.toLowerCase()}`, { style, color, brand: poBrand });
                 }
             }
             await Promise.all([...variantRequests.entries()].map(async ([key, request]) => {
-                variantCache.set(key, await nextgenClient.searchVariant(request.style, request.color));
+                variantCache.set(key, await nextgenClient.searchVariant(request.style, request.color, request.brand));
             }));
             for (const po of mergedData) {
                 for (const line of po.lines) {
-                    const style = String(line.styleNumber || line.productCustomerRef || '').trim();
+                    const style = resolveStyleForSearch(line);
                     const color = String(line.styleColor || line.rawColour || line.colour || '').trim();
                     const match = variantCache.get(`${style.toLowerCase()}|${color.toLowerCase()}`);
                     const selectedOverride = nextgenOverrides[`${style.toLowerCase()}|${color.toLowerCase()}`] as NextGenVariantCandidate | undefined;
@@ -432,6 +455,22 @@ export async function POST(req: NextRequest) {
                         line.colour = selectedOverride.colorName;
                         line.productExternalRef = selectedOverride.productExternalRef || '';
                         line.productCustomerRef = selectedOverride.productCustomerRef || style;
+                        // --- Learning Layer: save user correction ---
+                        const poBrand = String(po.header?.brandKey || manualBrand || '').trim();
+                        if (poBrand && match?.product && match.product !== selectedOverride.product) {
+                            const { saveUserCorrection } = await import("@/lib/learning/cache");
+                            void saveUserCorrection(
+                                style, color, poBrand,
+                                match.product || '',
+                                selectedOverride.product,
+                                0,
+                                selectedOverride.colorName || '',
+                                String(selectedOverride.colorCode || ''),
+                                userId || '',
+                            ).catch(() => {});
+                            console.log(`[learning-layer] Saved user correction: ${style}/${color} → ${selectedOverride.product}`);
+                        }
+                        // --- End Learning Layer ---
                     } else if (!style) {
                         code = "MISSING_STYLE";
                         message = "No buyer style, material, SKU, or product reference was found.";

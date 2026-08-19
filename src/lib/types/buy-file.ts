@@ -11,6 +11,7 @@ export interface BuyFileItem {
     deliveryDate: string | null;
     season: string | null;
     customer: string | null;
+    brand: string | null;
     factory: string | null;
     currency: string | null;
     unitCost: number | null;
@@ -89,6 +90,10 @@ export interface NextGenStyleInfo {
     customer?: string | null;
     factory?: string | null;
     currency?: string | null;
+    // Enrichment fields extracted from NextGen option data — replaces product sheet
+    unitCost?: number | null;          // FOB cost from NextGen
+    costingReference?: string | null;  // Costing reference from NextGen
+    sellPrice?: number | null;         // Sell price from NextGen
     matchStatus?: 'matched' | 'ambiguous';
     matchScore?: number | null;
     matchReason?: string | null;

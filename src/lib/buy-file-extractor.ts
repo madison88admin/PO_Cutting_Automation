@@ -8,6 +8,7 @@ import { ExcelEngine } from '@/lib/excel-engine';
 import type { ProductSheetRow } from '@/lib/excel-engine';
 import { mergeBuyFileWithNextGen } from '@/lib/merge/merge-buy-nextgen';
 import { BuyFileItem, ColumnMapping, NextGenStyleInfo, ProductData } from '@/lib/types/buy-file';
+import { lookupBrand, getAllBrandAliases } from '@/lib/brand-config';
 
 const INTERNAL_TO_CANONICAL: Record<string, keyof ColumnMapping> = {
     purchaseOrder: 'po_number',
@@ -109,6 +110,9 @@ function enrichItemsWithProductSheet(
 
     const engine = new ExcelEngine();
     return items.map((item) => {
+        // If NextGen already matched this item, only fill gaps from product sheet
+        const alreadyMatched = item.matchStatus === 'matched' || item.matchStatus === 'ambiguous';
+
         const styleRaw = engine.stripBrackets(item.style || '').trim();
         const colorRaw = item.colorCode || item.color || '';
         const colorKey = engine.normalizeColourKey(colorRaw);
@@ -117,6 +121,8 @@ function enrichItemsWithProductSheet(
         const candidates = deduplicateProductRows(exactMatches);
 
         if (!candidates.length) {
+            // Don't downgrade a NextGen match to unmatched just because product sheet has no data
+            if (alreadyMatched) return item;
             return {
                 ...item,
                 matchStatus: 'unmatched',
@@ -133,23 +139,27 @@ function enrichItemsWithProductSheet(
         const ambiguous = Boolean(runnerUp && runnerUp.score === bestResult.score && productIdentity(runnerUp.row) !== productIdentity(bestResult.row));
         const best = bestResult.row;
 
+        // Only fill fields that are still blank (don't overwrite NextGen data)
         return {
             ...item,
-            product: best.productName || null,
-            productExternalRef: best.productExternalRef || null,
-            costingReference: best.costingReference || null,
+            product: item.product || best.productName || null,
+            productExternalRef: item.productExternalRef || best.productExternalRef || null,
+            costingReference: item.costingReference || best.costingReference || null,
             color: item.color || best.colour || null,
             colorName: item.colorName || best.colourName || null,
             sku: item.sku || best.productExternalRef || null,
             factory: item.factory || best.factory || null,
-            customer: best.customerName || item.customer || null,
+            customer: item.customer || best.customerName || null,
             season: item.season || best.season || null,
             poNumber: item.poNumber || best.poNumber || null,
-            matchStatus: ambiguous ? 'ambiguous' : 'matched',
-            matchScore: bestResult.score,
-            matchReason: ambiguous
-                ? `Multiple product export records share the top score (${bestResult.score})`
-                : bestResult.reasons.join('; '),
+            unitCost: item.unitCost ?? toFiniteNumber(best.cost) ?? null,
+            matchStatus: alreadyMatched ? item.matchStatus : (ambiguous ? 'ambiguous' : 'matched'),
+            matchScore: alreadyMatched ? item.matchScore : bestResult.score,
+            matchReason: alreadyMatched
+                ? item.matchReason
+                : ambiguous
+                    ? `Multiple product export records share the top score (${bestResult.score})`
+                    : bestResult.reasons.join('; '),
         };
     });
 }
@@ -394,6 +404,302 @@ export async function extractBuyFile(
     throw new Error('No data found in any worksheet');
 }
 
+// ---------------------------------------------------------------------------
+// Content-based header inference
+//
+// If we know what the cell values look like, we can infer which column is
+// which — even if the header name is ambiguous or the fuzzy mapping got it
+// wrong. This is brand-agnostic and works for any Excel file structure.
+//
+// Strategy:
+//   1. Sample the first N data rows
+//   2. For each column, classify the content (style code? style name? color
+//      code? quantity? date?)
+//   3. If a column's content strongly suggests a canonical field that wasn't
+//      mapped (or was mapped to the wrong field), update the mapping
+// ---------------------------------------------------------------------------
+
+function isStyleCodeValue(v: string): boolean {
+    const s = String(v || '').trim();
+    if (!s || s.length > 20) return false;
+    return /\d/.test(s) && !/\s/.test(s);
+}
+
+function isStyleNameValue(v: string): boolean {
+    const s = String(v || '').trim();
+    if (!s || s.length < 3) return false;
+    // Style names have spaces and are mostly alpha
+    return /\s/.test(s) && !/^\d+$/.test(s);
+}
+
+function isColorCodeValue(v: string): boolean {
+    const s = String(v || '').trim();
+    if (!s || s.length > 20) return false;
+    // Color codes: short, alphanumeric, no spaces, often 3-10 chars (E8J, JK3, BOA)
+    return s.length >= 2 && s.length <= 12 && /[a-zA-Z]/.test(s) && /\d/.test(s) && !/\s/.test(s);
+}
+
+function isQuantityValue(v: string | number): boolean {
+    const n = Number(v);
+    return !isNaN(n) && n > 0 && Number.isFinite(n) && n === Math.floor(n);
+}
+
+function isDateValue(v: any): boolean {
+    return v instanceof Date || (typeof v === 'string' && /\d{4}[-/]\d{2}[-/]\d{2}/.test(v));
+}
+
+/**
+ * Looks at cell values in the first N data rows and infers which column
+ * maps to which canonical field. Overrides or supplements the header-based
+ * mapping.
+ *
+ * Returns an updated ColumnMapping.
+ */
+function inferHeadersFromContent(
+    rows: (string | number | Date | null)[][],
+    headerRowIndex: number,
+    headers: string[],
+    existingMapping: ColumnMapping,
+): ColumnMapping {
+    const mapping = { ...existingMapping };
+    const sampleSize = Math.min(20, rows.length - headerRowIndex - 1);
+    if (sampleSize < 3) return mapping; // not enough data to infer
+
+    // Track which headers are already mapped
+    const mappedHeaders = new Set(Object.values(mapping as Record<string, string>));
+    const mappedFields = new Set(Object.keys(mapping as Record<string, string>));
+
+    // Analyze each column
+    const columnStats: Record<number, {
+        styleCodeCount: number;
+        styleNameCount: number;
+        colorCodeCount: number;
+        quantityCount: number;
+        dateCount: number;
+        nonEmptyCount: number;
+        totalLength: number;
+    }> = {};
+
+    for (let c = 0; c < headers.length; c++) {
+        columnStats[c] = {
+            styleCodeCount: 0,
+            styleNameCount: 0,
+            colorCodeCount: 0,
+            quantityCount: 0,
+            dateCount: 0,
+            nonEmptyCount: 0,
+            totalLength: 0,
+        };
+
+        for (let r = headerRowIndex + 1; r <= headerRowIndex + sampleSize && r < rows.length; r++) {
+            const row = rows[r];
+            if (!row || c >= row.length) continue;
+            const val = row[c];
+            if (val === null || val === undefined || val === '') continue;
+
+            const stats = columnStats[c];
+            stats.nonEmptyCount++;
+            const strVal = String(val).trim();
+
+            if (isStyleCodeValue(strVal)) stats.styleCodeCount++;
+            else if (isStyleNameValue(strVal)) stats.styleNameCount++;
+
+            if (isColorCodeValue(strVal)) stats.colorCodeCount++;
+            if (isQuantityValue(val as string | number)) stats.quantityCount++;
+            if (isDateValue(val)) stats.dateCount++;
+            stats.totalLength += strVal.length;
+        }
+    }
+
+    // Score each column for each canonical field
+    const fieldCandidates: Record<string, { colIndex: number; score: number; header: string }[]> = {
+        buyer_style_number: [],
+        buyer_style_name: [],
+        color_code: [],
+        quantity: [],
+        delivery_date: [],
+    };
+
+    const ratio = (stats: { nonEmptyCount: number }, count: number) => stats.nonEmptyCount > 0 ? count / stats.nonEmptyCount : 0;
+
+    for (let c = 0; c < headers.length; c++) {
+        const stats = columnStats[c];
+        if (stats.nonEmptyCount < 2) continue;
+        const header = headers[c];
+
+        // Style code: most values look like codes (NF0A8CGZ, VN0A3XYZ)
+        if (ratio(stats, stats.styleCodeCount) >= 0.6) {
+            fieldCandidates.buyer_style_number.push({
+                colIndex: c,
+                score: ratio(stats, stats.styleCodeCount),
+                header,
+            });
+        }
+
+        // Style name: most values look like names (SALTY LINED BEANIE)
+        if (ratio(stats, stats.styleNameCount) >= 0.6) {
+            fieldCandidates.buyer_style_name.push({
+                colIndex: c,
+                score: ratio(stats, stats.styleNameCount),
+                header,
+            });
+        }
+
+        // Color code: most values look like color codes (E8J, JK3)
+        if (ratio(stats, stats.colorCodeCount) >= 0.5 && stats.nonEmptyCount >= 3) {
+            fieldCandidates.color_code.push({
+                colIndex: c,
+                score: ratio(stats, stats.colorCodeCount),
+                header,
+            });
+        }
+
+        // Quantity: most values are positive integers
+        if (ratio(stats, stats.quantityCount) >= 0.7) {
+            fieldCandidates.quantity.push({
+                colIndex: c,
+                score: ratio(stats, stats.quantityCount),
+                header,
+            });
+        }
+
+        // Delivery date: most values are dates
+        if (ratio(stats, stats.dateCount) >= 0.6) {
+            fieldCandidates.delivery_date.push({
+                colIndex: c,
+                score: ratio(stats, stats.dateCount),
+                header,
+            });
+        }
+    }
+
+    // Sort candidates by score (highest first)
+    for (const field of Object.keys(fieldCandidates)) {
+        fieldCandidates[field].sort((a, b) => b.score - a.score);
+    }
+
+    // Apply content-based inference:
+    // 1. If buyer_style_number is NOT mapped but we found a style code column → map it
+    // 2. If buyer_style_number IS mapped but to a style NAME column, and we found a
+    //    better style CODE column → override it
+    // 3. Same logic for other fields
+
+    const usedColumns = new Set<number>();
+
+    // Mark already-mapped columns as used
+    for (let c = 0; c < headers.length; c++) {
+        if (mappedHeaders.has(headers[c])) usedColumns.add(c);
+    }
+
+    for (const [field, candidates] of Object.entries(fieldCandidates)) {
+        if (candidates.length === 0) continue;
+
+        const best = candidates[0];
+        if (usedColumns.has(best.colIndex)) continue;
+
+        const currentMapping = (mapping as Record<string, string>)[field];
+
+        if (!currentMapping) {
+            // Field not mapped — use content-based inference
+            (mapping as Record<string, string>)[field] = best.header;
+            usedColumns.add(best.colIndex);
+            mappedHeaders.add(best.header);
+            console.log(`[content-inference] ${field} <= "${best.header}" (content-based, score: ${(best.score * 100).toFixed(0)}%)`);
+        } else if (field === 'buyer_style_number') {
+            // Special case: if buyer_style_number is mapped to a column whose
+            // content looks like style NAMES (not codes), and we found a column
+            // whose content looks like style CODES, override it.
+            const currentColIndex = headers.indexOf(currentMapping);
+            const currentStats = columnStats[currentColIndex];
+            if (currentStats && ratio(currentStats, currentStats.styleNameCount) >= 0.5 && ratio(currentStats, currentStats.styleCodeCount) < 0.2) {
+                // Current mapping points to a style NAME column — override with style CODE column
+                (mapping as Record<string, string>)[field] = best.header;
+                usedColumns.add(best.colIndex);
+                mappedHeaders.add(best.header);
+                mappedHeaders.delete(currentMapping);
+                usedColumns.delete(currentColIndex);
+                // Try to remap the old column to buyer_style_name
+                if (!mappedFields.has('buyer_style_name')) {
+                    (mapping as Record<string, string>)['buyer_style_name'] = currentMapping;
+                    mappedHeaders.add(currentMapping);
+                    usedColumns.add(currentColIndex);
+                    mappedFields.add('buyer_style_name');
+                    console.log(`[content-inference] buyer_style_name <= "${currentMapping}" (remapped from buyer_style_number)`);
+                }
+                console.log(`[content-inference] buyer_style_number <= "${best.header}" (OVERRIDE: was "${currentMapping}", score: ${(best.score * 100).toFixed(0)}%)`);
+            }
+        }
+    }
+
+    return mapping;
+}
+
+/**
+ * Detect brand from headers, customer hint, and cell content.
+ * Checks:
+ *   1. customerHint (filename-derived) against brand aliases
+ *   2. Header text against brand aliases
+ *   3. Cell values in customer/brand columns against brand aliases
+ *   4. Style code prefixes (NF0A = TNF, VN0A = Vans, etc.)
+ */
+function detectBrandFromContent(
+    headers: string[],
+    rows: (string | number | Date | null)[][],
+    headerRowIndex: number,
+    customerHint?: string,
+): string | null {
+    const aliases = getAllBrandAliases();
+
+    // 1. Check customerHint
+    if (customerHint) {
+        const brand = lookupBrand(customerHint);
+        if (brand) return brand;
+        // Try partial match (e.g. "JUL - Buy File INDONESIA MADISON 88" contains no brand)
+        // but "TNF Buy File" would match
+        const lower = customerHint.toLowerCase();
+        for (const alias of aliases) {
+            if (lower.includes(alias.toLowerCase())) {
+                const b = lookupBrand(alias);
+                if (b) return b;
+            }
+        }
+    }
+
+    // 2. Check headers
+    for (const header of headers) {
+        const brand = lookupBrand(header);
+        if (brand) return brand;
+    }
+
+    // 3. Check cell values in first few data rows
+    const sampleSize = Math.min(10, rows.length - headerRowIndex - 1);
+    for (let r = headerRowIndex + 1; r <= headerRowIndex + sampleSize && r < rows.length; r++) {
+        const row = rows[r];
+        if (!row) continue;
+        for (const cell of row) {
+            const val = String(cell || '').trim();
+            if (!val) continue;
+            const brand = lookupBrand(val);
+            if (brand) return brand;
+        }
+    }
+
+    // 4. Check style code prefixes in data
+    for (let r = headerRowIndex + 1; r <= headerRowIndex + sampleSize && r < rows.length; r++) {
+        const row = rows[r];
+        if (!row) continue;
+        for (const cell of row) {
+            const val = String(cell || '').trim();
+            if (!val || !/\d/.test(val) || /\s/.test(val)) continue;
+            // NF0A... = TNF, VN0A... = Vans, etc.
+            if (/^NF0[A-Z]/i.test(val)) return lookupBrand('tnf');
+            if (/^VN0[A-Z]/i.test(val)) return lookupBrand('vans');
+        }
+    }
+
+    return null;
+}
+
 async function extractFromSheet(
     sheet: { name: string; rows: (string | number | Date | null)[][] },
     headerRow: number,
@@ -421,7 +727,7 @@ async function extractFromSheet(
     } else {
         // 3. Build mapping from legacy DB + AI + heuristic fallback
         const legacyMapping = await loadLegacyMapping(customerHint);
-        const aiMappingResult = await mapHeaders(headers);
+        const aiMappingResult = await mapHeaders(headers, customerHint);
 
         mapping = mergeMappings(headers, legacyMapping, aiMappingResult.mapping);
         unmappedColumns = headers.filter((h) => !Object.values(mapping as Record<string, string>).includes(h));
@@ -431,18 +737,31 @@ async function extractFromSheet(
     console.log('[buy-file-extractor] mapping:', JSON.stringify(mapping));
     console.log('[buy-file-extractor] unmappedColumns:', JSON.stringify(unmappedColumns));
 
-    // 4. Read all rows locally
-    console.log('[buy-file-extractor] reading all rows locally');
-    let items = readAllRows(sheet.rows, headerRow, mapping, sheet.name);
-    console.log('[buy-file-extractor] extracted items:', items.length);
-
-    // 4.5 Enrich with product sheet data if available
-    if (Object.keys(productSheetMap).length) {
-        items = enrichItemsWithProductSheet(items, productSheetMap);
-        console.log('[buy-file-extractor] enriched items with product sheet:', items.length);
+    // 4a. Content-based header inference: look at cell values to fill gaps
+    // or fix wrong mappings. This is brand-agnostic and works for any Excel file.
+    if (mapping) {
+        const mappingBeforeInference = JSON.stringify(mapping);
+        mapping = inferHeadersFromContent(sheet.rows, headerRow, headers, mapping);
+        if (JSON.stringify(mapping) !== mappingBeforeInference) {
+            console.log('[buy-file-extractor] mapping after content inference:', JSON.stringify(mapping));
+        }
     }
 
-    // 5. Query NextGen for unique styles (if enabled)
+    // 4b. Read all rows locally
+    console.log('[buy-file-extractor] reading all rows locally');
+
+    // Detect brand from headers, customer hint, and cell content
+    const detectedBrand = detectBrandFromContent(headers, sheet.rows, headerRow, customerHint);
+    if (detectedBrand) {
+        console.log('[buy-file-extractor] detected brand:', detectedBrand);
+    }
+
+    let items = readAllRows(sheet.rows, headerRow, mapping, sheet.name, customerHint, detectedBrand || undefined);
+    console.log('[buy-file-extractor] extracted items:', items.length);
+
+    // 5. Query NextGen FIRST (primary enrichment source).
+    // NextGen now provides product, color, factory, cost, customer, season data.
+    // Product sheet is only a fallback for fields NextGen couldn't fill.
     const uniqueStyles = [...new Set(items.map((item) => item.style || '').filter(Boolean))];
     console.log('[buy-file-extractor] unique styles:', uniqueStyles.length);
 
@@ -454,25 +773,52 @@ async function extractFromSheet(
         const variants = [...new Map(items.map((item) => {
             const style = String(item.style || '').trim();
             const color = String(item.colorCode || item.color || '').trim();
-            return [`${style.toLowerCase()}|${color.toLowerCase()}`, { style, color }];
+            const brand = String(item.brand || '').trim();
+            return [`${style.toLowerCase()}|${color.toLowerCase()}`, { style, color, brand }];
         })).entries()];
         for (const [key, variant] of variants) {
-            nextgenInfo[key] = await nextgenClient.searchVariant(variant.style, variant.color);
+            nextgenInfo[key] = await nextgenClient.searchVariant(variant.style, variant.color, variant.brand);
         }
+        // Enrich items with NextGen data (primary source)
         items = items.map((item) => {
             const variantKey = `${String(item.style || '').toLowerCase()}|${String(item.colorCode || item.color || '').toLowerCase()}`;
             const ngMatch = nextgenInfo[variantKey] || null;
+            if (!ngMatch) {
+                return {
+                    ...item,
+                    matchStatus: 'unmatched',
+                    matchScore: 0,
+                    matchReason: `Buyer style ${item.style || '(blank)'} was not found in Nexgen`,
+                };
+            }
             return {
                 ...item,
-                matchStatus: ngMatch ? 'matched' : 'unmatched',
-                matchScore: ngMatch ? 100 : 0,
-                matchReason: ngMatch
-                    ? `Matched buyer style ${item.style} directly in Nexgen`
-                    : `Buyer style ${item.style || '(blank)'} was not found in Nexgen`,
+                // NextGen enrichment — fills product, color, factory, cost, customer, season
+                product: ngMatch.product || item.product || null,
+                productExternalRef: ngMatch.productExternalRef || item.productExternalRef || item.sku || null,
+                colorName: ngMatch.colorName || item.colorName || null,
+                colorCode: ngMatch.colorCode || item.colorCode || null,
+                factory: ngMatch.factory || item.factory || null,
+                customer: ngMatch.customer || item.customer || null,
+                season: ngMatch.season || item.season || null,
+                currency: ngMatch.currency || item.currency || null,
+                unitCost: ngMatch.unitCost ?? item.unitCost ?? null,
+                costingReference: ngMatch.costingReference || item.costingReference || null,
+                matchStatus: ngMatch.matchStatus || 'matched',
+                matchScore: ngMatch.matchScore ?? 100,
+                matchReason: ngMatch.matchReason || `Matched buyer style ${item.style} in Nexgen`,
             };
         });
+        console.log('[buy-file-extractor] enriched items with NextGen:', items.length);
     } else {
         console.log('[buy-file-extractor] NextGen disabled, skipping style lookups');
+    }
+
+    // 4.5 Fallback: enrich with product sheet data for fields NextGen didn't fill.
+    // This is now a secondary fallback, not the primary source.
+    if (Object.keys(productSheetMap).length) {
+        items = enrichItemsWithProductSheet(items, productSheetMap);
+        console.log('[buy-file-extractor] fallback enrichment with product sheet:', items.length);
     }
 
     // 6. Merge into single source of truth (ProductData)
@@ -515,7 +861,9 @@ function readAllRows(
     rows: (string | number | Date | null)[][],
     headerRowIndex: number,
     mapping: ColumnMapping | null,
-    sheetName: string
+    sheetName: string,
+    customerHint?: string,
+    brandHint?: string,
 ): BuyFileItem[] {
     if (!mapping) return [];
 
@@ -593,6 +941,7 @@ function readAllRows(
             deliveryDate: get('delivery_date'),
             season: get('season'),
             customer: get('customer'),
+            brand: brandHint || customerHint || null,
             factory: get('factory'),
             currency: get('currency') || 'USD',
             unitCost: unitCost && !isNaN(unitCost) ? unitCost : null,

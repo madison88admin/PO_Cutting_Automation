@@ -1,5 +1,7 @@
 import { NextGenClient } from '@/lib/nextgen';
 import { NextGenStyleInfo } from '@/lib/types/buy-file';
+import { findClosestStyleMatch, sizesEquivalent, colorsEquivalent } from '@/lib/fuzzy';
+import { getCachedNextGenMatch, saveNextGenMatch, getUserCorrection } from '@/lib/learning/cache';
 
 const SEARCH_BASE_URL = process.env.NEXTGEN_SEARCH_BASE_URL || process.env.NEXTGEN_BASE_URL || 'https://nextgen.madison88.com';
 const SEARCH_ENTITY_TYPES = process.env.NEXTGEN_SEARCH_ENTITY_TYPES || '0,5,6,138,80,121,9,222,163,69,23,41,139,42';
@@ -19,6 +21,8 @@ function stripStylePrefix(style: string): string {
     if (custom) {
         return cleaned.replace(new RegExp('^' + custom, 'i'), '').trim();
     }
+    // Use brand config for prefix stripping — supports all configured brands
+    // Falls back to TNF defaults for backward compatibility
     return cleaned
         .replace(/^(NF00|NF0|NF)/i, '')
         .trim();
@@ -101,10 +105,85 @@ export class NextGenSearchClient {
         }
     }
 
-    async searchVariant(style: string, colorHint: string): Promise<NextGenStyleInfo | null> {
+    async searchVariant(style: string, colorHint: string, brand?: string): Promise<NextGenStyleInfo | null> {
         const targetStyle = style.trim();
         const colorCode = this.extractColorCode(style, colorHint);
         if (!targetStyle || !String(colorHint || '').trim()) return this.searchStyle(style);
+
+        // --- Learning Layer: check cache before hitting NextGen ---
+        const brandKey = (brand || '').toLowerCase();
+        if (brandKey) {
+            // 1. Check user corrections first (highest priority)
+            const correction = await getUserCorrection(targetStyle, colorHint, brandKey);
+            if (correction) {
+                console.log(`[learning-layer] Using user correction: ${targetStyle}/${colorHint} → ${correction.corrected_nextgen_product}`);
+                return {
+                    style,
+                    product: correction.corrected_nextgen_product,
+                    productRange: null,
+                    productExternalRef: style,
+                    productCustomerRef: style,
+                    styleName: null,
+                    brand: brandKey,
+                    season: null,
+                    department: null,
+                    colorName: correction.corrected_color_name || null,
+                    colorCode: correction.corrected_color_code || colorCode,
+                    colorExt: null,
+                    sizeScale: null,
+                    purchaseUOM: 'PCS',
+                    sellingUOM: 'PCS',
+                    supplierProfile: null,
+                    customer: null,
+                    factory: null,
+                    currency: null,
+                    unitCost: null,
+                    costingReference: null,
+                    sellPrice: null,
+                    matchStatus: 'matched',
+                    matchScore: 100,
+                    matchReason: 'User-corrected match (cached).',
+                    candidateCount: 1,
+                    candidates: [],
+                };
+            }
+
+            // 2. Check NextGen match cache
+            const cached = await getCachedNextGenMatch(targetStyle, colorHint, brandKey);
+            if (cached) {
+                console.log(`[learning-layer] Cache hit: ${targetStyle}/${colorHint} → ${cached.nextgen_product} (hits: ${cached.hit_count})`);
+                return {
+                    style,
+                    product: cached.nextgen_product,
+                    productRange: null,
+                    productExternalRef: style,
+                    productCustomerRef: style,
+                    styleName: cached.nextgen_style_name || null,
+                    brand: brandKey,
+                    season: null,
+                    department: null,
+                    colorName: cached.nextgen_color_name || null,
+                    colorCode: cached.nextgen_color_code || colorCode,
+                    colorExt: null,
+                    sizeScale: null,
+                    purchaseUOM: 'PCS',
+                    sellingUOM: 'PCS',
+                    supplierProfile: null,
+                    customer: null,
+                    factory: cached.factory,
+                    currency: cached.currency,
+                    unitCost: cached.unit_cost,
+                    costingReference: cached.costing_reference,
+                    sellPrice: null,
+                    matchStatus: 'matched',
+                    matchScore: cached.match_score,
+                    matchReason: `Cached match (hits: ${cached.hit_count}). ${cached.match_reason}`,
+                    candidateCount: 1,
+                    candidates: [],
+                };
+            }
+        }
+        // --- End Learning Layer cache check ---
 
         const catalog = await this.getVariantCatalog(targetStyle);
         const variantMatches = catalog.flatMap(({ product, options }) => {
@@ -157,7 +236,7 @@ export class NextGenSearchClient {
                 ) === index
             )
             .slice(0, 8);
-        return {
+        const result: NextGenStyleInfo = {
             style,
             product: selected.product.Name,
             productRange: selected.product.RangeDisplayName || null,
@@ -175,8 +254,12 @@ export class NextGenSearchClient {
             sellingUOM: 'PCS',
             supplierProfile: null,
             customer: selected.option.CustomerName || null,
-            factory: null,
-            currency: null,
+            // Extract factory/cost from NextGen option data — replaces product sheet
+            factory: this.extractOptionField(selected.option, ['Factory', 'OrderSupplierName', 'Supplier', 'Vendor', 'SupplierName']) || null,
+            currency: this.extractOptionField(selected.option, ['Currency', 'OrderCurrency', 'CurrencyCode']) || null,
+            unitCost: this.extractOptionCost(selected.option),
+            costingReference: this.extractOptionField(selected.option, ['CostingReference', 'CostReference', 'CostRef']) || null,
+            sellPrice: this.extractOptionSellPrice(selected.option),
             matchStatus: isAmbiguous ? 'ambiguous' : 'matched',
             matchScore: selected.score,
             matchReason: isAmbiguous
@@ -185,6 +268,14 @@ export class NextGenSearchClient {
             candidateCount: variantMatches.length,
             candidates,
         };
+
+        // --- Learning Layer: save successful match to cache ---
+        if (brandKey && result.matchStatus === 'matched' && result.product) {
+            void saveNextGenMatch(targetStyle, colorHint, brandKey, result).catch(() => {});
+        }
+        // --- End Learning Layer ---
+
+        return result;
     }
 
     private getVariantCatalog(style: string): Promise<Array<{ product: SearchResult; options: any[] }>> {
@@ -308,6 +399,60 @@ export class NextGenSearchClient {
             return compactValue.slice(compactStyle.length, compactStyle.length + 3);
         }
         return '';
+    }
+
+    /**
+     * Extract a string field from a NextGen option object by trying
+     * multiple possible field names. NextGen option data is not strictly
+     * typed, so we probe for common variants.
+     */
+    private extractOptionField(option: any, fieldNames: string[]): string | null {
+        if (!option || typeof option !== 'object') return null;
+        for (const name of fieldNames) {
+            const val = option[name];
+            if (val !== null && val !== undefined && String(val).trim()) {
+                return String(val).trim();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Extract FOB/unit cost from a NextGen option object.
+     * Probes common field names used by NextGen for cost data.
+     */
+    private extractOptionCost(option: any): number | null {
+        if (!option || typeof option !== 'object') return null;
+        const costFields = [
+            'FOB', 'Fob', 'fob', 'UnitCost', 'unitCost', 'Cost', 'cost',
+            'OrderUnitCost', 'PurchasePrice', 'LandedCost', 'FactoryCost',
+            'PrimaryUserDefinedFieldValuesTextUdf3', 'UDF3',
+        ];
+        for (const field of costFields) {
+            const val = option[field];
+            if (val === null || val === undefined || val === '') continue;
+            const num = typeof val === 'number' ? val : Number(String(val).replace(/[^0-9.-]/g, ''));
+            if (Number.isFinite(num) && num > 0) return num;
+        }
+        return null;
+    }
+
+    /**
+     * Extract sell price from a NextGen option object.
+     */
+    private extractOptionSellPrice(option: any): number | null {
+        if (!option || typeof option !== 'object') return null;
+        const priceFields = [
+            'SellPrice', 'sellPrice', 'WholesalePrice', 'MSRP', 'RetailPrice',
+            'Price', 'price', 'SellingPrice',
+        ];
+        for (const field of priceFields) {
+            const val = option[field];
+            if (val === null || val === undefined || val === '') continue;
+            const num = typeof val === 'number' ? val : Number(String(val).replace(/[^0-9.-]/g, ''));
+            if (Number.isFinite(num) && num > 0) return num;
+        }
+        return null;
     }
 
     private optionMatchScore(option: any, hint: string, code: string): number {
@@ -451,6 +596,7 @@ export function findBestStyleMatch(style: string, rows: any[]): { row: any; fiel
         'productExternalRef', 'ProductExternalRef', 'customerRef', 'CustomerRef', 'sku', 'SKU',
     ];
 
+    // Layer 1: exact + substring match (original logic)
     const hits: Record<string, number> = {};
     for (const row of rows) {
         for (const field of fields) {
@@ -462,13 +608,38 @@ export function findBestStyleMatch(style: string, rows: any[]): { row: any; fiel
     }
 
     const best = Object.entries(hits).sort((a, b) => b[1] - a[1])[0];
-    if (!best) return null;
-    const bestField = best[0];
-    const row = rows.find((r) => {
-        const val = normalizeKey(String(r[bestField] || ''));
-        return val && (val === target || val.includes(target));
-    });
-    return row ? { row, field: bestField } : null;
+    if (best) {
+        const bestField = best[0];
+        const row = rows.find((r) => {
+            const val = normalizeKey(String(r[bestField] || ''));
+            return val && (val === target || val.includes(target));
+        });
+        if (row) return { row, field: bestField };
+    }
+
+    // Layer 2: Levenshtein fallback — handles 1-2 char typos in style codes
+    // Only triggers if exact/substring matching found nothing.
+    if (target.length < 4) return null; // skip for very short codes (too many false positives)
+
+    let bestMatch: { row: any; field: string; distance: number } | null = null;
+    for (const row of rows) {
+        for (const field of fields) {
+            const val = String(row[field] || '').trim();
+            if (!val || val.length < 4) continue;
+            const result = findClosestStyleMatch(target, [normalizeKey(val)], 2);
+            if (!result) continue;
+            if (!bestMatch || result.distance < bestMatch.distance) {
+                bestMatch = { row, field, distance: result.distance };
+            }
+        }
+    }
+
+    if (bestMatch) {
+        console.log(`[nextgen-search] Levenshtein fallback matched style "${style}" via field "${bestMatch.field}" (distance ${bestMatch.distance})`);
+        return { row: bestMatch.row, field: bestMatch.field };
+    }
+
+    return null;
 }
 
 export function normalizeColorName(s: string): string {
@@ -479,6 +650,9 @@ export function normalizeColorName(s: string): string {
 }
 
 export function colorsMatch(a: string, b: string): boolean {
+    // Use canonical color vocabulary first, then fall back to substring
+    if (colorsEquivalent(a, b)) return true;
+    // Legacy fallback: raw normalized substring
     const na = normalizeColorName(a);
     const nb = normalizeColorName(b);
     if (!na || !nb) return false;
@@ -486,5 +660,8 @@ export function colorsMatch(a: string, b: string): boolean {
 }
 
 export function sizesMatch(a: string, b: string): boolean {
+    // Use canonical size normalization (M <-> Medium, L <-> Large, etc.)
+    if (sizesEquivalent(a, b)) return true;
+    // Legacy fallback: raw normalized exact match
     return normalizeKey(a) === normalizeKey(b);
 }

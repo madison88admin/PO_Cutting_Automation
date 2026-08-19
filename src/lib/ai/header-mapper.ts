@@ -2,6 +2,8 @@ import { jsonrepair } from 'jsonrepair';
 import { GROQ_API_KEY } from '@/lib/constants';
 import { chatWithOllamaJson } from '@/lib/ai/ollama-client';
 import { ColumnMapping, HeaderMappingResult } from '@/lib/types/buy-file';
+import { fuzzyMatchHeader } from '@/lib/fuzzy';
+import { getCachedHeaderMapping, saveHeaderMapping } from '@/lib/learning/cache';
 
 const CANONICAL_FIELDS = new Set([
     'buyer_style_number', 'buyer_style_name', 'sku', 'product_description',
@@ -51,8 +53,9 @@ const HEADER_PATTERNS: { field: string; patterns: string[] }[] = [
     { field: 'factory', patterns: ['final factory name', 'final factory', 'final vendor name', 'final vendor', 'factory name', 'factory', 'vendor', 'supplier', 'manufacturer'] },
     { field: 'currency', patterns: ['final currency', 'currency', 'curr'] },
     { field: 'unit_cost', patterns: ['fob', 'unit cost', 'unit price', 'factory cost', 'cost', 'price', 'production upcharges usd', 'material upcharges usd', 'upcharge', 'up charge'] },
-    { field: 'transport_method', patterns: ['order transport', 'transport method', 'transportation mode', 'transport mode', 'shipment method', 'shipment mode', 'shipping method', 'ship mode', 'ship via', 'mode of delivery', 'freight mode'] },
+    { field: 'transport_method', patterns: ['order transport', 'transport method', 'transportation mode', 'transportation mode description', 'transport mode', 'shipment method', 'shipment mode', 'shipping method', 'ship mode', 'ship via', 'mode of delivery', 'freight mode'] },
     { field: 'buy_information', patterns: ['buy information', 'buy info', 'buying information', 'buying info', 'purchase information', 'purchase info', 'po information', 'po info', 'buy details', 'buy detail'] },
+    { field: 'status', patterns: ['status', 'po status', 'order status', 'line status', 'workflow status', 'decision'] },
 ];
 
 function patternToRegex(pattern: string): RegExp {
@@ -83,6 +86,54 @@ function fallbackHeuristicMapping(headers: string[]): ColumnMapping {
     }
 
     return mapping;
+}
+
+/**
+ * Fuzzy matching layer: uses Fuse.js to match headers that the exact
+ * heuristic patterns missed. Runs BEFORE the AI/LLM fallback so that
+ * simple typos and minor variations don't need an LLM round-trip.
+ *
+ * Threshold 0.15 (~85% similarity) per industry standard for column
+ * header matching. Hard floor at 80% to avoid false positives.
+ */
+function fuzzyHeuristicMapping(
+    headers: string[],
+    alreadyMapped: ColumnMapping,
+): { mapping: ColumnMapping; fuzzyConfidence: number } {
+    const mapping: ColumnMapping = {};
+    const mappedHeaders = new Set(Object.values(alreadyMapped as Record<string, string>));
+    const usedFields = new Set(Object.keys(alreadyMapped as Record<string, string>));
+
+    // Build candidate list: each canonical field -> all its patterns
+    const candidateToField: Record<string, string> = {};
+    for (const { field, patterns } of HEADER_PATTERNS) {
+        for (const pattern of patterns) {
+            candidateToField[pattern] = field;
+        }
+    }
+    const candidates = Object.keys(candidateToField);
+
+    let totalSimilarity = 0;
+    let matchCount = 0;
+
+    for (let i = 0; i < headers.length; i++) {
+        if (mappedHeaders.has(headers[i])) continue;
+        const match = fuzzyMatchHeader(headers[i], candidates, 0.15);
+        if (!match) continue;
+
+        const field = candidateToField[match.key];
+        if (!field || usedFields.has(field)) continue;
+
+        (mapping as Record<string, string>)[field] = headers[i];
+        usedFields.add(field);
+        mappedHeaders.add(headers[i]);
+        totalSimilarity += match.similarity;
+        matchCount++;
+        console.log(`[header-mapper] fuzzy matched "${headers[i]}" -> ${field} (${match.similarity}% similarity)`);
+    }
+
+    const fuzzyConfidence = matchCount > 0 ? Math.round(totalSimilarity / matchCount) : 0;
+    return { mapping, fuzzyConfidence };
 }
 
 const SYSTEM_PROMPT = `You are an expert at mapping spreadsheet column headers to a canonical schema.
@@ -126,25 +177,46 @@ Map headers ONLY when you are confident. If a header does not match any canonica
 
 No markdown, no explanations, no comments.`;
 
-export async function mapHeaders(headers: string[]): Promise<HeaderMappingResult> {
+export async function mapHeaders(headers: string[], brandHint?: string): Promise<HeaderMappingResult> {
     const apiKey = GROQ_API_KEY || process.env.GROQ_API_KEY || '';
+
+    // --- Learning Layer: check header mapping cache ---
+    if (brandHint) {
+        const cached = await getCachedHeaderMapping(brandHint, headers);
+        if (cached && cached.confidence >= 80) {
+            console.log(`[header-mapper] Cache hit for brand="${brandHint}" (hits: ${cached.hit_count}, confidence: ${cached.confidence})`);
+            const mappedHeaders = new Set(Object.values(cached.mapped_headers));
+            const unmapped = headers.filter((h) => !mappedHeaders.has(h));
+            return {
+                mapping: cached.mapped_headers as ColumnMapping,
+                confidence: cached.confidence,
+                unmappedColumns: unmapped,
+            };
+        }
+    }
+    // --- End Learning Layer ---
+
     const fallback = fallbackHeuristicMapping(headers);
-    let mapping: ColumnMapping = { ...fallback };
+
+    // Fuzzy matching layer: catch typos and minor variations that exact
+    // heuristic patterns missed. Runs before AI to avoid unnecessary LLM calls.
+    const { mapping: fuzzyMapping, fuzzyConfidence } = fuzzyHeuristicMapping(headers, fallback);
+    let mapping: ColumnMapping = { ...fallback, ...fuzzyMapping };
     let confidence = 90;
     let unmappedColumns: string[] = [];
     let aiFailed = false;
 
     const prompt = `${SYSTEM_PROMPT}\n\nHeaders:\n${JSON.stringify(headers)}`;
-    const mappedFieldCount = Object.keys(fallback).length;
+    const mappedFieldCount = Object.keys(mapping).length;
     const knownLayout = Boolean(
-        fallback.buyer_style_number
-        && fallback.quantity
-        && (fallback.color || fallback.color_code)
+        mapping.buyer_style_number
+        && mapping.quantity
+        && (mapping.color || mapping.color_code)
         && mappedFieldCount >= 6
     );
 
     if (knownLayout) {
-        console.log(`[header-mapper] known layout mapped deterministically (${mappedFieldCount} fields); skipping LLM`);
+        console.log(`[header-mapper] known layout mapped deterministically + fuzzy (${mappedFieldCount} fields); skipping LLM`);
     } else {
         try {
             const rawText = await chatWithOllamaJson(SYSTEM_PROMPT, prompt);
@@ -200,17 +272,24 @@ export async function mapHeaders(headers: string[]): Promise<HeaderMappingResult
         aiFailed = true;
     }
 
-    // Merge with heuristic fallback for any missing canonical fields
-    for (const [field, header] of Object.entries(fallback)) {
+    // Merge with heuristic + fuzzy fallback for any missing canonical fields
+    const combinedFallback = { ...fallback, ...fuzzyMapping };
+    for (const [field, header] of Object.entries(combinedFallback)) {
         if (!(mapping as Record<string, string>)[field] && header) {
             (mapping as Record<string, string>)[field] = header;
-            if (aiFailed) confidence = 60;
+            if (aiFailed) confidence = Math.max(60, fuzzyConfidence || 60);
         }
     }
 
     // Determine unmapped columns from headers not referenced in mapping
     const mappedHeaders = new Set(Object.values(mapping as Record<string, string>));
     unmappedColumns = headers.filter((h) => !mappedHeaders.has(h));
+
+    // --- Learning Layer: save successful header mapping to cache ---
+    if (brandHint && confidence >= 80 && Object.keys(mapping).length >= 6) {
+        void saveHeaderMapping(brandHint, headers, mapping as Record<string, string>, confidence).catch(() => {});
+    }
+    // --- End Learning Layer ---
 
     return { mapping, confidence, unmappedColumns };
 }

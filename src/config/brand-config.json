@@ -1,0 +1,447 @@
+{
+  "_comment": "Brand configuration for PO Cutting Automation. Edit this file to add/update brands. No code changes needed.",
+  "brands": {
+    "tnf": {
+      "aliases": ["tnf", "the north face"],
+      "customerName": "The North Face In-Line",
+      "customerSubtypes": {
+        "the north face in-line": "The North Face In-Line",
+        "the north face inline": "The North Face In-Line",
+        "the north face rto": "The North Face RTO",
+        "the north face smu": "The North Face SMU",
+        "tnf in-line": "The North Face In-Line",
+        "tnf inline": "The North Face In-Line",
+        "tnf rto": "The North Face RTO",
+        "tnf smu": "The North Face SMU"
+      },
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "Major Brand Bulk",
+      "linesTemplate": "FOB Bulk EDI PO (New)",
+      "keyUsers": { "k1": "Ron", "k2": "Maricar", "k4": "Ron", "k5": "Elaine Sanchez" },
+      "stylePrefixStrip": ["NF00", "NF0", "NF"],
+      "rules": {
+        "styleNumber": {
+          "source": ["product", "productCustomerRef", "matchedStyleKey", "buyProductName", "jdeStyle"],
+          "preferCodeLike": true
+        },
+        "color": {
+          "source": ["colourNameRaw", "rawColour"]
+        }
+      }
+    },
+    "columbia": {
+      "aliases": ["col", "columbia"],
+      "customerName": "Columbia",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "BULK",
+      "linesTemplate": "BULK",
+      "keyUsers": {}
+    },
+    "arcteryx": {
+      "aliases": ["arcteryx", "arc'teryx"],
+      "customerName": "Arcteryx",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "BULK",
+      "linesTemplate": "BULK",
+      "keyUsers": {}
+    },
+    "vans": {
+      "aliases": ["vans", "vans smu"],
+      "customerName": "Vans",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "Major Brand Bulk",
+      "linesTemplate": "FOB Bulk EDI PO (New)",
+      "keyUsers": {},
+      "plantAliases": {
+        "south ontario dc": "Canada",
+        "canada brampton dc": "Canada",
+        "vf prague dc cz": "Czech Republic",
+        "vf northern europe": "UK",
+        "vf northern europe(uk)": "UK",
+        "sun and sand sports": "UAE",
+        "sun and sand sports llc": "UAE"
+      },
+      "rules": {
+        "styleNumber": {
+          "source": ["jdeStyle", "buyProductName", "product", "matchedStyleKey"],
+          "preferCodeLike": true
+        },
+        "color": {
+          "source": ["inlineColorDescription", "colourNameRaw", "rawColour"]
+        },
+        "size": {
+          "mappings": [
+            { "pattern": "^one\\s*size$", "flags": "i", "value": "One Size" }
+          ]
+        },
+        "status": {
+          "mappings": [
+            { "pattern": "^converted$", "flags": "i", "value": "Confirmed" }
+          ],
+          "default": "Confirmed"
+        },
+        "poNumber": {
+          "format": "vans"
+        }
+      }
+    },
+    "helly hansen": {
+      "aliases": ["hh", "helly hansen", "helly hansen distributie b.v.", "helly hansen aus - toll prestons", "mainfreight / helly hansen nz", "utendor spa", "helly hansen (u.s.) inc.", "helly hansen smu"],
+      "customerName": "Helly Hansen",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "Major Brand Bulk",
+      "linesTemplate": "FOB Bulk EDI PO (New)",
+      "keyUsers": { "k1": "Angelah", "k2": "Mariane", "k4": "Angelah", "k5": "Jenica" },
+      "rules": {
+        "color": {
+          "source": ["inlineColorDescription", "inlineColorName", "inlineStyleColor", "rawColour"]
+        },
+        "status": {
+          "mappings": [
+            { "pattern": "^20$", "flags": "", "value": "Confirmed" },
+            { "pattern": "^confirmed$", "flags": "i", "value": "Confirmed" }
+          ],
+          "default": "Confirmed"
+        }
+      }
+    },
+    "jack wolfskin": {
+      "aliases": ["jack wolfskin"],
+      "customerName": "Jack Wolfskin",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "Major Brand Bulk",
+      "linesTemplate": "FOB Bulk EDI PO (New)",
+      "keyUsers": { "k1": "Via", "k2": "Mary", "k4": "Via", "k5": "Elaine Sanchez" },
+      "rules": {
+        "styleNumber": {
+          "source": ["matchedStyleKey", "buyProductName", "product", "jdeStyle", "productCustomerRef", "productExternalRef"],
+          "preferCodeLike": true
+        },
+        "destination": {
+          "default": "Germany"
+        }
+      }
+    },
+    "dynafit": {
+      "aliases": ["dynafit"],
+      "customerName": "Dynafit",
+      "defaultSupplier": "Hangzhou U-Jump Arts and Crafts",
+      "ordersTemplate": "SMS PO Header",
+      "linesTemplate": "FOB Bulk EDI PO (New)",
+      "keyUsers": { "k1": "Patrick", "k2": "Sarah Jane", "k4": "Patrick", "k5": "Edbert Suan" },
+      "rules": {
+        "styleNumber": {
+          "source": ["matchedStyleKey", "buyProductName", "product", "jdeStyle"],
+          "preferCodeLike": true
+        },
+        "size": {
+          "mappings": [
+            { "pattern": "^uni\\d+$", "flags": "i", "value": "One Size" }
+          ]
+        }
+      }
+    },
+    "vuori": {
+      "aliases": ["vuori"],
+      "customerName": "Vuori",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "Major Brand Bulk",
+      "linesTemplate": "FOB Bulk EDI PO (New)",
+      "keyUsers": { "k1": "Patrick", "k2": "Mary", "k4": "Patrick", "k5": "Elaine Sanchez" },
+      "rules": {
+        "styleNumber": {
+          "source": ["buyProductName", "product", "productCustomerRef", "jdeStyle", "matchedStyleKey"],
+          "preferCodeLike": true
+        },
+        "color": {
+          "source": ["inlineColorDescription", "colourNameRaw", "rawColour"]
+        }
+      }
+    },
+    "obermeyer": {
+      "aliases": ["obermeyer"],
+      "customerName": "Obermeyer",
+      "defaultSupplier": "Hangzhou U-Jump Arts and Crafts",
+      "ordersTemplate": "Major Brand Bulk",
+      "linesTemplate": "FOB Bulk EDI PO (New)",
+      "keyUsers": { "k2": "MJ", "k4": "Louis Miguel Dural", "k5": "Elaine Sanchez" },
+      "rules": {
+        "styleNumber": {
+          "source": ["obermeyerProductName", "plmProductName", "product", "buyProductName", "matchedStyleKey"],
+          "preferCodeLike": true
+        },
+        "size": {
+          "mappings": [
+            { "pattern": "^one\\s*size$", "flags": "i", "value": "ONE SIZE" },
+            { "pattern": "^onesize$", "flags": "i", "value": "ONE SIZE" },
+            { "pattern": "-?1sz$", "flags": "i", "value": "ONE SIZE" },
+            { "pattern": "\\b1sz\\b", "flags": "i", "value": "ONE SIZE" }
+          ]
+        }
+      }
+    },
+    "ll bean": {
+      "aliases": ["ll bean", "l.l.bean"],
+      "customerName": "LL Bean",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "Major Brand Bulk",
+      "linesTemplate": "FOB Bulk EDI PO (New)",
+      "keyUsers": {}
+    },
+    "marmot": {
+      "aliases": ["marmot"],
+      "customerName": "Marmot",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "Major Brand Bulk",
+      "linesTemplate": "FOB Bulk EDI PO (New)",
+      "keyUsers": {}
+    },
+    "prana": {
+      "aliases": ["prana"],
+      "customerName": "Prana",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "Major Brand Bulk",
+      "linesTemplate": "FOB Bulk Non EDI PO (New)",
+      "keyUsers": { "k1": "Jessie", "k2": "Maricon Alvarez", "k4": "Deaunne", "k5": "Elaine Sanchez" },
+      "rules": {
+        "color": {
+          "source": ["pranaColorTextRaw", "pranaColorCodeRaw", "rawColour"]
+        }
+      }
+    },
+    "fox racing": {
+      "aliases": ["fox racing"],
+      "customerName": "Fox Racing",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "BULK",
+      "linesTemplate": "BULK",
+      "keyUsers": { "k1": "Ron", "k2": "Maricar", "k4": "Ron", "k5": "Pam" }
+    },
+    "511 tactical": {
+      "aliases": ["511 tactical"],
+      "customerName": "511 Tactical",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "BULK",
+      "linesTemplate": "BULK",
+      "keyUsers": { "k1": "Shania", "k2": "Joy", "k4": "Ron", "k5": "Jay" }
+    },
+    "evo": {
+      "aliases": ["evo"],
+      "customerName": "Evo",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "BULK",
+      "linesTemplate": "BULK",
+      "keyUsers": { "k1": "Shania", "k2": "Mariane", "k4": "Ron", "k5": "Edbert" }
+    },
+    "haglofs": {
+      "aliases": ["haglofs"],
+      "customerName": "Haglofs",
+      "defaultSupplier": "Hangzhou U-Jump",
+      "ordersTemplate": "BULK",
+      "linesTemplate": "BULK",
+      "keyUsers": { "k1": "Shania", "k2": "Mariane", "k4": "Ron", "k5": "Edbert" }
+    },
+    "rossignol": {
+      "aliases": ["rossignol"],
+      "customerName": "Rossignol",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "Major Brand Bulk",
+      "linesTemplate": "FOB Bulk EDI PO (New)",
+      "keyUsers": { "k1": "Via", "k2": "April Joy", "k4": "Via", "k5": "Elaine Sanchez" },
+      "rules": {
+        "styleNumber": {
+          "source": ["rossignolM88Ref", "rossignolProductCode", "buyProductName", "product", "matchedStyleKey"],
+          "preferCodeLike": true
+        },
+        "color": {
+          "source": ["inlineColorName", "colourNameRaw", "rawColour"]
+        }
+      }
+    },
+    "burton": {
+      "aliases": ["burton"],
+      "customerName": "Burton",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "BULK",
+      "linesTemplate": "BULK",
+      "keyUsers": {},
+      "rules": {
+        "styleNumber": {
+          "source": ["inlineProductName", "buyProductName", "product", "matchedStyleKey"],
+          "preferCodeLike": true
+        },
+        "size": {
+          "mappings": [
+            { "pattern": "\\b1sz\\b", "flags": "i", "value": "One Size" },
+            { "pattern": "\\bfit\\s*all\\b", "flags": "i", "value": "One Size" },
+            { "pattern": "\\bone\\s*size\\b", "flags": "i", "value": "One Size" },
+            { "pattern": "\\breg(?:ular)?\\b", "flags": "i", "value": "Reg Fit" },
+            { "pattern": "\\brg1sz\\b", "flags": "i", "value": "Reg Fit" },
+            { "pattern": "\\breg\\s*fit\\b", "flags": "i", "value": "Reg Fit" },
+            { "pattern": "\\bhelmet\\b", "flags": "i", "value": "Helmet Fit" },
+            { "pattern": "\\bhs\\b", "flags": "i", "value": "Helmet Fit" },
+            { "pattern": "\\bhelmet\\s*sz\\b", "flags": "i", "value": "Helmet Fit" }
+          ]
+        }
+      }
+    },
+    "cotopaxi": {
+      "aliases": ["cotopaxi"],
+      "customerName": "Cotopaxi",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "BULK",
+      "linesTemplate": "BULK",
+      "keyUsers": {},
+      "rules": {
+        "poNumber": {
+          "format": "cotopaxi"
+        }
+      }
+    },
+    "hunter": {
+      "aliases": ["hunter"],
+      "customerName": "Hunter",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "BULK",
+      "linesTemplate": "BULK",
+      "keyUsers": {}
+    },
+    "on running": {
+      "aliases": ["on running", "on ag"],
+      "customerName": "On AG",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "BULK",
+      "linesTemplate": "BULK",
+      "keyUsers": {},
+      "rules": {
+        "styleNumber": {
+          "source": ["onAgProductName"],
+          "preferCodeLike": false
+        },
+        "size": {
+          "default": "One Size"
+        }
+      }
+    },
+    "66 degrees north": {
+      "aliases": ["66 degrees north"],
+      "customerName": "66 Degrees North",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "BULK",
+      "linesTemplate": "BULK",
+      "keyUsers": {}
+    },
+    "peak performance": {
+      "aliases": ["peak performance"],
+      "customerName": "Peak Performance",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "BULK",
+      "linesTemplate": "BULK",
+      "keyUsers": {}
+    },
+    "travis mathew": {
+      "aliases": ["travis mathew"],
+      "customerName": "Travis Mathew",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "BULK",
+      "linesTemplate": "BULK",
+      "keyUsers": {}
+    },
+    "roscoe": {
+      "aliases": ["roscoe"],
+      "customerName": "Roscoe",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "BULK",
+      "linesTemplate": "BULK",
+      "keyUsers": {}
+    },
+    "mammut": {
+      "aliases": ["mammut"],
+      "customerName": "Mammut",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "BULK",
+      "linesTemplate": "BULK",
+      "keyUsers": {}
+    }
+  },
+  "factoryCodes": {
+    "508582": "PT. UWU JUMP INDONESIA",
+    "1002436": "PT. UWU JUMP INDONESIA",
+    "8668:puj": "PT. UWU JUMP INDONESIA",
+    "mad001": "PT. UWU JUMP INDONESIA"
+  },
+  "plantCountryMap": {
+    "visalia dc": "USA", "visalia": "USA", "jonestown dc": "USA", "jonestown": "USA",
+    "brampton dc": "Canada", "brampton": "Canada", "dropship us": "USA",
+    "dropship international": "USA", "dropship dc": "USA", "dropship ca": "Canada",
+    "vf outdoor mexico": "Mexico", "vf outdoor mexico s de r l d": "Mexico",
+    "photoshooting": "BELGIUM", "eu main": "BELGIUM", "eu uk": "UK", "eu": "EU",
+    "japan": "Japan", "korea": "Korea", "australia": "Australia",
+    "hong kong": "Hong Kong", "china": "China", "virtual": "Dubai",
+    "argentina": "Argentina", "brazil": "Brazil", "chile": "Chile",
+    "guatemala": "Guatemala", "panama": "Panama", "peru": "PERU",
+    "uruguay": "URUGUAY", "united arab emirates": "UNITED ARAB EMIRATES",
+    "singapore": "Singapore", "apdindc": "Singapore", "israel": "Israel",
+    "south africa": "South Africa", "taiwan": "Taiwan", "thailand": "Thailand",
+    "malaysia": "Malaysia", "nepal": "Nepal", "indonesia": "Indonesia",
+    "1001": "USA", "1000": "USA", "1010": "USA", "1020": "USA",
+    "1004": "Canada", "1009": "USA", "1005": "Mexico",
+    "t909": "Japan", "d060": "BELGIUM", "d080": "UK", "eccn": "China",
+    "t007": "Taiwan", "t912": "Thailand", "t949": "Australia",
+    "t953": "Hong Kong", "t970": "China", "vd60": "Dubai",
+    "0010": "USA", "0011": "Canada", "126": "Australia", "920": "USA",
+    "120": "Iceland", "0040": "Netherlands", "0050": "Singapore",
+    "0060": "UK", "10": "USA", "11": "Canada", "40": "Netherlands",
+    "50": "Singapore", "60": "UK", "3020": "Sweden", "5001": "Hong Kong",
+    "500025": "Korea", "1656": "Poland",
+    "1023": "USA", "d010": "Czech Republic", "vd10": "UAE", "d00028": "UAE",
+    "south ontario dc": "Canada", "canada brampton dc": "Canada",
+    "vf prague dc cz": "Czech Republic", "vf northern europe": "UK",
+    "vf northern europe(uk)": "UK", "sun and sand sports": "UAE",
+    "sun and sand sports llc": "UAE"
+  },
+  "transportMap": {
+    "ocean": "Sea", "ocean freight (collect)": "Sea", "ocean freight collect": "Sea",
+    "sea": "Sea", "vessel": "Sea", "sea freight": "Sea", "seafreight": "Sea",
+    "s1 - seafreight": "Sea", "s1": "Sea", "v": "Sea", "01": "Sea", "1": "Sea",
+    "air": "Air", "air freight": "Air", "airfreight": "Air",
+    "a1 - airfreight": "Air", "a1": "Air", "a2 - airfreight": "Air", "a2": "Air",
+    "courier": "Courier", "dhl": "Courier", "fedex": "Courier", "ups": "Courier",
+    "private parcel": "Courier", "private parcel service": "Courier", "parcel": "Courier",
+    "09": "Courier", "9": "Courier", "international distributor": "Sea",
+    "maersk ocean": "Sea", "maersk": "Sea", "hapag-lloyd": "Sea", "hapag lloyd": "Sea",
+    "msc": "Sea", "cma cgm": "Sea", "evergreen": "Sea", "cosco": "Sea",
+    "yang ming": "Sea", "one": "Sea",
+    "sos - hunter sos": "Sea", "fb - hunter - fob warehouse": "Sea",
+    "sms - sample warehouse": "Sea", "dte - davies turner e-com warehouse": "Sea",
+    "hm - hammer gmbh & co. kg": "Sea", "hmcd - hammer cross dock": "Sea",
+    "exw": "Sea"
+  },
+  "validTransportValues": ["Sea", "Air", "Courier"],
+  "countryNameMap": {
+    "AE": "UAE", "AR": "Argentina", "AT": "Austria", "AU": "Australia",
+    "BR": "Brazil", "CA": "Canada", "CH": "Switzerland", "CL": "Chile",
+    "CN": "China", "CZ": "Czech Republic", "DE": "Germany", "DK": "Denmark",
+    "EC": "Ecuador", "ES": "Spain", "FR": "France", "GB": "UK", "GR": "Greece",
+    "HK": "Hong Kong", "HR": "Croatia", "HU": "Hungary", "ID": "Indonesia",
+    "IL": "Israel", "IN": "India", "IT": "Italy", "JP": "Japan", "KR": "Korea",
+    "MN": "Mongolia", "NP": "Nepal", "MT": "Malta", "MX": "Mexico", "MY": "Malaysia",
+    "NEW ZEALAND": "New Zealand", "PA": "Panama", "PE": "Peru", "PH": "Philippines",
+    "PL": "Poland", "RS": "Serbia", "RU": "Russia", "TH": "Thailand", "TR": "Turkey",
+    "TW": "Taiwan", "UK": "UK", "US": "USA",
+    "US WHOLESALE 3PL": "USA", "US RETAIL 3PL": "USA", "US ECOMM": "USA",
+    "UNITED KINGDOM": "UK", "UNITED ARAB EMIRATES": "UAE", "UNITED STATES": "USA",
+    "UY": "Uruguay", "VN": "Vietnam", "ZA": "South Africa",
+    "500025": "Korea", "SWEDEN": "Sweden", "KOREA": "Korea", "JAPAN": "Japan",
+    "HONG KONG": "Hong Kong", "GERMANY": "Germany", "FRANCE": "France",
+    "ITALY": "Italy", "SPAIN": "Spain", "NETHERLANDS": "Netherlands",
+    "BELGIUM": "Belgium", "SWITZERLAND": "Switzerland", "AUSTRIA": "Austria",
+    "DENMARK": "Denmark", "NORWAY": "Norway", "FINLAND": "Finland",
+    "POLAND": "Poland", "CZECH REPUBLIC": "Czech Republic",
+    "AUSTRALIA": "Australia", "CANADA": "Canada", "CHINA": "China",
+    "INDIA": "India", "INDONESIA": "Indonesia", "MALAYSIA": "Malaysia",
+    "THAILAND": "Thailand", "VIETNAM": "Vietnam", "TAIWAN": "Taiwan",
+    "SINGAPORE": "Singapore", "CZECHIA": "Czech Republic", "GREAT BRITAIN": "UK",
+    "TBC": "", "EU": "EU"
+  }
+}

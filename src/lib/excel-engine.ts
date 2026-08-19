@@ -3,6 +3,7 @@ import { logEvent } from "@/lib/audit";
 import { getFactoryMapping, getMloMapping, getColumnMapping, getAllColumnMappings } from "@/lib/data-loader";
 import { updateRun } from "@/lib/db/runHistory";
 import { mapHeaders } from "@/lib/ai/header-mapper";
+import { normalizeSizeByRules, normalizeStatusByRules, getPoNumberFormat, getDestinationDefault, resolveStyleNumber, resolveColor } from "@/lib/brand-rules";
 import {
     FALLBACK_COLUMN_ALIASES,
     detectPivotFormatFromHeaders,
@@ -16,6 +17,12 @@ import {
 
 // Destination code mapping for Helly Hansen and similar
 import destinationMapping from "@/config/destination-mapping.json";
+
+// Brand configuration — single source of truth for all brand-specific settings
+import {
+    getBrandConfig,
+    lookupBrand,
+} from "@/lib/brand-config";
 
 export interface POHeader {
     purchaseOrder: string;
@@ -113,329 +120,45 @@ export interface ProcessedPO {
     manualKeyDate?: string;
 }
 
-const PLANT_COUNTRY_MAP: Record<string, string> = {
-    'visalia dc':               'USA',
-    'visalia':                  'USA',
-    'jonestown dc':             'USA',
-    'jonestown':                'USA',
-    'brampton dc':              'Canada',
-    'brampton':                 'Canada',
-    'dropship us':              'USA',
-    'dropship international':   'USA',
-    'dropship dc':              'USA',
-    'dropship ca':              'Canada',
-    'vf outdoor mexico':        'Mexico',
-    'vf outdoor mexico s de r l d': 'Mexico',
-    'photoshooting':            'BELGIUM',
-    'eu main':                  'BELGIUM',
-    'eu uk':                    'UK',
-    'eu':                       'EU',
-    'japan':                    'Japan',
-    'korea':                    'Korea',
-    'australia':                'Australia',
-    'hong kong':                'Hong Kong',
-    'china':                    'China',
-    'virtual':                  'Dubai',
-    'argentina':                'Argentina',
-    'brazil':                   'Brazil',
-    'chile':                    'Chile',
-    'guatemala':                'Guatemala',
-    'panama':                   'Panama',
-    'peru':                     'PERU',
-    'uruguay':                  'URUGUAY',
-    'united arab emirates':     'UNITED ARAB EMIRATES',
-    'singapore':                'Singapore',
-    'apdindc':                  'Singapore',
-    'israel':                   'Israel',
-    'south africa':             'South Africa',
-    'taiwan':                   'Taiwan',
-    'thailand':                 'Thailand',
-    'malaysia':                 'Malaysia',
-    'nepal':                    'Nepal',
-    'indonesia':                'Indonesia',
-    '1001': 'USA',
-    '1000': 'USA',
-    '1010': 'USA',
-    '1020': 'USA',
-    '1004': 'Canada',
-    '1009': 'USA',
-    '1005': 'Mexico',
-    't909': 'Japan',
-    'd060': 'BELGIUM',
-    'd080': 'UK',
-    'eccn': 'China',
-    't007': 'Taiwan',
-    't912': 'Thailand',
-    't949': 'Australia',
-    't953': 'Hong Kong',
-    't970': 'China',
-    'vd60': 'Dubai',
-    '0010': 'USA',
-    '0011': 'Canada',
-    '126': 'Australia',
-    '920': 'USA',
-    '120': 'Iceland',
-    '0040': 'Netherlands',
-    '0050': 'Singapore',
-    '0060': 'UK',
-    '10':   'USA',
-    '11':   'Canada',
-    '40':   'Netherlands',
-    '50':   'Singapore',
-    '60':   'UK',
-    '3020': 'Sweden',
-    '5001': 'Hong Kong',
-    '500025': 'Korea',
-    '1656': 'Poland',
-    // Vans DC Plant codes
-    '1023': 'USA',
-    'd010': 'Czech Republic',
-    'vd10': 'UAE',
-    'd00028': 'UAE',
-    // Vans DC Plant name patterns
-    'south ontario dc': 'Canada',
-    'canada brampton dc': 'Canada',
-    'vf prague dc cz': 'Czech Republic',
-    'vf northern europe': 'UK',
-    'vf northern europe(uk)': 'UK',
-    'sun and sand sports': 'UAE',
-    'sun and sand sports llc': 'UAE',
-};
+// =============================================================================
+// Brand-specific configuration — loaded from src/config/brand-config.json
+// To add a new brand, edit the JSON file. No code changes needed here.
+// =============================================================================
 
-const BRAND_SUPPLIER_MAP: Record<string, string> = {
-    col: "PT. UWU JUMP INDONESIA",
-    columbia: "PT. UWU JUMP INDONESIA",
-    tnf: "PT. UWU JUMP INDONESIA",
-    "the north face": "PT. UWU JUMP INDONESIA",
-    arcteryx: "PT. UWU JUMP INDONESIA",
-    "arc'teryx": "PT. UWU JUMP INDONESIA",
-    "fox racing": "PT. UWU JUMP INDONESIA",
-    "511 tactical": "PT. UWU JUMP INDONESIA",
-    "haglofs": "Hangzhou U-Jump",
-    "obermeyer": "Hangzhou U-Jump Arts and Crafts",
-    "on running": "PT. UWU JUMP INDONESIA",
-    "on ag": "PT. UWU JUMP INDONESIA",
-    "66 degrees north": "PT. UWU JUMP INDONESIA",
-    "peak performance": "PT. UWU JUMP INDONESIA",
-    "prana": "PT. UWU JUMP INDONESIA",
-    "burton": "PT. UWU JUMP INDONESIA",
-    "cotopaxi": "PT. UWU JUMP INDONESIA",
-    "hunter": "PT. UWU JUMP INDONESIA",
-    "vuori": "PT. UWU JUMP INDONESIA",
-    "helly hansen": "PT. UWU JUMP INDONESIA",
-    hh: "PT. UWU JUMP INDONESIA",
-    "jack wolfskin": "PT. UWU JUMP INDONESIA",
-    "ll bean": "PT. UWU JUMP INDONESIA",
-    "l.l.bean": "PT. UWU JUMP INDONESIA",
-    marmot: "PT. UWU JUMP INDONESIA",
-    // New brands
-    "dynafit": "Hangzhou U-Jump Arts and Crafts",
-    "travis mathew": "PT. UWU JUMP INDONESIA",
-    "vans": "PT. UWU JUMP INDONESIA",
-    "rossignol": "PT. UWU JUMP INDONESIA",
-    "roscoe": "PT. UWU JUMP INDONESIA",
-    "mammut": "PT. UWU JUMP INDONESIA",
-};
+const _brandConfig = getBrandConfig();
 
-const BRAND_CUSTOMER_MAP: Record<string, string> = {
-    col: "Columbia",
-    columbia: "Columbia",
-    tnf: "The North Face In-Line",
-    "the north face": "The North Face In-Line",
-    "peak performance": "Peak Performance",
-    prana: "Prana",
-    arcteryx: "Arcteryx",
-    "arc'teryx": "Arcteryx",
-    "511 tactical": "511 Tactical",
-    evo: "Evo",
-    "haglofs": "Haglofs",
-    "obermeyer": "Obermeyer",
-    "on running": "On AG",
-    "on ag": "On AG",
-    "66 degrees north": "66 Degrees North",
-    "burton": "Burton",
-    "cotopaxi": "Cotopaxi",
-    "fox racing": "Fox Racing",
-    "vuori": "Vuori",
-    "helly hansen": "Helly Hansen",
-    hh: "Helly Hansen",
-    "helly hansen distributie b.v.": "Helly Hansen",
-    "helly hansen aus - toll prestons": "Helly Hansen",
-    "mainfreight / helly hansen nz": "Helly Hansen",
-    "utendor spa": "Helly Hansen",
-    "helly hansen (u.s.) inc.": "Helly Hansen",
-    "helly hansen smu": "Helly Hansen",
-    "jack wolfskin": "Jack Wolfskin",
-    "ll bean": "LL Bean",
-    "l.l.bean": "LL Bean",
-    marmot: "Marmot",
-    // New brands
-    "dynafit": "Dynafit",
-    "travis mathew": "Travis Mathew",
-    "vans": "Vans",
-    "vans smu": "Vans",
-    "rossignol": "Rossignol",
-    "south ontario dc": "Vans",
-    "canada brampton dc": "Vans",
-    "vf prague dc cz": "Vans",
-    "vf northern europe": "Vans",
-    "vf northern europe(uk)": "Vans",
-    "sun and sand sports": "Vans",
-    "sun and sand sports llc": "Vans",
-    "roscoe": "Roscoe",
-    "mammut": "Mammut",
-};
+const PLANT_COUNTRY_MAP: Record<string, string> = _brandConfig.plantCountryMap;
 
-const TNF_CUSTOMER_SUBTYPE_MAP: Record<string, string> = {
-    "the north face in-line": "The North Face In-Line",
-    "the north face inline": "The North Face In-Line",
-    "the north face rto": "The North Face RTO",
-    "the north face smu": "The North Face SMU",
-    "tnf in-line": "The North Face In-Line",
-    "tnf inline": "The North Face In-Line",
-    "tnf rto": "The North Face RTO",
-    "tnf smu": "The North Face SMU",
-};
+const BRAND_SUPPLIER_MAP: Record<string, string> = (() => {
+    const map: Record<string, string> = {};
+    for (const [brandKey, entry] of Object.entries(_brandConfig.brands)) {
+        map[brandKey.toLowerCase()] = entry.defaultSupplier;
+        for (const alias of entry.aliases) {
+            map[alias.toLowerCase()] = entry.defaultSupplier;
+        }
+    }
+    return map;
+})();
 
-const TRANSPORT_MAP: Record<string, string> = {
-    "ocean": "Sea",
-    "ocean freight (collect)": "Sea",
-    "ocean freight collect": "Sea",
-    "sea": "Sea",
-    "vessel": "Sea",
-    "sea freight": "Sea",
-    "seafreight": "Sea",
-    "s1 - seafreight": "Sea",
-    "s1": "Sea",
-    "v": "Sea",
-    "01": "Sea",
-    "1": "Sea",
-    "air": "Air",
-    "air freight": "Air",
-    "airfreight": "Air",
-    "a1 - airfreight": "Air",
-    "a1": "Air",
-    "a2 - airfreight": "Air",
-    "a2": "Air",
-    "courier": "Courier",
-    "dhl": "Courier",
-    "fedex": "Courier",
-    "ups": "Courier",
-    "private parcel": "Courier",
-    "private parcel service": "Courier",
-    "parcel": "Courier",
-    "09": "Courier",
-    "9": "Courier",
-    "international distributor": "Sea",
-    "maersk ocean": "Sea",
-    "maersk": "Sea",
-    "hapag-lloyd": "Sea",
-    "hapag lloyd": "Sea",
-    "msc": "Sea",
-    "cma cgm": "Sea",
-    "evergreen": "Sea",
-    "cosco": "Sea",
-    "yang ming": "Sea",
-    "one": "Sea",
-    "sos - hunter sos": "Sea",
-    "fb - hunter - fob warehouse": "Sea",
-    "sms - sample warehouse": "Sea",
-    "dte - davies turner e-com warehouse": "Sea",
-    "hm - hammer gmbh & co. kg": "Sea",
-    "hmcd - hammer cross dock": "Sea",
-    // EVO / Roscoe
-    "exw": "Sea",
-};
+const BRAND_CUSTOMER_MAP: Record<string, string> = (() => {
+    const map: Record<string, string> = {};
+    for (const [brandKey, entry] of Object.entries(_brandConfig.brands)) {
+        map[brandKey.toLowerCase()] = entry.customerName;
+        for (const alias of entry.aliases) {
+            map[alias.toLowerCase()] = entry.customerName;
+        }
+    }
+    return map;
+})();
 
-const VALID_TRANSPORT_VALUES = new Set(["Sea", "Air", "Courier"]);
+const TNF_CUSTOMER_SUBTYPE_MAP: Record<string, string> =
+    _brandConfig.brands['tnf']?.customerSubtypes || {};
 
-const COUNTRY_NAME_MAP: Record<string, string> = {
-    AE: "UAE",
-    AR: "Argentina",
-    AT: "Austria",
-    AU: "Australia",
-    BR: "Brazil",
-    CA: "Canada",
-    CH: "Switzerland",
-    CL: "Chile",
-    CN: "China",
-    CZ: "Czech Republic",
-    DE: "Germany",
-    DK: "Denmark",
-    EC: "Ecuador",
-    ES: "Spain",
-    FR: "France",
-    GB: "UK",
-    GR: "Greece",
-    HK: "Hong Kong",
-    HR: "Croatia",
-    HU: "Hungary",
-    ID: "Indonesia",
-    IL: "Israel",
-    IN: "India",
-    IT: "Italy",
-    JP: "Japan",
-    KR: "Korea",
-    MN: "Mongolia",
-    NP: "Nepal",
-    MT: "Malta",
-    MX: "Mexico",
-    MY: "Malaysia",
-    "NEW ZEALAND": "New Zealand",
-    PA: "Panama",
-    PE: "Peru",
-    PH: "Philippines",
-    PL: "Poland",
-    RS: "Serbia",
-    RU: "Russia",
-    TH: "Thailand",
-    TR: "Turkey",
-    TW: "Taiwan",
-    UK: "UK",
-    US: "USA",
-    "US WHOLESALE 3PL": "USA",
-    "US RETAIL 3PL": "USA",
-    "US ECOMM": "USA",
-    "UNITED KINGDOM": "UK",
-    "UNITED ARAB EMIRATES": "UAE",
-    "UNITED STATES": "USA",
-    UY: "Uruguay",
-    VN: "Vietnam",
-    ZA: "South Africa",
-    "500025": "Korea",
-    "SWEDEN": "Sweden",
-    "KOREA": "Korea",
-    "JAPAN": "Japan",
-    "HONG KONG": "Hong Kong",
-    "GERMANY": "Germany",
-    "FRANCE": "France",
-    "ITALY": "Italy",
-    "SPAIN": "Spain",
-    "NETHERLANDS": "Netherlands",
-    "BELGIUM": "Belgium",
-    "SWITZERLAND": "Switzerland",
-    "AUSTRIA": "Austria",
-    "DENMARK": "Denmark",
-    "NORWAY": "Norway",
-    "FINLAND": "Finland",
-    "POLAND": "Poland",
-    "CZECH REPUBLIC": "Czech Republic",
-    "AUSTRALIA": "Australia",
-    "CANADA": "Canada",
-    "CHINA": "China",
-    "INDIA": "India",
-    "INDONESIA": "Indonesia",
-    "MALAYSIA": "Malaysia",
-    "THAILAND": "Thailand",
-    "VIETNAM": "Vietnam",
-    "TAIWAN": "Taiwan",
-    "SINGAPORE": "Singapore",
-    "CZECHIA": "Czech Republic",
-    "GREAT BRITAIN": "UK",
-    "TBC": "",
-    // Roscoe destination codes (short — only EU since CA/US/JP already exist as ISO codes)
-    "EU": "EU",
-};
+const TRANSPORT_MAP: Record<string, string> = _brandConfig.transportMap;
+
+const VALID_TRANSPORT_VALUES = new Set(_brandConfig.validTransportValues);
+
+const COUNTRY_NAME_MAP: Record<string, string> = _brandConfig.countryNameMap;
 
 interface KeyUsers {
     k1: string; k2: string; k3: string;
@@ -443,88 +166,44 @@ interface KeyUsers {
     k7: string; k8: string;
 }
 
-const BRAND_KEYUSER_MAP: Record<string, KeyUsers> = {
-    tnf: { k1: "Ron", k2: "Maricar", k3: "", k4: "Ron", k5: "Elaine Sanchez", k6: "", k7: "", k8: "" },
-    "the north face": { k1: "Ron", k2: "Maricar", k3: "", k4: "Ron", k5: "Elaine Sanchez", k6: "", k7: "", k8: "" },
-    col:      { k1: "", k2: "", k3: "", k4: "", k5: "", k6: "", k7: "", k8: "" },
-    columbia: { k1: "", k2: "", k3: "", k4: "", k5: "", k6: "", k7: "", k8: "" },
-    arcteryx: { k1: "", k2: "", k3: "", k4: "", k5: "", k6: "", k7: "", k8: "" },
-    "arc'teryx": { k1: "", k2: "", k3: "", k4: "", k5: "", k6: "", k7: "", k8: "" },
-    rossignol: { k1: "Via", k2: "April Joy", k3: "", k4: "Via", k5: "Elaine Sanchez", k6: "", k7: "", k8: "" },
-    "fox racing": { k1: "Ron", k2: "Maricar", k3: "", k4: "Ron", k5: "Pam", k6: "", k7: "", k8: "" },
-    "511 tactical": { k1: "Shania", k2: "Joy", k3: "", k4: "Ron", k5: "Jay", k6: "", k7: "", k8: "" },
-    evo: { k1: "Shania", k2: "Mariane", k3: "", k4: "Ron", k5: "Edbert", k6: "", k7: "", k8: "" },
-    haglofs: { k1: "Shania", k2: "Mariane", k3: "", k4: "Ron", k5: "Edbert", k6: "", k7: "", k8: "" },
-    hh: { k1: "Angelah", k2: "Mariane", k3: "", k4: "Angelah", k5: "Jenica", k6: "", k7: "", k8: "" },
-    "helly hansen": { k1: "Angelah", k2: "Mariane", k3: "", k4: "Angelah", k5: "Jenica", k6: "", k7: "", k8: "" },
-    prana: { k1: "Jessie", k2: "Maricon Alvarez", k3: "", k4: "Deaunne", k5: "Elaine Sanchez", k6: "", k7: "", k8: "" },
-    "jack wolfskin": { k1: "Via", k2: "Mary", k3: "", k4: "Via", k5: "Elaine Sanchez", k6: "", k7: "", k8: "" },
-    dynafit: { k1: "Patrick", k2: "Sarah Jane", k3: "", k4: "Patrick", k5: "Edbert Suan", k6: "", k7: "", k8: "" },
-    vuori: { k1: "Patrick", k2: "Mary", k3: "", k4: "Patrick", k5: "Elaine Sanchez", k6: "", k7: "", k8: "" },
-    obermeyer: { k1: "", k2: "MJ", k3: "", k4: "Louis Miguel Dural", k5: "Elaine Sanchez", k6: "", k7: "", k8: "" },
-    "ll bean": { k1: "", k2: "", k3: "", k4: "", k5: "", k6: "", k7: "", k8: "" },
-    "l.l.bean": { k1: "", k2: "", k3: "", k4: "", k5: "", k6: "", k7: "", k8: "" },
-    marmot: { k1: "", k2: "", k3: "", k4: "", k5: "", k6: "", k7: "", k8: "" },
-};
+const BRAND_KEYUSER_MAP: Record<string, KeyUsers> = (() => {
+    const map: Record<string, KeyUsers> = {};
+    const empty: KeyUsers = { k1: "", k2: "", k3: "", k4: "", k5: "", k6: "", k7: "", k8: "" };
+    for (const [brandKey, entry] of Object.entries(_brandConfig.brands)) {
+        const ku: KeyUsers = { ...empty, ...entry.keyUsers };
+        map[brandKey.toLowerCase()] = ku;
+        for (const alias of entry.aliases) {
+            map[alias.toLowerCase()] = ku;
+        }
+    }
+    return map;
+})();
 
 const DEFAULT_KEYUSERS: KeyUsers = { k1: "", k2: "", k3: "", k4: "", k5: "", k6: "", k7: "", k8: "" };
 
-const FACTORY_CODE_MAP: Record<string, string> = {
-    '508582':   'PT. UWU JUMP INDONESIA',
-    '1002436':  'PT. UWU JUMP INDONESIA',
-    '8668:puj': 'PT. UWU JUMP INDONESIA',
-    'mad001':   'PT. UWU JUMP INDONESIA',
-};
+const FACTORY_CODE_MAP: Record<string, string> = _brandConfig.factoryCodes;
 
-const BRAND_ORDERS_TEMPLATE_MAP: Record<string, string> = {
-    tnf:              "Major Brand Bulk",
-    "the north face": "Major Brand Bulk",
-    col:              "BULK",
-    columbia:         "BULK",
-    arcteryx:         "BULK",
-    "arc'teryx":      "BULK",
-    vans:             "Major Brand Bulk",
-    rossignol:        "Major Brand Bulk",
-    hh:               "Major Brand Bulk",
-    "helly hansen":  "Major Brand Bulk",
-    "jack wolfskin":  "Major Brand Bulk",
-    dynafit:          "SMS PO Header",
-    vuori:            "Major Brand Bulk",
-    evo:              "BULK",
-    "511 tactical":   "BULK",
-    haglofs:          "BULK",
-    "fox racing":     "BULK",
-    obermeyer:        "Major Brand Bulk",
-    "ll bean":        "Major Brand Bulk",
-    "l.l.bean":       "Major Brand Bulk",
-    marmot:           "Major Brand Bulk",
-    prana:            "Major Brand Bulk",
-};
+const BRAND_ORDERS_TEMPLATE_MAP: Record<string, string> = (() => {
+    const map: Record<string, string> = {};
+    for (const [brandKey, entry] of Object.entries(_brandConfig.brands)) {
+        map[brandKey.toLowerCase()] = entry.ordersTemplate;
+        for (const alias of entry.aliases) {
+            map[alias.toLowerCase()] = entry.ordersTemplate;
+        }
+    }
+    return map;
+})();
 
-const BRAND_LINES_TEMPLATE_MAP: Record<string, string> = {
-    tnf:              "FOB Bulk EDI PO (New)",
-    "the north face": "FOB Bulk EDI PO (New)",
-    col:              "BULK",
-    columbia:         "BULK",
-    arcteryx:         "BULK",
-    "arc'teryx":      "BULK",
-    vans:             "FOB Bulk EDI PO (New)",
-    rossignol:        "FOB Bulk EDI PO (New)",
-    hh:               "FOB Bulk EDI PO (New)",
-    "helly hansen":  "FOB Bulk EDI PO (New)",
-    "jack wolfskin":  "FOB Bulk EDI PO (New)",
-    dynafit:          "SMS Non EDI (New)",
-    vuori:            "FOB Bulk Non EDI PO (New)",
-    evo:              "BULK",
-    "511 tactical":   "BULK",
-    haglofs:          "BULK",
-    "fox racing":     "BULK",
-    obermeyer:        "FOB Bulk EDI PO (New)",
-    "ll bean":        "FOB Bulk EDI PO (New)",
-    "l.l.bean":       "FOB Bulk EDI PO (New)",
-    marmot:           "FOB Bulk EDI PO (New)",
-    prana:            "FOB Bulk Non EDI PO (New)",
-};
+const BRAND_LINES_TEMPLATE_MAP: Record<string, string> = (() => {
+    const map: Record<string, string> = {};
+    for (const [brandKey, entry] of Object.entries(_brandConfig.brands)) {
+        map[brandKey.toLowerCase()] = entry.linesTemplate;
+        for (const alias of entry.aliases) {
+            map[alias.toLowerCase()] = entry.linesTemplate;
+        }
+    }
+    return map;
+})();
 
 export class ExcelEngine {
     private errors: ValidationError[] = [];
@@ -1198,7 +877,12 @@ export class ExcelEngine {
             const hasSubtype = mappedKey.includes('rto') || mappedKey.includes('smu') || mappedKey.includes('in-line') || mappedKey.includes('inline');
             if (!raw || hasSubtype) return mapped;
         }
-        if (raw) { const key = raw.toLowerCase(); if (BRAND_CUSTOMER_MAP[key]) return BRAND_CUSTOMER_MAP[key]; return raw; }
+        // If raw value is a known brand/alias, map it to the canonical customer name
+        if (raw) { const key = raw.toLowerCase(); if (BRAND_CUSTOMER_MAP[key]) return BRAND_CUSTOMER_MAP[key]; }
+        // If raw is just a number (e.g. SOLD-TO PARTY code like 10092216), don't use it as customer name.
+        // Fall through to brand-based resolution instead.
+        if (raw && !/^\d+$/.test(raw)) return raw;
+        // Use brand to resolve canonical customer name
         if (brandClean) { const key = brandClean.toLowerCase(); if (BRAND_CUSTOMER_MAP[key]) return BRAND_CUSTOMER_MAP[key]; }
         if (detectedCustomer && detectedCustomer !== 'DEFAULT') return detectedCustomer;
         return brandClean.toUpperCase() || 'COL';
@@ -1342,23 +1026,14 @@ export class ExcelEngine {
         // Handle TNF 0OS format and other OS variants
         if (size.toLowerCase() === '0os' || size.toLowerCase() === 'os') return 'One Size';
         if (size.toLowerCase() === 'o/s') return 'One Size';
-        if (size.toLowerCase() === 'ons') return 'One Size';
-        if (/^one\s*size$/i.test(size) || /^onesize$/i.test(size)) return 'One Size';
+        // Try config-driven brand rules first (covers dynafit, burton, obermeyer, on ag, vans, etc.)
         const brandKey = (brand || '').trim().toLowerCase();
-        if (brandKey === 'dynafit' && /^uni\d+$/i.test(size)) return 'One Size';
-        if (brandKey === 'burton') {
-            if (/\b1sz\b/i.test(sizeKey) || /\bfit\s*all\b/i.test(sizeKey) || /\bone\s*size\b/i.test(sizeKey)) return 'One Size';
-            if (/\breg(?:ular)?\b/i.test(sizeKey) || /\brg1sz\b/i.test(sizeKey) || /\breg\s*fit\b/i.test(sizeKey)) return 'Reg Fit';
-            if (/\bhelmet\b/i.test(sizeKey) || /\bhs\b/i.test(sizeKey) || /\bhelmet\s*sz\b/i.test(sizeKey)) return 'Helmet Fit';
-        }
-        if (brandKey === 'obermeyer' && (/^one\s*size$/i.test(size) || /^onesize$/i.test(size) || /-?1sz$/i.test(sizeKey) || /\b1sz\b/i.test(sizeKey))) {
-            return 'ONE SIZE';
-        }
+        const ruleResult = normalizeSizeByRules(size, sizeKey, brandKey);
+        if (ruleResult !== size) return ruleResult;
+        // Generic fallbacks (already in default rules, but kept as safety net)
         if (/-?1sz$/i.test(sizeKey) || /\b1sz\b/i.test(sizeKey)) return 'One Size';
         if (/^reg\s*fit$/i.test(size) || /\brg1sz\b/i.test(sizeKey) || /\breg(?:ular)?\s*fit\b/i.test(sizeKey)) return 'Reg Fit';
         if (/^helmet\s*fit$/i.test(size) || /\bhs\d*\b/i.test(sizeKey) || /\bhelmet\s*fit\b/i.test(sizeKey)) return 'Helmet Fit';
-        if (brandKey === 'on ag') return 'One Size';
-        if (brandKey === 'vans' && /^one\s*size$/i.test(size)) return 'One Size';
         return size;
     }
 
@@ -1370,9 +1045,8 @@ export class ExcelEngine {
     private normalizeStatus(rawStatus: string | undefined, brand: string | undefined): string {
         const status = this.stripBrackets(rawStatus || '').trim();
         const brandKey = (brand || '').trim().toLowerCase();
-        if ((brandKey === 'hh' || brandKey === 'helly hansen') && (/^20$/.test(status) || /^confirmed$/i.test(status))) return 'Confirmed';
-        if (brandKey === 'vans' && (!status || status.toLowerCase() === 'converted')) return 'Confirmed';
-        return status || 'Confirmed';
+        // Use config-driven brand rules (covers hh, vans, etc.)
+        return normalizeStatusByRules(status, brandKey);
     }
 
     private resolveKeyUsers(brand: string | undefined, manualK1: string | undefined, manualK2: string | undefined, manualK3: string | undefined, manualK4: string | undefined, manualK5: string | undefined, providedK1: string | undefined, providedK2: string | undefined, providedK4: string | undefined, providedK5: string | undefined, mloRow: any): KeyUsers {
@@ -1864,6 +1538,29 @@ export class ExcelEngine {
     public stripBrackets(value: string): string {
         if (!value) return value;
         return value.replace(/\[([^\]]+)\]/g, '$1').replace(/\[|\]/g, '').replace(/\s+/g, ' ').trim();
+    }
+
+    /**
+     * Detects whether a value looks like a style code (NF0A8CGZ, VN0A3XYZ, M88123456)
+     * vs a style name/description ("SALTY LINED BEANIE", "TNF FISHERMAN BEANIE").
+     *
+     * Style codes are typically:
+     *   - Short (≤ 20 chars)
+     *   - No spaces
+     *   - Contain at least one digit (style codes almost always have numbers)
+     *
+     * This is used to prefer style codes over style names for NextGen matching,
+     * and works generically across all brands.
+     */
+    private isLikelyStyleCode(value: string): boolean {
+        const v = (value || '').trim();
+        if (!v || v.length > 20) return false;
+        const spaceCount = (v.match(/\s/g) || []).length;
+        const hasDigit = /\d/.test(v);
+        // Style codes have no spaces and contain at least one digit
+        // (NF0A8CGZ, VN0A3XYZ, M88123456, VUOUS0925B, 1234567, etc.)
+        // Style names have spaces and/or no digits ("BEANIE", "SALTY LINED BEANIE")
+        return hasDigit && spaceCount === 0;
     }
 
     private buildComments(brand: string | undefined, season: string, buyRound: string, buyDateRaw: string | undefined, template: string): string {
@@ -2549,7 +2246,7 @@ export class ExcelEngine {
         });
         if (needsCanonicalMapping) {
             try {
-                const aiResult = await mapHeaders(canonicalHeaders);
+                const aiResult = await mapHeaders(canonicalHeaders, manualBrand || undefined);
                 Object.entries(aiResult.mapping).forEach(([canonicalField, sourceHeader]) => {
                     if (!sourceHeader) return;
                     const colNumber = headerColumns.get(normalizeHeaderText(sourceHeader));
@@ -2939,19 +2636,24 @@ export class ExcelEngine {
                 if (hunterPoDestination) {
                     poDestination = hunterPoDestination;
                 }
-            } else if (brandKey === 'jack wolfskin' && !poDestination) {
-                poDestination = 'Germany';
-            } else if (brandKey === 'prana') {
+            } else if (!poDestination) {
+                // Use config-driven destination default (e.g. "Germany" for jack wolfskin)
+                const destDefault = getDestinationDefault(brandKey);
+                if (destDefault) poDestination = destDefault;
+            }
+            if (brandKey === 'prana') {
                 poDestination = pranaDestinationCountry;
             } else if (brandKey === 'columbia') {
                 poDestination = columbiaDestinationCountry;
             } else if (isHHBrand && plantDerivedCountry) {
                 poDestination = plantDerivedCountry;
             }
-            let poNumber = brandKey === 'cotopaxi'
+            // Use config-driven PO number format
+            const poFormat = getPoNumberFormat(brandKey);
+            let poNumber = poFormat === 'cotopaxi'
                 ? this.collapseRepeatedPurchaseOrder(this.stripBrackets(poNumberRaw || '').trim())
                 : this.formatPurchaseOrder(poNumberRaw, poPlantPart, poDestination);
-            if (brandKey === 'vans') {
+            if (poFormat === 'vans') {
                 poDestination = '';
                 poNumber = this.formatVansPurchaseOrder(poNumberRaw, rawPlant || plant || whsCode, plantName || customerNameRaw || poPlantPart);
             }
@@ -3351,37 +3053,28 @@ export class ExcelEngine {
                 styleNumber = plmProductName;
             }
             if (!styleNumber) {
-                if (brandKey === 'vans') {
-                    styleNumber = this.stripBrackets(getVal('jdeStyle') || buyProductName || getVal('product') || matchedStyleKey || '');
-                } else if (brandKey === 'rossignol') {
-                    styleNumber = this.stripBrackets(rossignolM88Ref || rossignolProductCode || buyProductName || getVal('product') || matchedStyleKey || '');
-                } else if (brandKey === 'on ag') {
-                    styleNumber = this.stripBrackets(onAgProductName || '');
-                } else if (brandKey === 'fox racing') {
-                    styleNumber = this.stripBrackets(foxMaterialCode || buyProductName || getVal('product') || matchedStyleKey || '');
-                } else if (brandKey === 'arcteryx') {
-                    styleNumber = this.stripBrackets(inlineProductName || buyProductName || getVal('product') || matchedStyleKey || '');
-                } else if (brandKey === 'jack wolfskin') {
-                    styleNumber = this.stripBrackets(matchedStyleKey || buyProductName || getVal('product') || getVal('jdeStyle') || getVal('productCustomerRef') || getVal('productExternalRef') || '');
-                } else if (brandKey === 'vuori') {
-                    styleNumber = this.stripBrackets(buyProductName || getVal('product') || getVal('productCustomerRef') || getVal('jdeStyle') || matchedStyleKey || '');
-                } else if (brandKey === 'dynafit') {
-                    styleNumber = this.stripBrackets(matchedStyleKey || buyProductName || getVal('product') || getVal('jdeStyle') || getVal('productCustomerRef') || '');
-                } else if (brandKey === 'll bean') {
-                    styleNumber = this.stripBrackets(getVal('productCustomerRef') || buyProductName || getVal('product') || getVal('jdeStyle') || matchedStyleKey || '');
-                } else if (isHHBrand) {
-                    styleNumber = this.stripBrackets(buyProductName || getVal('product') || getVal('jdeStyle') || matchedStyleKey || '');
-                } else if (brandKey === 'burton') {
-                    styleNumber = this.stripBrackets(inlineProductName || buyProductName || getVal('product') || matchedStyleKey || '');
-                } else if (brandKey === '66 degrees north') {
-                    styleNumber = this.stripBrackets(buyProductName || inlineProductName || getVal('product') || matchedStyleKey || '');
-                } else if (brandKey === 'prana') {
-                    styleNumber = this.stripBrackets(inlineProductName || buyProductName || getVal('product') || getVal('jdeStyle') || matchedStyleKey || '');
-                } else if (plmMissing) {
-                    styleNumber = this.stripBrackets(buyProductName || getVal('product') || getVal('jdeStyle') || '');
-                } else {
-                    styleNumber = this.stripBrackets(buyProductName || getVal('product') || getVal('jdeStyle') || matchedStyleKey || '');
-                }
+                // Config-driven style number resolution via brand rules.
+                // Each brand's source priority is defined in brand-config.json.
+                // Unknown brands use the default rule set (prefer style code over name).
+                const getField = (name: string): string | undefined => {
+                    switch (name) {
+                        case 'product': return this.stripBrackets(getVal('product') || '');
+                        case 'productCustomerRef': return this.stripBrackets(getVal('productCustomerRef') || '');
+                        case 'productExternalRef': return this.stripBrackets(getVal('productExternalRef') || '');
+                        case 'jdeStyle': return this.stripBrackets(getVal('jdeStyle') || '');
+                        case 'buyProductName': return buyProductName;
+                        case 'matchedStyleKey': return matchedStyleKey;
+                        case 'inlineProductName': return inlineProductName;
+                        case 'plmProductName': return plmProductName;
+                        case 'obermeyerProductName': return this.stripBrackets(obermeyerProductName || '');
+                        case 'rossignolM88Ref': return rossignolM88Ref;
+                        case 'rossignolProductCode': return rossignolProductCode;
+                        case 'foxMaterialCode': return foxMaterialCode;
+                        case 'onAgProductName': return onAgProductName;
+                        default: return undefined;
+                    }
+                };
+                styleNumber = resolveStyleNumber(brandKey, getField);
             }
             if (process.env.DEBUG_EXPORT_TRACE === '1' && brandKey === 'cotopaxi' && rowNumber <= 3) {
                 // Cotopaxi trace: helps verify whether PLM matching or fallback is producing the exported Product.
@@ -4021,6 +3714,13 @@ export class ExcelEngine {
         if (skippedMissingSeason > 0) this.errors.push({ field: 'season', row: 1, message: `${skippedMissingSeason} row(s) skipped due to missing season/range.`, severity: 'WARNING' });
         if (processedData.length === 0 && skippedMissingSeason > 0) this.errors.push({ field: 'File Format', row: 1, message: 'No usable rows remain after skipping rows with missing season/range.', severity: 'CRITICAL' });
 
+        // ------------------------------------------------------------------
+        // Backend validation: status conflict, customer mapping gap,
+        // blank pricing/delivery/payment, PO number format.
+        // These were previously UI-only (fragile regex on error messages).
+        // ------------------------------------------------------------------
+        this.runPostProcessValidation(processedData);
+
         const errorCount = this.errors.filter(e => e.severity === 'CRITICAL').length;
         const warningCount = this.errors.filter(e => e.severity === 'WARNING').length;
         if (this.runId) {
@@ -4054,6 +3754,146 @@ export class ExcelEngine {
             const customerKey = (po.header.customer || '').trim().toLowerCase();
             if (brandKey !== 'll bean' && customerKey !== 'll bean') continue;
             po.llBeanReferenceSizeRows = rows.map(row => ({ ...row }));
+        }
+    }
+
+    /**
+     * Post-process validation: runs after all rows are processed and POs
+     * are assembled. Catches issues that require cross-row or cross-PO
+     * context (status conflicts, customer mapping gaps, blank critical
+     * fields, PO number format).
+     *
+     * Previously these checks existed only as UI-level regex on error
+     * message strings (Workflow.tsx blockerConditions). Moving them to
+     * the backend makes them robust and bypass-resistant.
+     */
+    private runPostProcessValidation(data: ProcessedPO[]): void {
+        // Per-brand PO number format patterns (lowercase brand key -> regex)
+        // These match the auto-generated PO number format from NextGen, not style codes.
+        const PO_FORMAT_PATTERNS: Record<string, { pattern: RegExp; label: string }> = {
+            'vans': { pattern: /^PO\d{5,}(-\d{3,4})?/i, label: 'PO#####(-####)' },
+            'tnf': { pattern: /^PO\d{5,}(-\d{3,4})?/i, label: 'PO#####(-####)' },
+            'arcteryx': { pattern: /^PO\d{5,}(-\d{3,4})?/i, label: 'PO#####(-####)' },
+            'vuori': { pattern: /^PO\d{5,}(-\d{3,4})?/i, label: 'PO#####(-####)' },
+            'helly hansen': { pattern: /^PO\d{5,}(-\d{3,4})?/i, label: 'PO#####(-####)' },
+        };
+
+        // Track status values per PO to detect conflicts
+        const poStatusMap = new Map<string, Set<string>>();
+
+        for (const po of data) {
+            const poNumber = po.header.purchaseOrder;
+            const brandKey = (po.header.brandKey || '').trim().toLowerCase();
+            const customer = (po.header.customer || '').trim();
+
+            // 1. Status conflict detection (backend)
+            //    Track all status values seen for this PO across rows
+            const statusSet = poStatusMap.get(poNumber) || new Set<string>();
+            for (const line of po.lines) {
+                // POLine doesn't carry status directly; check po.header.status
+                // and any line-level transport/status hints
+            }
+            statusSet.add(po.header.status);
+            poStatusMap.set(poNumber, statusSet);
+
+            // 2. Customer mapping gap detection (backend)
+            //    "9999996" is a known placeholder/unknown customer code
+            if (customer === '9999996' || customer === '9999996 ' || /9999996/i.test(customer)) {
+                this.errors.push({
+                    field: 'Customer',
+                    row: 1,
+                    message: `PO ${poNumber}: Customer mapping gap detected (9999996 / unknown customer code). Customer "${customer}" is a placeholder — map to correct customer before export.`,
+                    severity: 'CRITICAL',
+                });
+            }
+            if (!customer || customer.trim() === '') {
+                this.errors.push({
+                    field: 'Customer',
+                    row: 1,
+                    message: `PO ${poNumber}: Customer is blank — customer mapping required before export.`,
+                    severity: 'CRITICAL',
+                });
+            }
+
+            // 3. Blank pricing/delivery/payment validation
+            for (const line of po.lines) {
+                // Delivery date check (startDate / cancelDate)
+                const startDate = line.startDate ? String(line.startDate).trim() : '';
+                const cancelDate = line.cancelDate ? String(line.cancelDate).trim() : '';
+                if (!startDate) {
+                    this.errors.push({
+                        field: 'DeliveryDate',
+                        row: 1,
+                        message: `PO ${poNumber} line ${line.lineItem} (${line.styleNumber}): start date / delivery date is blank.`,
+                        severity: 'WARNING',
+                    });
+                }
+                if (!cancelDate) {
+                    this.errors.push({
+                        field: 'DeliveryDate',
+                        row: 1,
+                        message: `PO ${poNumber} line ${line.lineItem} (${line.styleNumber}): cancel date is blank.`,
+                        severity: 'WARNING',
+                    });
+                }
+
+                // Pricing check — cost field on the line
+                const cost = line.cost;
+                if (cost === undefined || cost === null || cost === '' || (typeof cost === 'number' && cost === 0)) {
+                    this.errors.push({
+                        field: 'Pricing',
+                        row: 1,
+                        message: `PO ${poNumber} line ${line.lineItem} (${line.styleNumber}): FOB / unit cost is blank or zero.`,
+                        severity: 'WARNING',
+                    });
+                }
+            }
+
+            // 4. PO number format validation per brand
+            const formatRule = PO_FORMAT_PATTERNS[brandKey];
+            if (formatRule && poNumber && !formatRule.pattern.test(poNumber)) {
+                this.errors.push({
+                    field: 'PurchaseOrder',
+                    row: 1,
+                    message: `PO ${poNumber}: PO number format does not match expected pattern for brand "${brandKey}" (expected: ${formatRule.label}).`,
+                    severity: 'WARNING',
+                });
+            }
+
+            // 5. Currency validation
+            const currency = (po.header.currency || '').trim().toUpperCase();
+            const VALID_CURRENCIES = new Set(['USD', 'PHP', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY', 'CNY', 'SGD', 'HKD', 'KRW']);
+            if (currency && !VALID_CURRENCIES.has(currency)) {
+                this.errors.push({
+                    field: 'Currency',
+                    row: 1,
+                    message: `PO ${poNumber}: Currency "${currency}" is not a recognized ISO currency code.`,
+                    severity: 'WARNING',
+                });
+            }
+            if (!currency) {
+                this.errors.push({
+                    field: 'Currency',
+                    row: 1,
+                    message: `PO ${poNumber}: Currency is blank — defaulted to USD but should be confirmed.`,
+                    severity: 'WARNING',
+                });
+            }
+        }
+
+        // Check for status conflicts across POs with same number
+        for (const [poNumber, statuses] of poStatusMap.entries()) {
+            const statusList = [...statuses].map((s) => s.toLowerCase());
+            const hasConfirmed = statusList.includes('confirmed');
+            const hasUnconfirmed = statusList.includes('unconfirmed');
+            if (hasConfirmed && hasUnconfirmed) {
+                this.errors.push({
+                    field: 'Status',
+                    row: 1,
+                    message: `PO ${poNumber}: Status conflict detected (both Confirmed and Unconfirmed found across rows).`,
+                    severity: 'CRITICAL',
+                });
+            }
         }
     }
 

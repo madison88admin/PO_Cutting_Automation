@@ -936,12 +936,16 @@ export default function Workflow() {
                 // Fallback: increment from file PO if NextGen fails
                 newPoNumber = incrementPoNumber(extractedPo);
                 setExtractedPo(extractedPo);
+            } else if (manualPoRef.current.trim()) {
+                // Fallback: use the manually entered PO number
+                newPoNumber = manualPoRef.current.trim();
+                setExtractedPo(`Manual → ${newPoNumber}`);
             } else {
                 setErrors([{
                     field: "Auto PO",
                     row: 0,
-                    message: "Could not get latest PO from NextGen or file.",
-                    severity: "CRITICAL"
+                    message: "Could not get latest PO from NextGen or file. Please enter a PO number manually.",
+                    severity: "WARNING"
                 }]);
             }
 
