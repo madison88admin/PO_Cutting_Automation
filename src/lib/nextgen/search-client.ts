@@ -1,7 +1,7 @@
 import { NextGenClient } from '@/lib/nextgen';
 import { NextGenStyleInfo } from '@/lib/types/buy-file';
 import { findClosestStyleMatch, sizesEquivalent, colorsEquivalent } from '@/lib/fuzzy';
-import { getCachedNextGenMatch, saveNextGenMatch, getUserCorrection } from '@/lib/learning/cache';
+import { getCachedNextGenMatch, saveNextGenMatch, getUserCorrection, getCachedColorMapping } from '@/lib/learning/cache';
 
 const SEARCH_BASE_URL = process.env.NEXTGEN_SEARCH_BASE_URL || process.env.NEXTGEN_BASE_URL || 'https://nextgen.madison88.com';
 const SEARCH_ENTITY_TYPES = process.env.NEXTGEN_SEARCH_ENTITY_TYPES || '0,5,6,138,80,121,9,222,163,69,23,41,139,42';
@@ -110,6 +110,10 @@ export class NextGenSearchClient {
         const colorCode = this.extractColorCode(style, colorHint);
         if (!targetStyle || !String(colorHint || '').trim()) return this.searchStyle(style);
 
+        // Defaults — may be enriched by color mapping cache
+        let effectiveColorHint = colorHint;
+        let effectiveColorCode = colorCode;
+
         // --- Learning Layer: check cache before hitting NextGen ---
         const brandKey = (brand || '').toLowerCase();
         if (brandKey) {
@@ -148,7 +152,15 @@ export class NextGenSearchClient {
                 };
             }
 
-            // 2. Check NextGen match cache
+            // 2. Check color mapping cache to improve color hint
+            const colorMapping = await getCachedColorMapping(brandKey, colorHint);
+            if (colorMapping) {
+                console.log(`[learning-layer] Color mapping hit: ${colorHint} → ${colorMapping.nextgen_color_name} (${colorMapping.nextgen_color_code})`);
+                effectiveColorHint = colorMapping.nextgen_color_name || colorHint;
+                effectiveColorCode = colorMapping.nextgen_color_code || colorCode;
+            }
+
+            // 3. Check NextGen match cache
             const cached = await getCachedNextGenMatch(targetStyle, colorHint, brandKey);
             if (cached) {
                 console.log(`[learning-layer] Cache hit: ${targetStyle}/${colorHint} → ${cached.nextgen_product} (hits: ${cached.hit_count})`);
@@ -190,7 +202,7 @@ export class NextGenSearchClient {
             const ranked = options
                 .map((option) => ({
                     option,
-                    score: this.optionMatchScore(option, colorHint, colorCode),
+                    score: this.optionMatchScore(option, effectiveColorHint, effectiveColorCode),
                 }))
                 .filter(({ score }) => score >= 55)
                 .sort((a, b) => b.score - a.score);
@@ -271,7 +283,11 @@ export class NextGenSearchClient {
 
         // --- Learning Layer: save successful match to cache ---
         if (brandKey && result.matchStatus === 'matched' && result.product) {
-            void saveNextGenMatch(targetStyle, colorHint, brandKey, result).catch(() => {});
+            try {
+                await saveNextGenMatch(targetStyle, colorHint, brandKey, result);
+            } catch (err) {
+                console.warn('[learning-layer] Failed to save NextGen match:', err);
+            }
         }
         // --- End Learning Layer ---
 
