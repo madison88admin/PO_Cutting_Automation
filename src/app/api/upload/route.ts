@@ -458,17 +458,31 @@ export async function POST(req: NextRequest) {
                         // --- Learning Layer: save user correction ---
                         const poBrand = String(po.header?.brandKey || manualBrand || '').trim();
                         if (poBrand && match?.product && match.product !== selectedOverride.product) {
-                            const { saveUserCorrection } = await import("@/lib/learning/cache");
-                            void saveUserCorrection(
-                                style, color, poBrand,
-                                match.product || '',
-                                selectedOverride.product,
-                                0,
-                                selectedOverride.colorName || '',
-                                String(selectedOverride.colorCode || ''),
-                                userId || '',
-                            ).catch(() => {});
-                            console.log(`[learning-layer] Saved user correction: ${style}/${color} → ${selectedOverride.product}`);
+                            const { saveUserCorrection, saveColorMapping } = await import("@/lib/learning/cache");
+                            try {
+                                await saveUserCorrection(
+                                    style, color, poBrand,
+                                    match.product || '',
+                                    selectedOverride.product,
+                                    0,
+                                    selectedOverride.colorName || '',
+                                    String(selectedOverride.colorCode || ''),
+                                    userId || '',
+                                );
+                                console.log(`[learning-layer] Saved user correction: ${style}/${color} → ${selectedOverride.product}`);
+                                // Also save color mapping for future reuse
+                                if (selectedOverride.colorName) {
+                                    await saveColorMapping(
+                                        poBrand,
+                                        color,
+                                        selectedOverride.colorName,
+                                        selectedOverride.colorName,
+                                        String(selectedOverride.colorCode || ''),
+                                    );
+                                }
+                            } catch (err) {
+                                console.error(`[learning-layer] Failed to save correction: ${style}/${color}`, err);
+                            }
                         }
                         // --- End Learning Layer ---
                     } else if (!style) {

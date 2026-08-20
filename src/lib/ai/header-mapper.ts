@@ -287,7 +287,11 @@ export async function mapHeaders(headers: string[], brandHint?: string): Promise
 
     // --- Learning Layer: save successful header mapping to cache ---
     if (brandHint && confidence >= 80 && Object.keys(mapping).length >= 6) {
-        void saveHeaderMapping(brandHint, headers, mapping as Record<string, string>, confidence).catch(() => {});
+        try {
+            await saveHeaderMapping(brandHint, headers, mapping as Record<string, string>, confidence);
+        } catch (err) {
+            console.warn('[header-mapper] Failed to save header mapping to cache:', err);
+        }
     }
     // --- End Learning Layer ---
 

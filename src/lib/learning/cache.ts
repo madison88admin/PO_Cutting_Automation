@@ -385,7 +385,7 @@ export async function saveHeaderMapping(
     if (isMock) return;
 
     try {
-        await supabaseAdmin
+        const { error } = await supabaseAdmin
             .from('header_mapping_cache')
             .upsert({
                 ...entry,
@@ -393,6 +393,9 @@ export async function saveHeaderMapping(
             }, {
                 onConflict: 'brand,file_signature',
             });
+        if (error) {
+            console.warn('[learning-layer] Failed to save header mapping to Supabase:', error.message);
+        }
     } catch (err) {
         console.warn('[learning-layer] Failed to save header mapping:', err);
     }
@@ -464,7 +467,7 @@ export async function saveColorMapping(
     if (isMock) return;
 
     try {
-        await supabaseAdmin
+        const { error } = await supabaseAdmin
             .from('color_mapping_cache')
             .upsert({
                 ...entry,
@@ -472,6 +475,9 @@ export async function saveColorMapping(
             }, {
                 onConflict: 'brand,raw_color',
             });
+        if (error) {
+            console.warn('[learning-layer] Failed to save color mapping to Supabase:', error.message);
+        }
     } catch (err) {
         console.warn('[learning-layer] Failed to save color mapping:', err);
     }
