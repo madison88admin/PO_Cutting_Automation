@@ -31,7 +31,19 @@ export interface NextGenPOLine {
     factory: string;
     customer: string;
     season: string;
+    unitCost: number | null;
+    subtotal: number | null;
     [key: string]: unknown;
+}
+
+export interface CostMismatch {
+    style: string;
+    color: string;
+    size: string;
+    field: 'subtotal' | 'unitCost';
+    uploadValue: number;
+    nextgenValue: number;
+    difference: number;
 }
 
 export interface NextGenValidationResult {
@@ -41,6 +53,16 @@ export interface NextGenValidationResult {
     matched: NextGenPOLine[];
     missing: { style: string; color: string; size: string; quantity: number }[];
     extra: { style: string; color: string; size: string; quantity: number }[];
+    costMismatches: CostMismatch[];
+}
+
+export interface UploadValidationLine {
+    style: string;
+    color: string;
+    size: string;
+    quantity: number;
+    subtotal?: number | null;
+    unitCost?: number | null;
 }
 
 const PO_NUMBER_FIELD = 'PrimaryUserDefinedFieldValuesTextUdf3';
@@ -199,6 +221,27 @@ export class NextGenClient {
     }
 
     mapToPOLine(line: Record<string, unknown>): NextGenPOLine {
+        const costFields = ['FOB', 'Fob', 'fob', 'UnitCost', 'unitCost', 'Cost', 'cost',
+            'OrderUnitCost', 'PurchasePrice', 'LandedCost', 'FactoryCost'];
+        let unitCost: number | null = null;
+        for (const field of costFields) {
+            const val = (line as any)[field];
+            if (val === null || val === undefined || val === '') continue;
+            const num = typeof val === 'number' ? val : Number(String(val).replace(/[^0-9.-]/g, ''));
+            if (Number.isFinite(num) && num > 0) { unitCost = num; break; }
+        }
+
+        const subtotalFields = ['SubTotal', 'subtotal', 'subTotal', 'Subtotal',
+            'TotalAmount', 'totalAmount', 'LineTotal', 'lineTotal',
+            'ExtendedCost', 'extendedCost', 'LineAmount', 'lineAmount'];
+        let subtotal: number | null = null;
+        for (const field of subtotalFields) {
+            const val = (line as any)[field];
+            if (val === null || val === undefined || val === '') continue;
+            const num = typeof val === 'number' ? val : Number(String(val).replace(/[^0-9.-]/g, ''));
+            if (Number.isFinite(num) && num > 0) { subtotal = num; break; }
+        }
+
         return {
             id: String(line.Id || line.ID || line.id || ''),
             poNumber: this.getPONumberFromRecord(line),
@@ -209,6 +252,8 @@ export class NextGenClient {
             factory: String(line.OrderSupplierName || line.Factory || line.factory || line.Vendor || line.Supplier || ''),
             customer: String(line.CustomerName || line.Customer || line.customer || ''),
             season: String(line.Season || line.season || ''),
+            unitCost,
+            subtotal,
             ...line,
         };
     }
@@ -311,7 +356,7 @@ export class NextGenClient {
         };
     }
 
-    async validatePO(poNumber: string, uploadLines: { style: string; color: string; size: string; quantity: number }[]): Promise<NextGenValidationResult> {
+    async validatePO(poNumber: string, uploadLines: UploadValidationLine[]): Promise<NextGenValidationResult> {
         if (!uploadLines.length) {
             return {
                 poNumber,
@@ -320,6 +365,7 @@ export class NextGenClient {
                 matched: [],
                 missing: [],
                 extra: [],
+                costMismatches: [],
             };
         }
 
@@ -376,6 +422,7 @@ export class NextGenClient {
                 matched: [],
                 missing: [],
                 extra: [],
+                costMismatches: [],
             };
         }
 
@@ -389,13 +436,50 @@ export class NextGenClient {
 
         const matched: NextGenPOLine[] = [];
         const missing: { style: string; color: string; size: string; quantity: number }[] = [];
+        const costMismatches: CostMismatch[] = [];
         const nextgenMatched = new Set<number>();
+        const COST_TOLERANCE = 0.01;
 
         for (const uploadLine of uploadLines) {
             const matchIndex = nextgenLines.findIndex((ng, idx) => !nextgenMatched.has(idx) && matchKey(uploadLine, ng));
             if (matchIndex >= 0) {
-                matched.push(nextgenLines[matchIndex]);
+                const ngLine = nextgenLines[matchIndex];
+                matched.push(ngLine);
                 nextgenMatched.add(matchIndex);
+
+                // Cost validation: priority subtotal > unitCost (amount)
+                const uploadSubtotal = uploadLine.subtotal != null ? Number(uploadLine.subtotal) : null;
+                const uploadUnitCost = uploadLine.unitCost != null ? Number(uploadLine.unitCost) : null;
+
+                if (uploadSubtotal != null && Number.isFinite(uploadSubtotal) && uploadSubtotal > 0) {
+                    // Use subtotal for validation
+                    if (ngLine.subtotal != null && ngLine.subtotal > 0) {
+                        const diff = Math.abs(uploadSubtotal - ngLine.subtotal);
+                        if (diff > COST_TOLERANCE) {
+                            costMismatches.push({
+                                style: uploadLine.style, color: uploadLine.color, size: uploadLine.size,
+                                field: 'subtotal',
+                                uploadValue: uploadSubtotal,
+                                nextgenValue: ngLine.subtotal,
+                                difference: diff,
+                            });
+                        }
+                    }
+                } else if (uploadUnitCost != null && Number.isFinite(uploadUnitCost) && uploadUnitCost > 0) {
+                    // Fall back to unitCost (amount) for validation
+                    if (ngLine.unitCost != null && ngLine.unitCost > 0) {
+                        const diff = Math.abs(uploadUnitCost - ngLine.unitCost);
+                        if (diff > COST_TOLERANCE) {
+                            costMismatches.push({
+                                style: uploadLine.style, color: uploadLine.color, size: uploadLine.size,
+                                field: 'unitCost',
+                                uploadValue: uploadUnitCost,
+                                nextgenValue: ngLine.unitCost,
+                                difference: diff,
+                            });
+                        }
+                    }
+                }
             } else {
                 missing.push(uploadLine);
             }
@@ -410,6 +494,7 @@ export class NextGenClient {
             matched,
             missing,
             extra,
+            costMismatches,
         };
     }
 }

@@ -6,7 +6,7 @@ export async function POST(req: NextRequest) {
         const body = await req.json();
         const { poNumber, lines } = body as {
             poNumber: string;
-            lines: { style: string; color: string; size: string; quantity: number }[];
+            lines: { style: string; color: string; size: string; quantity: number; subtotal?: number | null; unitCost?: number | null }[];
         };
 
         if (!poNumber || !Array.isArray(lines)) {

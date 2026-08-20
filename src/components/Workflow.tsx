@@ -983,6 +983,8 @@ export default function Workflow() {
                     color: po.lines?.[lineIdx]?.colour || po.lines?.[lineIdx]?.color || po.lines?.[lineIdx]?.styleColor || po.lines?.[0]?.colour || po.lines?.[0]?.color || po.lines?.[0]?.styleColor || '',
                     size: size.productSize || size.sizeName || '',
                     quantity: Number(size.quantity) || 0,
+                    subtotal: size.subtotal != null ? Number(size.subtotal) : (po.lines?.[lineIdx]?.subtotal != null ? Number(po.lines?.[lineIdx]?.subtotal) : null),
+                    unitCost: po.lines?.[lineIdx]?.unitCost != null ? Number(po.lines?.[lineIdx]?.unitCost) : (po.lines?.[lineIdx]?.cost != null ? Number(po.lines?.[lineIdx]?.cost) : (po.lines?.[lineIdx]?.purchasePrice != null ? Number(po.lines?.[lineIdx]?.purchasePrice) : null)),
                 }));
             }) || [];
             console.log('[workflow] validate debug lines:', lines.slice(0, 5));
@@ -1759,6 +1761,32 @@ export default function Workflow() {
                                         <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-4">
                                             <p className="text-[10px] font-black uppercase tracking-widest text-rose-500 mb-1">Extra in Upload</p>
                                             <p className="text-2xl font-black text-rose-300">{nextgenValidation.extra?.length || 0}</p>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {nextgenValidation?.costMismatches?.length > 0 && (
+                                    <div className="mt-4 rounded-2xl border border-orange-500/20 bg-orange-500/10 p-4">
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-orange-500 mb-3">
+                                            Cost Mismatches ({nextgenValidation.costMismatches.length})
+                                        </p>
+                                        <div className="space-y-2 max-h-48 overflow-y-auto">
+                                            {nextgenValidation.costMismatches.map((m: any, i: number) => (
+                                                <div key={i} className="flex flex-wrap items-center gap-3 text-xs">
+                                                    <span className="font-mono text-slate-300">{m.style}</span>
+                                                    <span className="text-slate-500">·</span>
+                                                    <span className="font-mono text-slate-400">{m.color}</span>
+                                                    <span className="text-slate-500">·</span>
+                                                    <span className="font-mono text-slate-400">{m.size}</span>
+                                                    <span className="ml-auto inline-flex items-center gap-2">
+                                                        <span className="text-[9px] font-black uppercase tracking-widest text-orange-400">{m.field}</span>
+                                                        <span className="font-mono text-orange-300">Upload: {m.uploadValue}</span>
+                                                        <span className="text-slate-500">vs</span>
+                                                        <span className="font-mono text-orange-300">NextGen: {m.nextgenValue}</span>
+                                                        <span className="font-mono text-rose-400">Δ {m.difference.toFixed(2)}</span>
+                                                    </span>
+                                                </div>
+                                            ))}
                                         </div>
                                     </div>
                                 )}
