@@ -12,12 +12,31 @@
     Content-Type = "application/javascript; charset=utf-8"
 
 [[headers]]
-  for = "/_next/static/chunks/*"
+  for = "/_next/static/chunks/*.js"
   [headers.values]
     Content-Type = "application/javascript; charset=utf-8"
     Cache-Control = "public, max-age=31536000, immutable"
 
 [[headers]]
-  for = "/_next/static/*"
+  for = "/_next/static/*.js"
   [headers.values]
+    Content-Type = "application/javascript; charset=utf-8"
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Force correct MIME type for CSS files
+[[headers]]
+  for = "/*.css"
+  [headers.values]
+    Content-Type = "text/css; charset=utf-8"
+
+[[headers]]
+  for = "/_next/static/css/*.css"
+  [headers.values]
+    Content-Type = "text/css; charset=utf-8"
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/_next/static/chunks/*.css"
+  [headers.values]
+    Content-Type = "text/css; charset=utf-8"
     Cache-Control = "public, max-age=31536000, immutable"
