@@ -49,7 +49,7 @@ export const FALLBACK_COLUMN_ALIASES: Record<string, string> = {
     'vendor account': 'ignore',
     'vendor code': 'productSupplier',
     'vendor number': 'productSupplier',
-    'vendor sku': 'ignore',
+    'vendor sku': 'productExternalRef',
     'upc code': 'ignore',
     'vendorcode': 'productSupplier',
     'vendor': 'productSupplier',
@@ -427,6 +427,40 @@ export const FALLBACK_COLUMN_ALIASES: Record<string, string> = {
     'sum of qty (lum)2': 'quantity',
     'brand requested crd': 'exFtyDate',
     'packing splits': 'ignore',
+    // EB master list (FW26 EB) - additional variants not already mapped above
+    'sb = eb qty': 'quantity',
+    'buy 2 agreed qty': 'quantity',
+    'buy 3 agreed qty': 'quantity',
+    'buy 2 - tracking no.': 'purchaseOrder',
+    'buy 3 - tracking no.': 'purchaseOrder',
+    'buy 2 cfm crd (request crd)': 'exFtyDate',
+    'buy 3 cfm crd (request crd)': 'exFtyDate',
+    'la 1 cfm crd (request crd)': 'exFtyDate',
+    'cpr crd buy 1': 'exFtyDate',
+    'cpr crd buy 2': 'exFtyDate',
+    'cpr crd buy 3': 'exFtyDate',
+    // Cotopaxi - ERP style (vendor sku already mapped above)
+    // EVO
+    'jpy': 'cost',
+    // 511 Tactical - additional (confirmed x-fty already mapped above)
+    // German flex file
+    'bestellung': 'purchaseOrder',
+    'stilnummer': 'product',
+    'farbe': 'colour',
+    'beschreibung': 'productExternalRef',
+    'groesse': 'sizeName',
+    'größe': 'sizeName',
+    'menge': 'quantity',
+    'lieferdatum': 'exFtyDate',
+    'liefertermin': 'exFtyDate',
+    // Flex gibberish - will be handled by AI+content inference but add fallback
+    'col a': 'purchaseOrder',
+    'field 2': 'product',
+    'data x': 'colour',
+    'misc 9': 'productExternalRef',
+    'val zz': 'sizeName',
+    'num 7': 'quantity',
+    'info 3': 'exFtyDate',
 };
 
 export function normalizeHeaderText(value: string): string {

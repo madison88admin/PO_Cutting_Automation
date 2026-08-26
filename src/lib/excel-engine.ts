@@ -2262,7 +2262,13 @@ export class ExcelEngine {
         });
         if (needsCanonicalMapping) {
             try {
-                const aiResult = await mapHeaders(canonicalHeaders, manualBrand || undefined);
+                // Collect sample data rows for AI-assisted mapping
+                const sampleRows: unknown[][] = [];
+                for (let r = headerRowNumber + 1; r <= Math.min(headerRowNumber + 5, worksheet.rowCount); r++) {
+                    const rowVals = worksheet.getRow(r).values;
+                    sampleRows.push(Array.isArray(rowVals) ? rowVals.slice(1) : Object.values(rowVals || {}));
+                }
+                const aiResult = await mapHeaders(canonicalHeaders, manualBrand || undefined, sampleRows);
                 Object.entries(aiResult.mapping).forEach(([canonicalField, sourceHeader]) => {
                     if (!sourceHeader) return;
                     const colNumber = headerColumns.get(normalizeHeaderText(sourceHeader));

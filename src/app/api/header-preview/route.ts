@@ -42,9 +42,15 @@ export async function POST(req: NextRequest) {
                 if (!headers.length) continue;
 
                 const learned = await findMatchingTemplateSupabase(headers);
+                // Collect sample data rows for AI-assisted mapping
+                const sampleRows: unknown[][] = [];
+                for (let r = detected.headerRow + 1; r <= Math.min(detected.headerRow + 5, worksheet.rowCount); r++) {
+                    const rowVals = worksheet.getRow(r).values;
+                    sampleRows.push(Array.isArray(rowVals) ? rowVals.slice(1) : Object.values(rowVals || {}));
+                }
                 const mapped = learned
                     ? { mapping: learned.mapping, confidence: 100, unmappedColumns: headers.filter((header) => !Object.values(learned.mapping).includes(header)) }
-                    : await mapHeaders(headers);
+                    : await mapHeaders(headers, undefined, sampleRows);
                 const score = Object.keys(mapped.mapping).length;
                 if (!best || score > best.score) {
                     best = {

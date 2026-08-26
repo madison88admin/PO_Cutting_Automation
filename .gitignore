@@ -45,6 +45,7 @@ __pycache__/
 # === session artifacts / local data (do not commit) ===
 buy-files/
 buy-files-flex/
+buy-files-new/
 e2e-outputs/
 e2e-result*.txt
 dev-server*.log

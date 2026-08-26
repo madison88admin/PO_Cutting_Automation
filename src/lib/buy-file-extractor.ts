@@ -504,6 +504,31 @@ function isColorCodeValue(v: string): boolean {
     return s.length >= 2 && s.length <= 12 && /[a-zA-Z]/.test(s) && /\d/.test(s) && !/\s/.test(s);
 }
 
+function isColorNameValue(v: string): boolean {
+    const s = String(v || '').trim();
+    if (!s || s.length < 2 || s.length > 20) return false;
+    if (/\d/.test(s)) return false;
+    // Color names are short, mostly alpha, no long sentences (Navy, Red, Black, Heather Grey)
+    if (s.split(/\s+/).length > 3) return false;
+    return /^[a-zA-Z][a-zA-Z\s\-/]+$/.test(s) && !/\d/.test(s);
+}
+
+function isSizeValue(v: string): boolean {
+    const s = String(v || '').trim().toLowerCase();
+    if (!s) return false;
+    const known = new Set(['std','os','one size','onesize','xss','ss','ms','ls','xls','xs','s','m','l','xl','2xs','3xs','2x','3x','2xl','3xl','4xl','5xl','1x','1-siz','1siz','o/s','osfa','uni58','1fm']);
+    if (known.has(s)) return true;
+    if (/^\d{1,3}$/.test(s)) return true;
+    if (/^(xs|s|m|l|xl|xxl|xxxl)$/i.test(s)) return true;
+    return false;
+}
+
+function isPoValue(v: string): boolean {
+    const s = String(v || '').trim();
+    if (!s || s.length > 30) return false;
+    return /^po[-_#\s]*\w+/i.test(s) || /^gpo\d+/i.test(s) || /^\d{2,}b\d+/i.test(s) || /^us\.po/i.test(s) || /^4500\d{5,}/.test(s);
+}
+
 function isQuantityValue(v: string | number): boolean {
     const n = Number(v);
     return !isNaN(n) && n > 0 && Number.isFinite(n) && n === Math.floor(n);
@@ -539,6 +564,9 @@ function inferHeadersFromContent(
         styleCodeCount: number;
         styleNameCount: number;
         colorCodeCount: number;
+        colorNameCount: number;
+        sizeCount: number;
+        poCount: number;
         quantityCount: number;
         dateCount: number;
         nonEmptyCount: number;
@@ -568,6 +596,9 @@ function inferHeadersFromContent(
             styleCodeCount: 0,
             styleNameCount: 0,
             colorCodeCount: 0,
+            colorNameCount: 0,
+            sizeCount: 0,
+            poCount: 0,
             quantityCount: 0,
             dateCount: 0,
             nonEmptyCount: 0,
@@ -591,6 +622,9 @@ function inferHeadersFromContent(
             else if (isStyleNameValue(strVal)) stats.styleNameCount++;
 
             if (isColorCodeValue(strVal)) stats.colorCodeCount++;
+            if (isColorNameValue(strVal)) stats.colorNameCount++;
+            if (isSizeValue(strVal)) stats.sizeCount++;
+            if (isPoValue(strVal)) stats.poCount++;
             if (isQuantityValue(val as string | number)) stats.quantityCount++;
             if (isDateValue(val)) stats.dateCount++;
             stats.totalLength += strVal.length;
@@ -611,6 +645,9 @@ function inferHeadersFromContent(
         buyer_style_number: [],
         buyer_style_name: [],
         color_code: [],
+        color: [],
+        size: [],
+        po_number: [],
         quantity: [],
         delivery_date: [],
     };
@@ -667,11 +704,49 @@ function inferHeadersFromContent(
             });
         }
 
-        // Quantity: most values are positive integers
+        // Color name: short alpha names like Navy, Red, Heather Grey — veto location/admin columns
+        if (
+            ratio(stats, stats.colorNameCount) >= 0.6
+            && !isDateishHeader && !isAdminHeader
+            && !/\b(po\b|number|code|qty|quantity|season|city|address|state|zip|country|destination|warehouse|plant|vendor|supplier|customer|brand|season|year)\b/i.test(nh)
+        ) {
+            fieldCandidates.color.push({
+                colIndex: c,
+                score: ratio(stats, stats.colorNameCount),
+                header,
+            });
+        }
+
+        // Size: known size tokens — veto MOQ/qty/code columns that look numeric
+        if (
+            ratio(stats, stats.sizeCount) >= 0.6
+            && !isDateishHeader && !isAdminHeader
+            && !/\b(moq|qty|quantity|supplier|vendor|code|number|sap)\b/i.test(nh)
+        ) {
+            fieldCandidates.size.push({
+                colIndex: c,
+                score: ratio(stats, stats.sizeCount),
+                header,
+            });
+        }
+
+        // PO number: contains PO patterns
+        if (
+            ratio(stats, stats.poCount) >= 0.5
+            && stats.nonEmptyCount >= 2
+        ) {
+            fieldCandidates.po_number.push({
+                colIndex: c,
+                score: ratio(stats, stats.poCount),
+                header,
+            });
+        }
+
+        // Quantity: most values are positive integers — veto supplier/code/price columns
         if (
             ratio(stats, stats.quantityCount) >= 0.7
             && !isDateishHeader
-            && !/\b(price|cost|fob|year|surcharge|uc)\b/i.test(nh)
+            && !/\b(price|cost|fob|year|surcharge|uc|supplier|vendor|factory|plant|code|account|number|id|sap|moq)\b/i.test(nh)
         ) {
             fieldCandidates.quantity.push({
                 colIndex: c,
@@ -919,7 +994,9 @@ async function extractFromSheet(
     } else {
         // 3. Build mapping from legacy DB + AI + heuristic fallback
         const legacyMapping = await loadLegacyMapping(customerHint);
-        const aiMappingResult = await mapHeaders(headers, customerHint);
+        // Pass sample data rows to the AI for smarter mapping
+        const sampleRows = sheet.rows.slice(headerRow, headerRow + 5).map(row => row || []);
+        const aiMappingResult = await mapHeaders(headers, customerHint, sampleRows);
 
         mapping = mergeMappings(headers, legacyMapping, aiMappingResult.mapping);
         unmappedColumns = headers.filter((h) => !Object.values(mapping as Record<string, string>).includes(h));
