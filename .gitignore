@@ -41,3 +41,15 @@ next-env.d.ts
 node_modules/
 dev.log
 __pycache__/
+
+# === session artifacts / local data (do not commit) ===
+buy-files/
+buy-files-flex/
+e2e-outputs/
+e2e-result*.txt
+dev-server*.log
+.pnpm-store/
+.freebuff/
+*-PF62XX6H.*
+diag-*.ts
+cache-status.ts

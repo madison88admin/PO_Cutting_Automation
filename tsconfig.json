@@ -55,6 +55,8 @@
     "extract-timing-test.ts",
     "flexibility-test.ts",
     "ping-nextgen.ts",
+    "apply-db-migrations.ts",
+    "regression-buy-files.ts",
     "probe-product-create.ts",
     "run-style-cache-migration.ts",
     "search-products.ts",

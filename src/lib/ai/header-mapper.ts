@@ -13,8 +13,21 @@ const CANONICAL_FIELDS = new Set([
     'buy_information',
 ]);
 
-function normalizeMapping(mapping: Record<string, string>): ColumnMapping {
-    const normalized: ColumnMapping = {};
+/**
+ * A mapping is only worth caching/reusing when it binds the core trio:
+ * a quantity source, a style/sku reference, and some colour signal.
+ * Guards against poisoning the learning cache with half-mappings that
+ * would otherwise bypass improved deterministic logic on later runs.
+ */
+function hasCoreFields(m: Record<string, string>): boolean {
+    return Boolean(
+        m.quantity
+        && (m.buyer_style_number || m.sku)
+        && (m.color || m.color_code)
+    );
+}
+
+function normalizeMapping(mapping: Record<string, string>): ColumnMapping {    const normalized: ColumnMapping = {};
     if (!mapping || typeof mapping !== 'object') return normalized;
 
     for (const [key, value] of Object.entries(mapping)) {
@@ -35,47 +48,61 @@ function normalizeMapping(mapping: Record<string, string>): ColumnMapping {
 }
 
 const HEADER_PATTERNS: { field: string; patterns: string[] }[] = [
-    { field: 'po_number', patterns: ['final po cut', 'master po', 'po number', 'purchase order', 'order number', 'po no', 'po no.', 'po#', 'so number', 'so#', 'sales order', 'po'] },
+    { field: 'po_number', patterns: ['final po cut', 'master po', 'po number', 'purchase order no', 'purchasing document', 'purchase order', 'order number', 'po no', 'po no.', 'po#', 'so number', 'so#', 'sales order', 'po cut', 'po'] },
     { field: 'buyer_po_number', patterns: ['buyer po number', 'buyer po #', 'buyer po', 'customer po number', 'customer po #', 'customer po', 'bp no', 'extraction po #'] },
-    { field: 'buyer_style_number', patterns: ['style#', 'style #', 'style number', 'style no', 'style no.', 'style ref', 'style reference', 'article', 'model', 'model no', 'model number', 'style'] },
+    { field: 'buyer_style_number', patterns: ['style#', 'style #', 'style code', 'style number', 'style no', 'style no.', 'style ref', 'style reference', 'item number', 'article', 'model', 'model no', 'model number', 'dev #', 'item', 'style'] },
     { field: 'buyer_style_name', patterns: ['style name', 'style description', 'style desc', 'style nm', 'style narrative'] },
-    { field: 'sku', patterns: ['material', 'sku', 'upc', 'ean', 'product code', 'article code', 'old sku', 'eu old sku'] },
-    { field: 'product_description', patterns: ['longtext', 'material description', 'product description', 'item description', 'style description', 'description', 'desc'] },
+    { field: 'sku', patterns: ['material', 'sku', 'upc', 'ean', 'product code', 'article code', 'style color article code (12 digits)', 'style color size article code (18 digits)', 'old sku', 'eu old sku', 'item code'] },
+    { field: 'product_description', patterns: ['longtext', 'material description', 'product description', 'item description', 'style description', 'product name', 'short text', 'description', 'desc', 'text'] },
     { field: 'color_code', patterns: ['style color', 'color code', 'colour code', 'colorway code', 'color no', 'color #'] },
-    { field: 'color', patterns: ['colorway name', 'color name', 'colour name', 'colorway', 'color', 'colour'] },
-    { field: 'size', patterns: ['size 1', 'size 2', 'size name', 'size scale', 'product size', 'size#', 'size'] },
-    { field: 'quantity', patterns: ['total quantity', 'order qty', 'po qty', 'buy qty', '1st qty', '2nd qty', 'quantity', 'qty', 'units'] },
-    { field: 'delivery_date', patterns: ['vendor confirmed crd', 'brand requested ped', 'planned ped', 'delivery date', 'crdd date', 'ex factory', 'ex-fty', 'ship date', 'delivery', 'crd', 'ped', 'target date'] },
+    { field: 'color', patterns: ['colorway name', 'color name', 'colour name', 'colorway', 'colour way', 'color description', 'color', 'colour'] },
+    { field: 'size', patterns: ['grid value', 'size 1', 'size 2', 'size name', 'size scale', 'product size', 'size#', 'size'] },
+    { field: 'quantity', patterns: ['total quantity', 'scheduled quantity', 'tot qty', 'order qty', 'ordered qty', 'po qty', 'buy qty', '1st qty', '2nd qty', 'quantity|n', 'qty (lum)', 'consensus quantity', 'quantity', 'qty', 'units'] },
+    { field: 'delivery_date', patterns: ['vendor confirmed crd', 'brand requested ped', 'planned ped', 'delivery date', 'crdd date', 'ex factory', 'confirmed ex-factory date|n', 'requested etd|n', 'final delivery date', 'final xf date', 'best crd', 'brand requested crd', 'material arrival date', 'shipping date', 'handover date ordered', 'vendor confirmed etd', 'ex-factory', 'ex-fty', 'ship date', 'etd', 'delivery', 'crd', 'ped', 'target date', 'date'] },
     { field: 'start_date', patterns: ['udf-start_date', 'start date', 'order start date', 'valid from'] },
     { field: 'cancel_date', patterns: ['udf-canel_date', 'udf-cancel_date', 'cancel date', 'canel date', 'order cancel date', 'valid until'] },
-    { field: 'season', patterns: ['season', 'buy season', 'season year', 'year'] },
-    { field: 'customer', patterns: ['sold-to party', 'sold to party', 'sold to', 'customer', 'buyer', 'brand', 'sales market', 'sales org', 'company'] },
-    { field: 'factory', patterns: ['final factory name', 'final factory', 'final vendor name', 'final vendor', 'factory name', 'factory', 'vendor', 'supplier', 'manufacturer'] },
+    { field: 'season', patterns: ['season code', 'season', 'buy season', 'season year', 'year'] },
+    { field: 'customer', patterns: ['sold-to party', 'sold to party', 'sold to', 'customer name', 'customer/market', 'customer', 'buyer', 'brand', 'sales market', 'sales org', 'company'] },
+    { field: 'factory', patterns: ['final factory name', 'final factory', 'final vendor name', 'final vendor', 'factory name', 'erp factory code', 'factory code', 'factory', 'vendor plnt (conf plnt)', 'confirmed vendor plnt', 'vendor name', 'vendor', 'supplier', 'manufacturer'] },
     { field: 'currency', patterns: ['final currency', 'currency', 'curr'] },
-    { field: 'unit_cost', patterns: ['fob', 'unit cost', 'unit price', 'factory cost', 'cost', 'price', 'production upcharges usd', 'material upcharges usd', 'upcharge', 'up charge'] },
-    { field: 'transport_method', patterns: ['order transport', 'transport method', 'transportation mode', 'transportation mode description', 'transport mode', 'shipment method', 'shipment mode', 'shipping method', 'ship mode', 'ship via', 'mode of delivery', 'freight mode'] },
+    { field: 'unit_cost', patterns: ['fob', 'unit cost', 'unit price', 'factory cost', 'net price', 'base fob m88', 'base fob', 'cost', 'price', 'production upcharges usd', 'material upcharges usd', 'upcharge', 'up charge'] },
+    { field: 'transport_method', patterns: ['order transport', 'transport method', 'transportation mode', 'transportation mode description', 'transport mode', 'shipment method', 'shipment mode', 'shipping method', 'ship mode', 'ship via', 'mode of delivery|n', 'mode of delivery', 'trans cond', 'freight mode'] },
     { field: 'buy_information', patterns: ['buy information', 'buy info', 'buying information', 'buying info', 'purchase information', 'purchase info', 'po information', 'po info', 'buy details', 'buy detail'] },
     { field: 'status', patterns: ['status', 'po status', 'order status', 'line status', 'workflow status', 'decision'] },
 ];
 
-function patternToRegex(pattern: string): RegExp {
-    // Escape special regex chars, then allow optional whitespace between words
-    const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const withOptionalSpaces = escaped.replace(/\s+/g, '\\s*');
-    return new RegExp(`^${withOptionalSpaces}$`, 'i');
+function normalizeHeaderKey(s: string): string {
+    return s.toLowerCase().replace(/[^a-z0-9|]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-function fallbackHeuristicMapping(headers: string[]): ColumnMapping {
+function patternToRegex(pattern: string): RegExp {
+    // Normalize both sides consistently (punctuation collapses to spaces) then
+    // allow optional whitespace between tokens so "PO #" == "PO#" == "po".
+    // Regex specials (including the literal "|" used by headers like
+    // "Quantity|N") must be escaped, otherwise they become alternations.
+    const normalized = normalizeHeaderKey(pattern);
+    const body = normalized
+        .split(' ')
+        .map((tok) => tok
+            .split('')
+            .map((ch) => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+            .join('\\s*'))
+        .join('\\s*');
+    return new RegExp(`^${body}$`, 'i');
+}
+
+export function fallbackHeuristicMapping(headers: string[]): ColumnMapping {
     const mapping: ColumnMapping = {};
     const usedHeaders = new Set<number>();
-    const strippedHeaders = headers.map((h) => h.trim().replace(/[^a-zA-Z0-9]+$/, ''));
+    const normalizedHeaders = headers.map((h) => normalizeHeaderKey(h));
 
     for (const { field, patterns } of HEADER_PATTERNS) {
         for (const pattern of patterns) {
             const regex = patternToRegex(pattern);
-            for (let i = 0; i < strippedHeaders.length; i++) {
+            for (let i = 0; i < normalizedHeaders.length; i++) {
                 if (usedHeaders.has(i)) continue;
-                if (regex.test(strippedHeaders[i])) {
+                if (!normalizedHeaders[i]) continue;
+                if (regex.test(normalizedHeaders[i])) {
                     (mapping as Record<string, string>)[field] = headers[i];
                     usedHeaders.add(i);
                     break;
@@ -183,7 +210,8 @@ export async function mapHeaders(headers: string[], brandHint?: string): Promise
     // --- Learning Layer: check header mapping cache ---
     if (brandHint) {
         const cached = await getCachedHeaderMapping(brandHint, headers);
-        if (cached && cached.confidence >= 80) {
+        const cachedMap = (cached?.mapped_headers || {}) as Record<string, string>;
+        if (cached && cached.confidence >= 80 && hasCoreFields(cachedMap)) {
             console.log(`[header-mapper] Cache hit for brand="${brandHint}" (hits: ${cached.hit_count}, confidence: ${cached.confidence})`);
             const mappedHeaders = new Set(Object.values(cached.mapped_headers));
             const unmapped = headers.filter((h) => !mappedHeaders.has(h));
@@ -192,6 +220,9 @@ export async function mapHeaders(headers: string[], brandHint?: string): Promise
                 confidence: cached.confidence,
                 unmappedColumns: unmapped,
             };
+        }
+        if (cached) {
+            console.log(`[header-mapper] cache entry for brand="${brandHint}" lacks core fields; recomputing`);
         }
     }
     // --- End Learning Layer ---
@@ -240,7 +271,7 @@ export async function mapHeaders(headers: string[], brandHint?: string): Promise
                     'Authorization': `Bearer ${apiKey}`,
                 },
                 body: JSON.stringify({
-                    model: 'llama-3.3-70b-versatile',
+                    model: process.env.GROQ_MODEL || 'openai/gpt-oss-20b',
                     messages: [
                         { role: 'system', content: SYSTEM_PROMPT },
                         { role: 'user', content: prompt },
@@ -286,7 +317,7 @@ export async function mapHeaders(headers: string[], brandHint?: string): Promise
     unmappedColumns = headers.filter((h) => !mappedHeaders.has(h));
 
     // --- Learning Layer: save successful header mapping to cache ---
-    if (brandHint && confidence >= 80 && Object.keys(mapping).length >= 6) {
+    if (brandHint && confidence >= 80 && Object.keys(mapping).length >= 6 && hasCoreFields(mapping as Record<string, string>)) {
         try {
             await saveHeaderMapping(brandHint, headers, mapping as Record<string, string>, confidence);
         } catch (err) {

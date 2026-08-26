@@ -331,14 +331,70 @@ export async function extractBuyFile(
             }))
             .sort((a, b) => b.score - a.score);
         const localBest = locallyScoredRows[0];
-        if (!localBest || localBest.score <= 0) continue;
 
-        const detected = localBest.score >= 2
-            ? { headerRow: localBest.index + 1 }
-            : await detectHeaderRow(preview);
+        // Deterministic fast path, else AI detection for tabular-looking
+        // sheets even with zero keyword score (foreign-language layouts).
+        const maxNonEmpty = preview.reduce((mx, r) => Math.max(
+            mx,
+            r.filter((c) => c !== null && c !== undefined && String(c).trim() !== '').length
+        ), 0);
+        // Header-row choice, structural first: a real header row is almost
+        // entirely short text labels, while data rows mix numbers and dates.
+        // Keyword scores are only a tie-breaker — raw substring scoring alone
+        // misfires on product names ("Ridge Beanie" contains "ean").
+        let bestIdx = -1;
+        let bestRatio = 0;
+        let bestKw = -1;
+        preview.forEach((r, idx) => {
+            const cells = r.filter((c) => c !== null && c !== undefined && String(c).trim() !== '');
+            if (cells.length < 4) return;
+            const strCells = cells.filter((c) =>
+                !(c instanceof Date) && typeof c === 'string' && c.length <= 60 && isNaN(Number(c))
+            );
+            const ratio = strCells.length / cells.length;
+            const kw = scoreHeaders(r.map(String));
+            if (
+                ratio > bestRatio + 0.001 ||
+                (Math.abs(ratio - bestRatio) <= 0.001 && kw > bestKw)
+            ) {
+                bestRatio = ratio;
+                bestKw = kw;
+                bestIdx = idx;
+            }
+        });
+
+        let detected: { headerRow: number } | null = null;
+        if (bestIdx >= 0 && bestRatio >= 0.85) {
+            detected = { headerRow: bestIdx + 1 };
+        } else if (maxNonEmpty >= 4) {
+            detected = await detectHeaderRow(preview);
+        } else {
+            continue;
+        }
+
         let headerRow = sheet.rows[detected.headerRow - 1] || [];
         let headers = headerRow.map((h) => String(h || '')).filter(Boolean);
         let headerRowIndex = detected.headerRow;
+
+        // Sanity guard: if the chosen "header" row is mostly numbers/dates it
+        // is a data row, not a header (AI can mis-pick on foreign layouts).
+        // Fall back to the densest preview row in that case.
+        const filledCells = headerRow.filter((c) => c !== null && c !== undefined && String(c).trim() !== '');
+        const numericish = filledCells.filter((c) => c instanceof Date || !isNaN(Number(c))).length;
+        if (filledCells.length >= 4 && numericish / filledCells.length > 0.5) {
+            let bestRow = 0;
+            let bestCount = 0;
+            preview.forEach((row, idx) => {
+                const count = row.filter((cell) => cell !== null && cell !== undefined && String(cell).trim() !== '').length;
+                if (count > bestCount) {
+                    bestCount = count;
+                    bestRow = idx;
+                }
+            });
+            headerRow = sheet.rows[bestRow] || [];
+            headers = headerRow.map((h) => String(h || '')).filter(Boolean);
+            headerRowIndex = bestRow + 1;
+        }
 
         // Fallback: if AI-selected row is empty, pick the row with most non-empty cells
         if (!headers.length) {
@@ -478,7 +534,25 @@ function inferHeadersFromContent(
         dateCount: number;
         nonEmptyCount: number;
         totalLength: number;
+        alphaCount: number;
     }> = {};
+
+    // The `headers` array passed here may be FILTERED (blank header cells
+    // removed), while `rows` keep raw Excel column positions. Build the
+    // filtered→raw index translation once so every cell read below lands on
+    // the column the label actually belongs to.
+    const rawHeaderRow = rows[headerRowIndex - 1] || [];
+    const rawIdxOfFiltered: number[] = [];
+    {
+        let k = 0;
+        for (let i = 0; i < rawHeaderRow.length; i++) {
+            const v = rawHeaderRow[i];
+            if (v === null || v === undefined || String(v).trim() === '') continue;
+            rawIdxOfFiltered[k++] = i;
+        }
+    }
+    const rawColOf = (filteredIdx: number): number =>
+        rawIdxOfFiltered[filteredIdx] !== undefined ? rawIdxOfFiltered[filteredIdx] : filteredIdx;
 
     for (let c = 0; c < headers.length; c++) {
         columnStats[c] = {
@@ -489,18 +563,21 @@ function inferHeadersFromContent(
             dateCount: 0,
             nonEmptyCount: 0,
             totalLength: 0,
+            alphaCount: 0,
         };
 
+        const rawC = rawColOf(c);
         for (let r = headerRowIndex + 1; r <= headerRowIndex + sampleSize && r < rows.length; r++) {
             const row = rows[r];
-            if (!row || c >= row.length) continue;
-            const val = row[c];
+            if (!row) continue;
+            const val = row[rawC];
             if (val === null || val === undefined || val === '') continue;
 
             const stats = columnStats[c];
             stats.nonEmptyCount++;
             const strVal = String(val).trim();
 
+            if (/[a-zA-Z]/.test(strVal)) stats.alphaCount++;
             if (isStyleCodeValue(strVal)) stats.styleCodeCount++;
             else if (isStyleNameValue(strVal)) stats.styleNameCount++;
 
@@ -510,6 +587,15 @@ function inferHeadersFromContent(
             stats.totalLength += strVal.length;
         }
     }
+
+    // Header-based veto lists. A column whose HEADER clearly declares another
+    // semantic must never be claimed by content inference, no matter how its
+    // values happen to classify (e.g. "Document Date" holding numeric Excel
+    // serials looks like quantities; "Vendor Account" looks like a style code).
+    const DATEISH_HEADER = /\b(date|etd|crd|ped|xf|arrival|handover|issued)\b|ex[-\s]?fac/i;
+    const ADMIN_HEADER = /\b(account|email|planner|sbu|category|type|status|priority|remark|comment|approval|warehouse|^site\b|round|surcharge|terms|payment|incoterm|reference|instr\.?\b|mode\b)\b/i;
+    const ORG_NAME_HEADER = /\b(vendor|supplier|factory|plant|warehouse|customer|buyer|company)\b.*\b(name|account|code|plnt)\b|\bname\b/i;
+    const STYLEISH_HEADER = /\b(style|item|material|article|model|sku|product|dev\s*#)\b/i;
 
     // Score each column for each canonical field
     const fieldCandidates: Record<string, { colIndex: number; score: number; header: string }[]> = {
@@ -526,9 +612,19 @@ function inferHeadersFromContent(
         const stats = columnStats[c];
         if (stats.nonEmptyCount < 2) continue;
         const header = headers[c];
+        const nh = String(header).toLowerCase().replace(/\s+/g, ' ').trim();
+        const isDateishHeader = DATEISH_HEADER.test(nh);
+        const isAdminHeader = ADMIN_HEADER.test(nh);
+        const isOrgNameHeader = ORG_NAME_HEADER.test(nh);
 
         // Style code: most values look like codes (NF0A8CGZ, VN0A3XYZ)
-        if (ratio(stats, stats.styleCodeCount) >= 0.6) {
+        if (
+            ratio(stats, stats.styleCodeCount) >= 0.6
+            && !isDateishHeader && !isAdminHeader && !isOrgNameHeader
+            // Purely numeric columns must at least have a style-ish header,
+            // otherwise any ID or date-serial column qualifies.
+            && (stats.alphaCount > 0 || STYLEISH_HEADER.test(nh))
+        ) {
             fieldCandidates.buyer_style_number.push({
                 colIndex: c,
                 score: ratio(stats, stats.styleCodeCount),
@@ -537,7 +633,11 @@ function inferHeadersFromContent(
         }
 
         // Style name: most values look like names (SALTY LINED BEANIE)
-        if (ratio(stats, stats.styleNameCount) >= 0.6) {
+        if (
+            ratio(stats, stats.styleNameCount) >= 0.6
+            && !isDateishHeader && !isAdminHeader && !isOrgNameHeader
+            && !/\b(po\b|number|code|qty|quantity|season|status)\b/i.test(nh)
+        ) {
             fieldCandidates.buyer_style_name.push({
                 colIndex: c,
                 score: ratio(stats, stats.styleNameCount),
@@ -546,7 +646,11 @@ function inferHeadersFromContent(
         }
 
         // Color code: most values look like color codes (E8J, JK3)
-        if (ratio(stats, stats.colorCodeCount) >= 0.5 && stats.nonEmptyCount >= 3) {
+        if (
+            ratio(stats, stats.colorCodeCount) >= 0.5
+            && stats.nonEmptyCount >= 3
+            && !isDateishHeader && !isAdminHeader && !isOrgNameHeader
+        ) {
             fieldCandidates.color_code.push({
                 colIndex: c,
                 score: ratio(stats, stats.colorCodeCount),
@@ -555,7 +659,11 @@ function inferHeadersFromContent(
         }
 
         // Quantity: most values are positive integers
-        if (ratio(stats, stats.quantityCount) >= 0.7) {
+        if (
+            ratio(stats, stats.quantityCount) >= 0.7
+            && !isDateishHeader
+            && !/\b(price|cost|fob|year|surcharge|uc)\b/i.test(nh)
+        ) {
             fieldCandidates.quantity.push({
                 colIndex: c,
                 score: ratio(stats, stats.quantityCount),
@@ -563,8 +671,11 @@ function inferHeadersFromContent(
             });
         }
 
-        // Delivery date: most values are dates
-        if (ratio(stats, stats.dateCount) >= 0.6) {
+        // Delivery date: most values are dates; veto clearly non-date columns
+        if (
+            ratio(stats, stats.dateCount) >= 0.6
+            && !/\b(qty|quantity|price|cost|fob)\b/i.test(nh)
+        ) {
             fieldCandidates.delivery_date.push({
                 colIndex: c,
                 score: ratio(stats, stats.dateCount),
@@ -576,6 +687,39 @@ function inferHeadersFromContent(
     // Sort candidates by score (highest first)
     for (const field of Object.keys(fieldCandidates)) {
         fieldCandidates[field].sort((a, b) => b.score - a.score);
+    }
+
+    // PO-number disambiguation: several layouts carry multiple PO-like columns
+    // (often one legacy/empty and one filled). Prefer the PO-ish column that
+    // actually contains data; break ties by canonical pattern rank, then
+    // leftmost position. Only overrides the deterministic pick when the
+    // currently-mapped column is substantially emptier than the alternative.
+    {
+        const POISH_HEADER = /^(po#|po #|po no\.?|po number|purchase order( no| number|#)?|purchasing document|final po cut|master po#?|new po|so#)$/i;
+        const PO_RANK = ['final po cut', 'master po', 'po number', 'purchase order', 'purchasing document', 'new po', 'po#'];
+        const rankOf = (h: string) => {
+            const idx = PO_RANK.findIndex((r) => h.startsWith(r));
+            return idx === -1 ? PO_RANK.length : idx;
+        };
+        const poCols: { c: number; nh: string; fill: number }[] = [];
+        for (let c = 0; c < headers.length; c++) {
+            const st = columnStats[c];
+            if (!st || st.nonEmptyCount < 1) continue;
+            const nh = String(headers[c]).toLowerCase().replace(/\s+/g, ' ').trim();
+            if (!POISH_HEADER.test(nh)) continue;
+            poCols.push({ c, nh, fill: Math.min(1, st.nonEmptyCount / sampleSize) });
+        }
+        if (poCols.length >= 1 && sampleSize > 0) {
+            poCols.sort((a, b) => b.fill - a.fill || rankOf(a.nh) - rankOf(b.nh) || a.c - b.c);
+            const best = poCols[0];
+            const cur = (mapping as Record<string, string>).po_number;
+            const curIdx = cur ? headers.indexOf(cur) : -1;
+            const curFill = curIdx >= 0 && columnStats[curIdx] ? Math.min(1, columnStats[curIdx].nonEmptyCount / sampleSize) : 0;
+            if (best.c !== curIdx && best.fill > curFill + 0.2) {
+                (mapping as Record<string, string>).po_number = headers[best.c];
+                console.log(`[content-inference] po_number <= "${headers[best.c]}" (fill ${(best.fill * 100).toFixed(0)}% vs ${Math.round(curFill * 100)}%)`);
+            }
+        }
     }
 
     // Apply content-based inference:
@@ -630,6 +774,41 @@ function inferHeadersFromContent(
             }
         }
     }
+
+    // Contradiction overrides: an LLM/heuristic may have bound a field to a
+    // column whose CONTENT flatly contradicts the field type (e.g. quantity ←
+    // a free-text column). If some unused column matches the field's content
+    // almost perfectly, steal the binding.
+    const stealIfContradicts = (
+        field: string,
+        ratioOf: (s: { quantityCount: number; dateCount: number; nonEmptyCount: number }) => number,
+        minNew: number,
+        maxCur: number,
+    ) => {
+        const candidates = fieldCandidates[field];
+        if (!candidates?.length) return;
+        const currentMapping = (mapping as Record<string, string>)[field];
+        if (!currentMapping) return;
+        const curIdx = headers.indexOf(currentMapping);
+        const curStats = curIdx >= 0 ? columnStats[curIdx] : undefined;
+        const curRatio = curStats ? ratioOf(curStats) : 0;
+        if (curRatio > maxCur) return;
+        const best = candidates.find((c) => c.colIndex !== curIdx && !usedColumns.has(c.colIndex));
+        if (!best) return;
+        const bestStats = columnStats[best.colIndex];
+        if (!bestStats || ratioOf(bestStats) < minNew) return;
+        (mapping as Record<string, string>)[field] = best.header;
+        usedColumns.add(best.colIndex);
+        mappedHeaders.add(best.header);
+        if (curIdx >= 0) {
+            usedColumns.delete(curIdx);
+            mappedHeaders.delete(currentMapping);
+        }
+        console.log(`[content-inference] ${field} <= "${best.header}" (CONTRADICTION override: was "${currentMapping}" at ${(curRatio * 100).toFixed(0)}%, new ${(ratioOf(bestStats) * 100).toFixed(0)}%)`);
+    };
+
+    stealIfContradicts('quantity', (s) => ratio(s, s.quantityCount), 0.8, 0.2);
+    stealIfContradicts('delivery_date', (s) => ratio(s, s.dateCount), 0.8, 0.2);
 
     return mapping;
 }
@@ -758,6 +937,77 @@ async function extractFromSheet(
 
     let items = readAllRows(sheet.rows, headerRow, mapping, sheet.name, customerHint, detectedBrand || undefined);
     console.log('[buy-file-extractor] extracted items:', items.length);
+
+    // Colour derivation for concatenated article codes (e.g. Smartwool
+    // "SW0026470011" = style "SW002647" + colour "0011", "SW002997Q671" =
+    // style + colour "Q671"). Only fires when the item has a SKU that
+    // literally starts with the style and the remainder is a short
+    // alphanumeric colour code.
+    items = items.map((item) => {
+        if (item.colorCode || item.colorName || !item.sku || !item.style) return item;
+        const sku = String(item.sku).toUpperCase();
+        const style = String(item.style).toUpperCase();
+        if (!sku.startsWith(style)) return item;
+        const rest = sku.slice(style.length);
+        if (/^[A-Z0-9]{2,6}$/.test(rest)) {
+            return { ...item, colorCode: rest };
+        }
+        return item;
+    });
+
+    // PO fallback: some layouts carry a secondary dummy-PO column (e.g.
+    // Smartwool "PR Number/ Dummy PO Number") that is filled when the primary
+    // PO column is blank.
+    {
+        const usedValsPo = new Set(Object.values(mapping as Record<string, string>).map((v) => String(v).toLowerCase()));
+        const poFallbackIdx = headers.findIndex(
+            (h) => /\bdummy\s*po\b/i.test(String(h)) && !usedValsPo.has(String(h).toLowerCase())
+        );
+        if (poFallbackIdx >= 0) {
+            items = items.map((item) => {
+                if (item.poNumber) return item;
+                const row = sheet.rows[item.sourceRow - 1];
+                const val = row ? row[poFallbackIdx] : null;
+                return val !== null && val !== undefined && String(val).trim()
+                    ? { ...item, poNumber: String(val).trim() }
+                    : item;
+            });
+        }
+    }
+
+    // Fill colour NAME from an unmapped "<Colour/Color> Name" sibling column
+    // (e.g. Dynafit maps colour→"Colour" codes while "Color Name" carries
+    // "DYN-0601 Smoke 0910"). Needed before the style derivation below.
+    {
+        const usedVals = new Set(Object.values(mapping as Record<string, string>).map((v) => String(v).toLowerCase()));
+        const siblingIdx = headers.findIndex(
+            (h) => /^(color|colour)\s*name$/i.test(String(h).trim()) && !usedVals.has(String(h).toLowerCase())
+        );
+        if (siblingIdx >= 0) {
+            items = items.map((item) => {
+                if (item.colorName) return item;
+                const row = sheet.rows[item.sourceRow - 1];
+                const val = row ? row[siblingIdx] : null;
+                return val !== null && val !== undefined && String(val).trim()
+                    ? { ...item, colorName: String(val).trim() }
+                    : item;
+            });
+        }
+    }
+
+    // Style derivation for layouts without any style column (e.g. Dynafit
+    // encodes it in the colour text: "DYN-0601 Smoke 0910" → "DYN-0601",
+    // tolerating the "DYN- 2881" spacing variant).
+    items = items.map((item) => {
+        if (item.style) return item;
+        const src = item.colorName || item.color;
+        if (!src) return item;
+        const token = String(src).trim().match(/^([A-Za-z]{2,6}-\s*[A-Za-z0-9]{2,10})/);
+        if (token) {
+            return { ...item, style: token[1].replace(/\s+/g, '').toUpperCase() };
+        }
+        return item;
+    });
 
     // 5. Query NextGen FIRST (primary enrichment source).
     // NextGen now provides product, color, factory, cost, customer, season data.

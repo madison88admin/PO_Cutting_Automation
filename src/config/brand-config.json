@@ -362,6 +362,22 @@
       "ordersTemplate": "BULK",
       "linesTemplate": "BULK",
       "keyUsers": {}
+    },
+    "smartwool": {
+      "aliases": ["smartwool", "sw"],
+      "customerName": "Smartwool",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "BULK",
+      "linesTemplate": "BULK",
+      "keyUsers": {}
+    },
+    "fjallraven": {
+      "aliases": ["fjallraven", "fjällräven", "fjall raven", "fr"],
+      "customerName": "Fjall Raven",
+      "defaultSupplier": "PT. UWU JUMP INDONESIA",
+      "ordersTemplate": "BULK",
+      "linesTemplate": "BULK",
+      "keyUsers": {}
     }
   },
   "factoryCodes": {
