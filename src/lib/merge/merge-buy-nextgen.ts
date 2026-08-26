@@ -1,4 +1,5 @@
 import { BuyFileItem, NextGenStyleInfo, ProductData, ProductSize } from '@/lib/types/buy-file';
+import { pickDisplayColor } from '@/lib/color-display';
 
 export function mergeBuyFileWithNextGen(
     items: BuyFileItem[],
@@ -44,7 +45,8 @@ export function mergeBuyFileWithNextGen(
             brand: ng?.brand || null,
             season: ng?.season || first.season || null,
             department: ng?.department || null,
-            colorName: ng?.colorName || first.color || null,
+            // Preserve numeric colour codes for matching, but never present one as the colour name.
+            colorName: pickDisplayColor(ng?.colorName, first.colorName, first.color) || null,
             colorCode: ng?.colorCode || first.colorCode || null,
             colorExt: ng?.colorExt || null,
             supplierProfile: ng?.supplierProfile || null,

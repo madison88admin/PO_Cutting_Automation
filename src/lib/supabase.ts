@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseSchema = process.env.SUPABASE_DB_SCHEMA || 'po_cutting';
 
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -23,12 +24,15 @@ if (isProduction && (!supabaseUrl || !supabaseAnonKey)) {
 // Client-side: use anon key
 export const supabase = isMock
     ? ({} as any)
-    : createClient(supabaseUrl!, supabaseAnonKey!);
+    : createClient(supabaseUrl!, supabaseAnonKey!, {
+        db: { schema: supabaseSchema },
+    });
 
 // Server-side: use service role key for admin/system actions
 export const supabaseAdmin = isMock
     ? ({} as any)
     : createClient(supabaseUrl!, supabaseServiceKey || supabaseAnonKey!, {
+        db: { schema: supabaseSchema },
         auth: {
             autoRefreshToken: false,
             persistSession: false

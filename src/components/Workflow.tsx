@@ -907,7 +907,14 @@ export default function Workflow() {
             if (detectedBrand) setManualBrand(detectedBrand);
             rememberSelections(detectedBrand);
             setUploadData(dataWithColorNames);
-            setErrors(result.errors || []);
+            // NextGen outages should remain visible but must not block review.
+            const normalizedErrors = (result.errors || []).map((error: any) => {
+                const message = String(error?.message || '');
+                const nextgenUnavailable = /nextgen/i.test(message) &&
+                    /(500|timed out|timeout|unavailable|connection|login|application error|failed to fetch)/i.test(message);
+                return nextgenUnavailable ? { ...error, severity: 'WARNING' as const } : error;
+            });
+            setErrors(normalizedErrors);
             setNextgenValidation({
                 exists: true,
                 mode: "direct-product-validation",
@@ -994,7 +1001,14 @@ export default function Workflow() {
                 body: JSON.stringify({ poNumber: explicitPoNumber || manualPoRef.current, lines }),
             });
             const result = await res.json();
-            setNextgenValidation(result);
+            if (!res.ok || result?.error) {
+                setNextgenValidation({
+                    error: `NextGen validation unavailable: ${result?.error || `HTTP ${res.status}`}`,
+                    unavailable: true,
+                });
+            } else {
+                setNextgenValidation(result);
+            }
 
             // Merge missing fields from NextGen matched lines into upload data
             if (result.exists && result.matched?.length > 0 && data?.output) {

@@ -4,6 +4,7 @@ import { getFactoryMapping, getMloMapping, getColumnMapping, getAllColumnMapping
 import { updateRun } from "@/lib/db/runHistory";
 import { mapHeaders } from "@/lib/ai/header-mapper";
 import { normalizeSizeByRules, normalizeStatusByRules, getPoNumberFormat, getDestinationDefault, resolveStyleNumber, resolveColor } from "@/lib/brand-rules";
+import { pickDisplayColor } from "@/lib/color-display";
 import {
     FALLBACK_COLUMN_ALIASES,
     detectPivotFormatFromHeaders,
@@ -340,6 +341,21 @@ export class ExcelEngine {
             (headerVals.has('size 1') || headerVals.has('size 2') || headerVals.has('total quantity') || headerVals.has('master po#'));
         if (looksLikeTNFBuySheet) return { isProductSheet: false, headerRow };
         
+        // Arcteryx buy file: has PO Number + QTY + Delivery Date alongside product fields
+        const looksLikeArcteryxBuySheet =
+            headerVals.has('po number')
+            && (headerVals.has('qty') || headerVals.has('quantity'))
+            && (headerVals.has('delivery date') || headerVals.has('ex. factory'))
+            && headerVals.has('vendor');
+        if (looksLikeArcteryxBuySheet) return { isProductSheet: false, headerRow };
+
+        // Marmot / ERP-style buy file: has Purchasing Document + Scheduled Quantity + Delivery Date
+        const looksLikeMarmotBuySheet =
+            headerVals.has('purchasing document')
+            && (headerVals.has('scheduled quantity') || headerVals.has('order qty'))
+            && (headerVals.has('delivery date') || headerVals.has('xf date'));
+        if (looksLikeMarmotBuySheet) return { isProductSheet: false, headerRow };
+
         if (strongBuyScore >= 2 && !looksLikeVuoriProductSheet) return { isProductSheet: false, headerRow };
         return { isProductSheet: productScore >= 3 && (buyScore <= 1 || looksLikeVuoriProductSheet), headerRow };
     }
@@ -2727,8 +2743,21 @@ export class ExcelEngine {
                 // JWS policy: drop the JW plant code from the PO and keep only destination suffix.
                 poNumber = `${this.stripBrackets(poNumberRaw || '').trim()}-${jwsDestinationCode}`;
             }
-            const rawColour = this.stripBrackets(getVal('colour') || '').trim();
+            let rawColour = this.stripBrackets(getVal('colour') || '').trim();
             const colourNameRaw = this.stripBrackets(getVal('colourName') || '').trim();
+            // Smartwool: derive colour from concatenated article code
+            // e.g. SW0026470011 = style SW002647 + colour 0011
+            // brandKey may be 'sw' (from Brand column) or 'smartwool' (from detected customer)
+            if (!rawColour && (brandKey === 'smartwool' || brandKey === 'sw' || detectedCustomer === 'Smartwool')) {
+                const articleCode = (getVal('productExternalRef') || '').toUpperCase();
+                const styleVal = (getVal('product') || '').toUpperCase();
+                if (articleCode && styleVal && articleCode.startsWith(styleVal) && articleCode.length > styleVal.length) {
+                    const rest = articleCode.slice(styleVal.length);
+                    if (/^[A-Z0-9]{2,6}$/.test(rest)) {
+                        rawColour = rest;
+                    }
+                }
+            }
             const buyDescription = this.stripBrackets(getVal('productExternalRef') || getVal('productName') || '').trim();
             const pranaColorCodeRaw = this.stripBrackets(getVal('pranaColorCode') || '').trim();
             const pranaColorTextRaw = this.stripBrackets(getVal('pranaColorText') || '').trim();
@@ -3112,7 +3141,7 @@ export class ExcelEngine {
                     ? (hunterEffectiveSeason || foxSeasonFromStyle || arcteryxSeasonFromDate)
                     : (getVal('season') || foxSeasonFromStyle || foxSeasonFromDate || arcteryxSeasonFromDate || seasonOverride || inferredSeasonFromSheet)
             );
-            if (!season) { skippedMissingSeason += 1; this.errors.push({ field: 'season', row: rowNumber, message: `Row ${rowNumber} PO ${poNumber}: No season/range value found.`, severity: 'CRITICAL' }); return; }
+            if (!season) { skippedMissingSeason += 1; const seasonlessBrands = new Set(['ll bean', 'llbean', 'l.l.bean', 'arcteryx', "arc'teryx", 'peak performance']); const severity = seasonlessBrands.has(brandKey) ? 'WARNING' : 'CRITICAL'; this.errors.push({ field: 'season', row: rowNumber, message: `Row ${rowNumber} PO ${poNumber}: No season/range value found.`, severity }); if (severity === 'CRITICAL') return; }
 
             if (usePivotSizesForRow) qty = pivotQtyTotal;
             const rossignolDestinationRaw = manualDestinationEffective || destinationFromFile || plantDerivedCountry;
@@ -3653,7 +3682,9 @@ export class ExcelEngine {
                 po.lines.push(existingLine as POLine);
             } else {
                 if (styleNumber && existingLine.styleNumber && styleNumber !== existingLine.styleNumber) {
-                    this.errors.push({ field: 'LineItem', row: rowNumber, message: `PO ${poNumber} line ${lineItemNum} product mismatch: existing ${existingLine.styleNumber}, row ${styleNumber}.`, severity: 'CRITICAL' });
+                    // Smartwool: each row is a unique style+color+size; mismatch is expected, not an error
+                    const mismatchSeverity = (brandKey === 'smartwool' || brandKey === 'sw' || detectedCustomer === 'Smartwool' || brandKey === 'marmot' || detectedCustomer === 'Marmot') ? 'WARNING' : 'CRITICAL';
+                    this.errors.push({ field: 'LineItem', row: rowNumber, message: `PO ${poNumber} line ${lineItemNum} product mismatch: existing ${existingLine.styleNumber}, row ${styleNumber}.`, severity: mismatchSeverity as any });
                 }
                 if (!existingLine.styleNumber && styleNumber) existingLine.styleNumber = styleNumber;
                 if (brandKey !== 'arcteryx' && brandKey !== 'burton') {
@@ -4226,9 +4257,11 @@ export class ExcelEngine {
                     linesForEntry.forEach(line => {
                         (po.sizes[line.lineItem] || []).forEach(sz => {
                             const exportedSize = sz.productSize || 'One Size';
-                            const exportedColour = brandKey === 'vans' 
+                            const exportedColourCandidate = brandKey === 'vans' 
                                 ? this.formatVansColorForExport(line.colour)
                                 : (brandKey === 'dynafit' ? (line.colour || line.rawColour || line.styleColor) : line.colour);
+                            // A numeric code is useful for lookup, but is not a display colour name.
+                            const exportedColour = pickDisplayColor(exportedColourCandidate, line.rawColour);
                             sizesSheet.addRow({
                                 purchaseOrder: entry.purchaseOrder || po.header.purchaseOrder, lineItem: lineItemMap.get(line.lineItem) || line.lineItem, range: line.productRange,
                                 product: line.styleNumber, sizeName: exportedSize, productSize: exportedSize,

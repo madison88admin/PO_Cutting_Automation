@@ -1,4 +1,4 @@
-import { supabaseAdmin } from '@/lib/supabase';
+import { supabaseAdmin, isMock } from '@/lib/supabase';
 import { ColumnMapping, ExtractedTemplate } from '@/lib/types/buy-file';
 
 function normalizeHeader(header: string): string {
@@ -16,6 +16,7 @@ function normalizeHeaders(headers: string[]): string[] {
 export async function findMatchingTemplateSupabase(
     headers: string[]
 ): Promise<ExtractedTemplate | null> {
+    if (isMock) return null;
     try {
         const normalized = normalizeHeaders(headers);
         const { data, error } = await supabaseAdmin
@@ -65,6 +66,7 @@ export async function saveTemplateSupabase(
     mapping: ColumnMapping,
     customer: string | null
 ): Promise<ExtractedTemplate | null> {
+    if (isMock) return null;
     try {
         const existing = await findMatchingTemplateSupabase(headers);
         const payload = {

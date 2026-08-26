@@ -95,11 +95,25 @@ export class NextGenClient {
             headers['RequestVerificationToken'] = this.auth.requestVerificationToken;
         }
 
-        const response = await fetch(url, {
-            ...options,
-            headers,
-            redirect: 'manual',
-        });
+        const timeoutMs = Number(process.env.NEXTGEN_REQUEST_TIMEOUT_MS || '20000');
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        let response: Response;
+        try {
+            response = await fetch(url, {
+                ...options,
+                headers,
+                redirect: 'manual',
+                signal: controller.signal,
+            });
+        } catch (error) {
+            if (error instanceof DOMException && error.name === 'AbortError') {
+                throw new Error(`NextGen request timed out after ${timeoutMs}ms: ${url}`);
+            }
+            throw error;
+        } finally {
+            clearTimeout(timeout);
+        }
 
         // If redirected to login, force re-login and retry once
         if (allowRetry && (response.status === 302 || response.status === 401)) {

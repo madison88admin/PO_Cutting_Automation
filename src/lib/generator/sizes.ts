@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
 import { ProductData } from '@/lib/types/buy-file';
+import { pickDisplayColor } from '@/lib/color-display';
 
 export function generateSizesSheet(products: ProductData[]): ExcelJS.Workbook {
     const workbook = new ExcelJS.Workbook();
@@ -48,6 +49,7 @@ export function generateSizesSheet(products: ProductData[]): ExcelJS.Workbook {
         const groupProducts = grouped[poNumber];
         groupProducts.forEach((product, lineIdx) => {
             const lineItem = lineIdx + 1;
+            const displayColor = pickDisplayColor(product.colorName);
             product.sizes.forEach((size) => {
                 sheet.addRow({
                     purchaseOrder: poNumber,
@@ -57,7 +59,7 @@ export function generateSizesSheet(products: ProductData[]): ExcelJS.Workbook {
                     sizeName: size.size,
                     productSize: size.size,
                     quantity: size.quantity,
-                    colour: product.colorName || '',
+                    colour: displayColor,
                     customer: product.customer || '',
                     department: product.department || '',
                     customAttribute1: '',
@@ -72,7 +74,7 @@ export function generateSizesSheet(products: ProductData[]): ExcelJS.Workbook {
                     customAttribute3Ext: '',
                     productExternalRef: product.productExternalRef || '',
                     productCustomerRef: product.productCustomerRef || product.style || '',
-                    findField_Colour: product.colorName || '',
+                    findField_Colour: displayColor,
                     findField_Customer: product.customer || '',
                     findField_Department: product.department || '',
                     findField_CustomAttribute1: '',

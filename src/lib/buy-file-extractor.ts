@@ -290,6 +290,15 @@ function scoreHeaders(headers: string[]): number {
     return score;
 }
 
+function isGeneratedNextGenExport(headers: string[]): boolean {
+    const normalized = new Set(headers.map((header) => String(header).trim().toLowerCase()));
+    const linesSignature = [
+        'purchaseorder', 'lineitem', 'productrange', 'product',
+        'deliverydate', 'transportmethod', 'template', 'findfield_product',
+    ];
+    return linesSignature.filter((header) => normalized.has(header)).length >= 6;
+}
+
 export interface BuyFileExtractionResult {
     items: BuyFileItem[];
     productData: ProductData[];
@@ -887,6 +896,10 @@ async function extractFromSheet(
     sharedNextgenClient?: NextGenCachedClient,
     productSheetMap: Record<string, ProductSheetRow[]> = {}
 ): Promise<BuyFileExtractionResult> {
+    if (isGeneratedNextGenExport(headers)) {
+        throw new Error('This workbook is a generated NextGen LINES output, not a raw Buy File. Upload the original brand Buy File instead.');
+    }
+
     // NOTE: This function returns a single-sheet extraction result. productData is
     // built from rows within this sheet only.
 

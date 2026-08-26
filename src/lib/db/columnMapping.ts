@@ -112,6 +112,61 @@ const MOCK_COLUMNS: ColumnMapping[] = [
     { id: '44aw', customer: 'Marmot', buy_file_column: 'XF Date', internal_field: 'confirmedExFac', updated_by: 'mock', updated_at: '' },
     { id: '44ax', customer: 'Marmot', buy_file_column: 'Shipping Instr.', internal_field: 'transportMethod', updated_by: 'mock', updated_at: '' },
     { id: '44ay', customer: 'Marmot', buy_file_column: 'Destination', internal_field: 'transportLocation', updated_by: 'mock', updated_at: '' },
+    // Smartwool Mappings
+    { id: '45a', customer: 'Smartwool', buy_file_column: 'Brand', internal_field: 'brand', updated_by: 'mock', updated_at: '' },
+    { id: '45b', customer: 'Smartwool', buy_file_column: 'Season', internal_field: 'season', updated_by: 'mock', updated_at: '' },
+    { id: '45c', customer: 'Smartwool', buy_file_column: 'DC/ plant', internal_field: 'productSupplier', updated_by: 'mock', updated_at: '' },
+    { id: '45d', customer: 'Smartwool', buy_file_column: 'Ship mode', internal_field: 'transportMethod', updated_by: 'mock', updated_at: '' },
+    { id: '45e', customer: 'Smartwool', buy_file_column: 'Style Color Article Code (12 digits)', internal_field: 'productExternalRef', updated_by: 'mock', updated_at: '' },
+    { id: '45f', customer: 'Smartwool', buy_file_column: 'Style Color Size Article Code (18 digits)', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45g', customer: 'Smartwool', buy_file_column: 'Size', internal_field: 'sizeName', updated_by: 'mock', updated_at: '' },
+    { id: '45h', customer: 'Smartwool', buy_file_column: 'Quantity', internal_field: 'quantity', updated_by: 'mock', updated_at: '' },
+    { id: '45i', customer: 'Smartwool', buy_file_column: 'Style#', internal_field: 'product', updated_by: 'mock', updated_at: '' },
+    { id: '45j', customer: 'Smartwool', buy_file_column: 'Currency', internal_field: 'currency', updated_by: 'mock', updated_at: '' },
+    { id: '45k', customer: 'Smartwool', buy_file_column: 'Base FOB', internal_field: 'cost', updated_by: 'mock', updated_at: '' },
+    { id: '45l', customer: 'Smartwool', buy_file_column: 'PR Number/ Dummy PO Number', internal_field: 'purchaseOrder', updated_by: 'mock', updated_at: '' },
+    { id: '45m', customer: 'Smartwool', buy_file_column: 'PR Item Number/ Dummy PO cut', internal_field: 'lineItem', updated_by: 'mock', updated_at: '' },
+    { id: '45n', customer: 'Smartwool', buy_file_column: 'ERP Factory Code', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45o', customer: 'Smartwool', buy_file_column: 'ERP Vendor Code', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45p', customer: 'Smartwool', buy_file_column: 'Best CRD', internal_field: 'exFtyDate', updated_by: 'mock', updated_at: '' },
+    { id: '45q', customer: 'Smartwool', buy_file_column: 'Factory Short Name', internal_field: 'productSupplier', updated_by: 'mock', updated_at: '' },
+    { id: '45r', customer: 'Smartwool', buy_file_column: 'Parent Style Color#', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45s', customer: 'Smartwool', buy_file_column: 'MATL11', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45t', customer: 'Smartwool', buy_file_column: 'PO cut', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45u', customer: 'Smartwool', buy_file_column: 'PO Conversion Status', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45v', customer: 'Smartwool', buy_file_column: 'PO Type', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45w', customer: 'Smartwool', buy_file_column: 'Category', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45x', customer: 'Smartwool', buy_file_column: 'Requester Email', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45y', customer: 'Smartwool', buy_file_column: 'Region', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45z', customer: 'Smartwool', buy_file_column: 'Market', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45aa', customer: 'Smartwool', buy_file_column: 'Buy Year', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45ab', customer: 'Smartwool', buy_file_column: 'Buy Month', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45ac', customer: 'Smartwool', buy_file_column: 'Buy Description', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45ad', customer: 'Smartwool', buy_file_column: 'Stock Segment (S4 / Acadia only)', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45ae', customer: 'Smartwool', buy_file_column: 'Pre-packed Quantity (S4 only)', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45af', customer: 'Smartwool', buy_file_column: 'Production Priority', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45ag', customer: 'Smartwool', buy_file_column: 'REVA PO Header', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45ah', customer: 'Smartwool', buy_file_column: 'Consensus Quantity', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45ai', customer: 'Smartwool', buy_file_column: 'Missing PR Quantity', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45aj', customer: 'Smartwool', buy_file_column: 'Key', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45ak', customer: 'Smartwool', buy_file_column: 'Brand requested CRD', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45al', customer: 'Smartwool', buy_file_column: 'Planned Production End Date', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45am', customer: 'Smartwool', buy_file_column: 'Vendor 1st Confirm CRD', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45an', customer: 'Smartwool', buy_file_column: 'LT Adherence', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45ao', customer: 'Smartwool', buy_file_column: 'FOB + Production Surcharge', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45ap', customer: 'Smartwool', buy_file_column: 'Total Material Surcharge', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45aq', customer: 'Smartwool', buy_file_column: 'Materials Surcharge', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45ar', customer: 'Smartwool', buy_file_column: 'Materials Surcharge Approved by RP', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45as', customer: 'Smartwool', buy_file_column: "Vendor's Feedback", internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45at', customer: 'Smartwool', buy_file_column: 'GSP Remarks', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45au', customer: 'Smartwool', buy_file_column: 'DRC 1', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45av', customer: 'Smartwool', buy_file_column: 'DRC 2', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45aw', customer: 'Smartwool', buy_file_column: 'DRC 3', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45ax', customer: 'Smartwool', buy_file_column: 'Delay (Days)', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45ay', customer: 'Smartwool', buy_file_column: 'US Discount (4.5%)', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45az', customer: 'Smartwool', buy_file_column: 'FOB After Discount', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45ba', customer: 'Smartwool', buy_file_column: 'Production Surcharge', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
+    { id: '45bb', customer: 'Smartwool', buy_file_column: 'Production Surcharge Approval From Consensus File', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
     // Vuori Mappings
     { id: '44az', customer: 'Vuori', buy_file_column: 'Vendor name', internal_field: 'vendorName', updated_by: 'mock', updated_at: '' },
     { id: '44az1', customer: 'Vuori', buy_file_column: 'Vendor account', internal_field: 'ignore', updated_by: 'mock', updated_at: '' },
@@ -283,6 +338,11 @@ export async function getColumnMappings(customer?: string): Promise<ColumnMappin
         const customerRows = MOCK_COLUMNS.filter(m => m.customer === customer);
         const defaultRows = MOCK_COLUMNS.filter(m => m.customer === 'DEFAULT');
         return customerRows.length ? [...defaultRows, ...customerRows] : defaultRows;
+    }
+    // If DB returned empty for this customer, fall back to built-in mappings
+    if (customer && (!data || data.length === 0)) {
+        const customerRows = MOCK_COLUMNS.filter(m => m.customer === customer);
+        if (customerRows.length) return customerRows;
     }
     return data || [];
 }
