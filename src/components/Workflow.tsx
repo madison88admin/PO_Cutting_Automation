@@ -133,8 +133,6 @@ const DESTINATION_OPTIONS = [
 const HEADER_FIELD_OPTIONS = [
     ["buyer_style_number", "Buyer style / article"],
     ["buyer_style_name", "Style name"],
-    ["sku", "SKU / material"],
-    ["product_description", "Product description"],
     ["color", "Colour name"],
     ["color_code", "Colour code"],
     ["size", "Size"],
