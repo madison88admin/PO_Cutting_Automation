@@ -995,15 +995,21 @@ export default function Workflow() {
                 }));
             }) || [];
             console.log('[workflow] validate debug lines:', lines.slice(0, 5));
-            const res = await fetch("/api/validate-nextgen", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ poNumber: explicitPoNumber || manualPoRef.current, lines }),
-            });
-            const result = await res.json();
-            if (!res.ok || result?.error) {
+            let res: Response | null = null;
+            let result: any;
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+                res = await fetch("/api/validate-nextgen", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ poNumber: explicitPoNumber || manualPoRef.current, lines }),
+                });
+                result = await res.json();
+                if (res.ok && !result?.error) break;
+                if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+            }
+            if (!res?.ok || result?.error) {
                 setNextgenValidation({
-                    error: `NextGen validation unavailable: ${result?.error || `HTTP ${res.status}`}`,
+                    error: `NextGen validation unavailable: ${result?.error || `HTTP ${res?.status || 0}`}`,
                     unavailable: true,
                 });
             } else {
@@ -1137,6 +1143,9 @@ export default function Workflow() {
         (uploadData?.fileSummary || []).flatMap((file: any) => file.brands || [])
     )) as string[];
     const variantSummary = uploadData?.nexgenVariantSummary || nextgenValidation?.matchSummary || {};
+    const extractedColors = Array.from(new Set(
+        (uploadData?.output || []).flatMap((po: any) => (po.lines || []).map((line: any) => line.colour || line.color || line.styleColor).filter(Boolean))
+    )) as string[];
     const transportMethods = Array.from(new Set(
         (uploadData?.output || []).flatMap((po: any) =>
             (po.lines || []).map((line: any) => line.transportMethod).filter(Boolean)
@@ -1369,7 +1378,15 @@ export default function Workflow() {
                                                         <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-3">
                                                             {HEADER_FIELD_OPTIONS.map(([field, label]) => (
                                                                 <label key={`${preview.filename}-${field}`} className="space-y-1.5">
-                                                                    <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">{label}</span>
+                                                                    <span className="flex items-center justify-between text-[9px] font-black uppercase tracking-widest text-slate-400">
+                                                                        <span>{label}</span>
+                                                                        <span className={cn(
+                                                                            "text-[8px] tracking-wider",
+                                                                            preview.fieldConfidence?.[field] >= 90 ? "text-emerald-400" : preview.fieldConfidence?.[field] >= 75 ? "text-amber-300" : "text-rose-400"
+                                                                        )}>
+                                                                            {preview.mapping?.[field] ? `${preview.fieldConfidence?.[field] ?? preview.confidence}%` : "Needs mapping"}
+                                                                        </span>
+                                                                    </span>
                                                                     <select
                                                                         value={preview.mapping?.[field] || ""}
                                                                         onChange={(event) => updateHeaderMapping(previewIndex, field, event.target.value)}
@@ -1387,6 +1404,14 @@ export default function Workflow() {
                                                             <p className="mt-4 text-[10px] text-slate-500">
                                                                 Ignored columns: {preview.unmappedColumns.join(", ")}
                                                             </p>
+                                                        )}
+                                                        {preview.mappingWarnings?.length > 0 && (
+                                                            <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/[0.06] p-3">
+                                                                <p className="text-[9px] font-black uppercase tracking-widest text-amber-300">Semantic validation warnings</p>
+                                                                <ul className="mt-2 space-y-1 text-[10px] text-amber-100/80">
+                                                                    {preview.mappingWarnings.slice(0, 8).map((warning: string) => <li key={warning}>• {warning}</li>)}
+                                                                </ul>
+                                                            </div>
                                                         )}
                                                     </details>
                                                 ))}
@@ -1761,6 +1786,18 @@ export default function Workflow() {
                                         {isValidatingNextgen ? "Checking..." : "Check Again"}
                                     </button>
                                 </div>
+
+                                {extractedColors.length > 0 && (
+                                    <div className="mt-5 rounded-2xl border border-cyan-500/20 bg-cyan-500/[0.05] p-4">
+                                        <p className="text-[10px] font-black uppercase tracking-widest text-cyan-300 mb-2">Extracted colours preview</p>
+                                        <div className="flex flex-wrap gap-2">
+                                            {extractedColors.slice(0, 40).map((color) => (
+                                                <span key={color} className="rounded-full border border-white/10 bg-slate-950/60 px-3 py-1 text-[10px] font-mono text-slate-200">{color}</span>
+                                            ))}
+                                            {extractedColors.length > 40 && <span className="text-[10px] text-slate-500">+{extractedColors.length - 40} more</span>}
+                                        </div>
+                                    </div>
+                                )}
 
                                 {nextgenValidation && (
                                     <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">

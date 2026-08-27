@@ -3,6 +3,7 @@ import ExcelJS from "exceljs";
 import { detectHeaderRow } from "@/lib/ai/header-detector";
 import { mapHeaders } from "@/lib/ai/header-mapper";
 import { findMatchingTemplateSupabase } from "@/lib/templates/supabase-store";
+import { validateHeaderSemantics } from "@/lib/ai/header-semantic-validator";
 
 export async function POST(req: NextRequest) {
     try {
@@ -51,6 +52,13 @@ export async function POST(req: NextRequest) {
                 const mapped = learned
                     ? { mapping: learned.mapping, confidence: 100, unmappedColumns: headers.filter((header) => !Object.values(learned.mapping).includes(header)) }
                     : await mapHeaders(headers, undefined, sampleRows);
+                const fieldConfidence = Object.fromEntries(
+                    Object.keys(mapped.mapping).map((field) => [field, learned ? 100 : mapped.confidence])
+                );
+                const semantic = validateHeaderSemantics(headers, mapped.mapping as Record<string, string>, sampleRows);
+                for (const [field, score] of Object.entries(semantic.fieldConfidence)) {
+                    fieldConfidence[field] = Math.min(fieldConfidence[field] ?? score, score);
+                }
                 const score = Object.keys(mapped.mapping).length;
                 if (!best || score > best.score) {
                     best = {
@@ -60,6 +68,8 @@ export async function POST(req: NextRequest) {
                         headers,
                         mapping: mapped.mapping,
                         confidence: mapped.confidence,
+                        fieldConfidence,
+                        mappingWarnings: semantic.warnings,
                         unmappedColumns: mapped.unmappedColumns,
                         source: learned ? "learned template" : "Qwen + header aliases",
                         score,
