@@ -3397,7 +3397,15 @@ export class ExcelEngine {
                 ? 'Peak Performance'
                 : plmMissing
                 ? this.resolveCustomer(customerNameForResolve, inferredBrand || brand, detectedCustomer, undefined)
-                : this.resolveCustomer(((brandKey === 'arcteryx' || brandKey === 'burton' || brandKey === '66 degrees north') ? (productMatch?.customerName || manualCustomerName || customerNameRaw) : productMatch?.customerName) || manualCustomerName || customerNameRaw, inferredBrand || brand, detectedCustomer, undefined);
+                : this.resolveCustomer(
+                    // The explicit customer in the buy file is authoritative.
+                    // Product/NextGen matches are enrichment only and must not
+                    // overwrite a valid buyer customer (e.g. On AG → Peak Performance).
+                    manualCustomerName || customerNameRaw || productMatch?.customerName || '',
+                    inferredBrand || brand,
+                    detectedCustomer,
+                    undefined
+                );
             const llbCustomerName = brandKey === 'll bean' ? 'LL Bean' : customerName;
 
             const transportMethod = brandKey === 'dynafit'
