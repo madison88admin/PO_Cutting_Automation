@@ -36,6 +36,17 @@ function buildStyleSearchTerms(style: string): string[] {
     return [...new Set([original, withoutNotes, compact, configured].filter(Boolean))];
 }
 
+function directM88Reference(value: unknown): string | null {
+    if (!value || typeof value !== 'object') return null;
+    const row = value as Record<string, unknown>;
+    const keys = ['M88Reference', 'M88Ref', 'M88ProductId', 'ProductExternalRef', 'ExternalRef', 'CustomerRef', 'FieldValue', 'Id'];
+    for (const key of keys) {
+        const candidate = String(row[key] ?? '').trim();
+        if (candidate && (/m88/i.test(key) || /^(?:M88\d+|\d{5,})$/i.test(candidate))) return candidate;
+    }
+    return null;
+}
+
 interface SearchResult {
     Name: string;
     Id: number;
@@ -235,8 +246,8 @@ export class NextGenSearchClient {
                 colorName: String(option.ColourName || ''),
                 score,
                 productRange: product.RangeDisplayName || null,
-                productExternalRef: style,
-                productCustomerRef: product.FieldValue || style,
+                productExternalRef: directM88Reference(option) || directM88Reference(product) || style,
+                productCustomerRef: product.FieldValue || directM88Reference(option) || style,
                 colorCode: colorCode || option.ColourCode || null,
                 colorExt: option.ColourExternalRef || null,
                 customer: option.CustomerName || null,
@@ -252,8 +263,8 @@ export class NextGenSearchClient {
             style,
             product: selected.product.Name,
             productRange: selected.product.RangeDisplayName || null,
-            productExternalRef: style,
-            productCustomerRef: selected.product.FieldValue || style,
+            productExternalRef: directM88Reference(selected.option) || directM88Reference(selected.product) || style,
+            productCustomerRef: selected.product.FieldValue || directM88Reference(selected.option) || style,
             styleName: null,
             brand: selected.option.CustomerName || null,
             season: this.parseSeason(selected.option.ColourDescription || selected.product.RangeDisplayName || '') || null,
