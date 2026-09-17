@@ -1,4 +1,4 @@
-import { supabaseAdmin, isMock } from '@/lib/supabase';
+import { supabaseAdmin } from '@/lib/supabase';
 import { ColumnMapping, ExtractedTemplate } from '@/lib/types/buy-file';
 
 function normalizeHeader(header: string): string {
@@ -16,7 +16,6 @@ function normalizeHeaders(headers: string[]): string[] {
 export async function findMatchingTemplateSupabase(
     headers: string[]
 ): Promise<ExtractedTemplate | null> {
-    if (isMock) return null;
     try {
         const normalized = normalizeHeaders(headers);
         const { data, error } = await supabaseAdmin
@@ -41,7 +40,9 @@ export async function findMatchingTemplateSupabase(
             const total = Math.max(headerSet.size, rowSet.size);
             if (total === 0) continue;
             const score = matches / total;
-            if (score > 0.8 && score > bestScore) {
+            // Lowered threshold from 0.8 to 0.6 to handle buy files that
+            // add/remove columns between seasons while keeping the same layout.
+            if (score > 0.6 && score > bestScore) {
                 bestScore = score;
                 best = {
                     id: row.id,
@@ -52,6 +53,10 @@ export async function findMatchingTemplateSupabase(
                     detectedAt: row.updated_at || row.created_at,
                 };
             }
+        }
+
+        if (best) {
+            console.log(`[supabase-store] matched template score: ${(bestScore * 100).toFixed(0)}% (threshold 60%)`);
         }
 
         return best;
@@ -66,7 +71,6 @@ export async function saveTemplateSupabase(
     mapping: ColumnMapping,
     customer: string | null
 ): Promise<ExtractedTemplate | null> {
-    if (isMock) return null;
     try {
         const existing = await findMatchingTemplateSupabase(headers);
         const payload = {

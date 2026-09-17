@@ -85,20 +85,26 @@ export async function getMloMappings(): Promise<MloMapping[]> {
     return data || [];
 }
 
+const PLACEHOLDER_USER_IDS = ['anonymous', '00000000-0000-0000-0000-000000000001'];
+
 export async function upsertMlo(mapping: Partial<MloMapping>, userId: string): Promise<void> {
+    if (isMock) return;
+
     const { data: oldData } = await supabaseAdmin
         .from('mlo_mapping')
         .select('*')
         .eq('brand', mapping.brand)
-        .single();
+        .maybeSingle();
+
+    const updatedBy = PLACEHOLDER_USER_IDS.includes(userId) ? null : userId;
 
     const { error } = await supabaseAdmin
         .from('mlo_mapping')
         .upsert({
             ...mapping,
-            updated_by: userId,
+            updated_by: updatedBy,
             updated_at: new Date().toISOString()
-        });
+        }, { onConflict: 'brand' });
 
     if (error) throw error;
 

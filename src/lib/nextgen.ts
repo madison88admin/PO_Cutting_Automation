@@ -10,6 +10,14 @@
  * - PO lines: returned directly by PurchaseOrder/Read with filter
  */
 
+// Write/test-environment client (PO insert into NextGen test env, port 8443).
+// Kept as a separate module to avoid clashing with the read-only client below.
+export {
+    createWriteClient,
+    isWriteEnabled,
+} from './nextgen/write-client';
+export type { NextGenInsertResult } from './nextgen/write-client';
+
 interface NextGenConfig {
     baseUrl: string;
     username: string;
