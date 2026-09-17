@@ -86,3 +86,9 @@ test-samples/
 .codex-po-cutting-release.zip
 mapping_madison88_mar2026.md
 ng_excel_generator.py
+
+# Diff report tooling & outputs
+reports/
+PO Line Data Dump*.xlsx
+po-line-dump*.xlsx
+scripts/load-env.ts

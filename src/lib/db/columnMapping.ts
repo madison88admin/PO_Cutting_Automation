@@ -343,6 +343,8 @@ export async function getColumnMappings(customer?: string): Promise<ColumnMappin
     if (customer && (!data || data.length === 0)) {
         const customerRows = MOCK_COLUMNS.filter(m => m.customer === customer);
         if (customerRows.length) return customerRows;
+        const defaultRows = MOCK_COLUMNS.filter(m => m.customer === 'DEFAULT');
+        if (defaultRows.length) return defaultRows;
     }
     return data || [];
 }

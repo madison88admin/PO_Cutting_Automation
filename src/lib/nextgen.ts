@@ -67,6 +67,10 @@ export interface UploadValidationLine {
 
 const PO_NUMBER_FIELD = 'PrimaryUserDefinedFieldValuesTextUdf3';
 
+function normalizeCompare(s: string): string {
+    return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+}
+
 export class NextGenClient {
     private config: NextGenConfig;
     private auth: NextGenAuth | null = null;
@@ -351,6 +355,58 @@ export class NextGenClient {
             pageSize,
         });
         return this.readPurchaseOrder(params);
+    }
+
+    /**
+     * Fetch PO lines directly from NextGen's PurchaseOrder/Read endpoint.
+     * The endpoint returns flat, line-level rows (one row per style+colour+size)
+     * that already carry the PO header fields (PO number, customer, factory, etc.).
+     *
+     * Filter options:
+     *   - poNumber: exact PO number (PrimaryUserDefinedFieldValuesTextUdf3)
+     *   - style:    style/code substring matched across key product fields
+     *   - page:     1-based page number (default 1)
+     *   - pageSize: rows per page (default 200, max 1000)
+     */
+    async fetchPOLines(opts: { poNumber?: string; style?: string; page?: number; pageSize?: number } = {}): Promise<{ lines: NextGenPOLine[]; page: number; pageSize: number; totalRows: number; hasMore: boolean }> {
+        const pageSize = Math.min(Math.max(opts.pageSize || 200, 1), 1000);
+        const page = Math.max(opts.page || 1, 1);
+        const params = this.buildReadParams({
+            sort: `${PO_NUMBER_FIELD}-desc~OrderName-asc`,
+            filter: '',
+            page,
+            pageSize,
+        });
+        const results = await this.readPurchaseOrder(params);
+
+        const poFilter = String(opts.poNumber || '').toLowerCase().trim();
+        const styleFilter = String(opts.style || '').toLowerCase().trim();
+
+        let rows = results;
+        if (poFilter) {
+            rows = rows.filter((row: any) =>
+                normalizeCompare(this.getPONumberFromRecord(row)) === normalizeCompare(poFilter)
+            );
+        }
+        if (styleFilter) {
+            const styleFields = ['CommodityName', 'Style', 'StyleNumber', 'Product', 'ProductCode',
+                'Material', 'ProductExternalRef', 'ExternalRef', 'ProductCustomerRef', 'CustomerRef', 'SKU', 'ItemNumber'];
+            rows = rows.filter((row: any) =>
+                styleFields.some((field) => {
+                    const val = normalizeCompare(String(row[field] || ''));
+                    return val && (val === styleFilter || val.includes(styleFilter));
+                })
+            );
+        }
+
+        return {
+            lines: rows.map((row: any) => this.mapToPOLine(row)),
+            page,
+            pageSize,
+            totalRows: results.length,
+            // Heuristic: a full page means more rows may exist on the next page.
+            hasMore: results.length >= pageSize,
+        };
     }
 
     async getLatestPO(): Promise<{ poNumber: string; id: string } | null> {
