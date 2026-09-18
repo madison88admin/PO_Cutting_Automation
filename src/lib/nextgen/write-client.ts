@@ -214,7 +214,7 @@ export class NextGenClient {
             quantity: Number(line.Quantity || line.quantity || line.Qty || 0),
             factory: String(line.OrderSupplierName || line.Factory || line.factory || line.Vendor || line.Supplier || ''),
             customer: String(line.CustomerName || line.Customer || line.customer || ''),
-            season: String(line.Season || line.season || ''),
+            season: String(line.RangeName || line.Range || line.Season || line.season || ''),
             ...line,
         };
     }

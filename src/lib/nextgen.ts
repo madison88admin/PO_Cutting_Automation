@@ -277,7 +277,9 @@ export class NextGenClient {
             quantity: Number(line.Quantity || line.quantity || line.Qty || 0),
             factory: String(line.OrderSupplierName || line.Factory || line.factory || line.Vendor || line.Supplier || ''),
             customer: String(line.CustomerName || line.Customer || line.customer || ''),
-            season: String(line.Season || line.season || ''),
+            // Season lives in the NextGen 'Range' field (e.g. "FH:2026"),
+            // NOT in Season/season — the PO Line response has no Season key.
+            season: String(line.RangeName || line.Range || line.Season || line.season || ''),
             unitCost,
             subtotal,
             ...line,
