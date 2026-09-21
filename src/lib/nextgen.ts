@@ -301,13 +301,27 @@ export class NextGenClient {
         await this.login();
         const url = `${this.config.baseUrl}/PurchaseOrder/Read`;
         const body = params.toString();
-        console.log('[nextgen] PurchaseOrder/Read request body:', body);
+
+        console.log('========== NEXTGEN PURCHASE ORDER READ ==========');
+        console.log('[nextgen] URL:', url);
+        console.log('[nextgen] Request body:', body);
+        console.log('[nextgen] Parsed params:', {
+            page: params.get('page'),
+            pageSize: params.get('pageSize'),
+            sort: params.get('sort'),
+            filter: params.get('filter'),
+            group: params.get('group'),
+            aggregates: params.get('aggregates'),
+        });
 
         const response = await this.fetchWithCookie(url, { method: 'POST', body });
 
         const text = await response.text();
-        console.log('[nextgen] PurchaseOrder/Read status:', response.status, 'content-type:', response.headers.get('content-type'));
-        console.log('[nextgen] PurchaseOrder/Read response preview:', text.substring(0, 500));
+        console.log('[nextgen] Response status:', response.status);
+        console.log('[nextgen] Response content-type:', response.headers.get('content-type'));
+        console.log('[nextgen] Response length:', text.length);
+        console.log('[nextgen] Response preview:', text.substring(0, 1000));
+        console.log('================================================');
 
         if (!response.ok) {
             throw new Error(`NextGen PurchaseOrder/Read failed: ${response.status} ${text.substring(0, 500)}`);
@@ -357,14 +371,18 @@ export class NextGenClient {
         return found;
     }
 
-    async fetchRecentRecords(pageSize: number = 500): Promise<any[]> {
+    async fetchRecentRecords(pageSize: number = 500, opts: { bypassCache?: boolean } = {}): Promise<any[]> {
         const params = this.buildReadParams({
             sort: `${PO_NUMBER_FIELD}-desc~OrderName-asc`,
             filter: '',
             page: 1,
             pageSize,
         });
-        return this.readPurchaseOrder(params);
+        const { getRecordsCached } = await import('./nextgen/record-cache');
+        const { records } = await getRecordsCached(pageSize, () => this.readPurchaseOrder(params), {
+            bypass: opts.bypassCache,
+        });
+        return records;
     }
 
     /**
