@@ -92,8 +92,13 @@ function normKey(s: string): string {
         .trim();
 }
 
+// Mapper version: bump whenever mapping rules change (patterns, prompt,
+// inference) so stale cached mappings from older logic are never reused.
+// Old entries simply stop matching and get recomputed under the new prefix.
+const HEADER_MAPPER_VERSION = 'v2';
+
 function fileSignature(headers: string[]): string {
-    return headers
+    return `${HEADER_MAPPER_VERSION}|` + headers
         .map(h => normKey(h))
         .filter(Boolean)
         .sort()

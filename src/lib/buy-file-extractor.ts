@@ -8,7 +8,7 @@ import { ExcelEngine } from '@/lib/excel-engine';
 import type { ProductSheetRow } from '@/lib/excel-engine';
 import { mergeBuyFileWithNextGen } from '@/lib/merge/merge-buy-nextgen';
 import { BuyFileItem, ColumnMapping, NextGenStyleInfo, ProductData } from '@/lib/types/buy-file';
-import { lookupBrand, getAllBrandAliases } from '@/lib/brand-config';
+import { lookupBrand, getAllBrandAliases, getCustomerName, normalizeCountryName, resolvePlantToCountry } from '@/lib/brand-config';
 
 const INTERNAL_TO_CANONICAL: Record<string, keyof ColumnMapping> = {
     purchaseOrder: 'po_number',
@@ -1125,10 +1125,22 @@ async function extractFromSheet(
                 nextgenInfo[key] = null;
             }
         }
+        // Brand guard: one buy file = one brand. A NextGen match that
+        // clearly belongs to a different known brand is a wrong match —
+        // reject it instead of mixing brands in the output.
+        // detectedBrand is already a brand key (or null when unknown).
+        const fileBrandKey = detectedBrand || null;
         // Enrich items with NextGen data (primary source)
         items = items.map((item) => {
             const variantKey = `${String(item.style || '').toLowerCase()}|${String(item.colorCode || item.color || '').toLowerCase()}`;
-            const ngMatch = nextgenInfo[variantKey] || null;
+            let ngMatch = nextgenInfo[variantKey] || null;
+            if (ngMatch && fileBrandKey) {
+                const matchBrandKey = lookupBrand(String(ngMatch.customer || ngMatch.brand || ''));
+                if (matchBrandKey && matchBrandKey !== fileBrandKey) {
+                    console.log(`[brand-guard] rejecting cross-brand match: file=${fileBrandKey} match=${matchBrandKey} (customer="${ngMatch.customer}") style=${item.style}`);
+                    ngMatch = null;
+                }
+            }
             if (!ngMatch) {
                 return {
                     ...item,
@@ -1167,6 +1179,29 @@ async function extractFromSheet(
         console.log('[buy-file-extractor] fallback enrichment with product sheet:', items.length);
     }
 
+    // 5. Customer normalization: one buy file = one brand. When the file
+    // brand is known, replace customer values that are clearly not it:
+    // another known brand, or a location code (country/plant) that leaked
+    // in from destination/market columns or foreign matches. Same-brand
+    // values and subtypes (e.g. "Vans SMU") are kept as-is.
+    if (detectedBrand) {
+        const fileCustomerName = getCustomerName(detectedBrand);
+        items = items.map((item) => {
+            const cust = String(item.customer || '').trim();
+            if (!cust) return item;
+            const custBrandKey = lookupBrand(cust);
+            if (custBrandKey && custBrandKey !== detectedBrand) {
+                console.log(`[brand-guard] customer "${cust}" -> "${fileCustomerName}" (cross-brand) style=${item.style}`);
+                return { ...item, customer: fileCustomerName };
+            }
+            if (!custBrandKey && (normalizeCountryName(cust) || resolvePlantToCountry(cust))) {
+                console.log(`[brand-guard] customer "${cust}" -> "${fileCustomerName}" (location, not a brand) style=${item.style}`);
+                return { ...item, customer: fileCustomerName };
+            }
+            return item;
+        });
+    }
+
     // 6. Merge into single source of truth (ProductData)
     const productData = mergeBuyFileWithNextGen(items, nextgenInfo);
 
@@ -1184,11 +1219,16 @@ async function extractFromSheet(
 function mergeMappings(headers: string[], ...mappings: (ColumnMapping | null)[]): ColumnMapping {
     const result: ColumnMapping = {};
     const headerSet = new Set(headers);
+    // One header may only serve one canonical field. Earlier mappings
+    // (legacy/template, then heuristic) win; later ones must pick
+    // a different column instead of reusing an already-claimed header.
+    const usedHeaders = new Set<string>();
     for (const mapping of mappings) {
         if (!mapping) continue;
         for (const [field, header] of Object.entries(mapping)) {
-            if (header && headerSet.has(header) && !(result as Record<string, string>)[field]) {
+            if (header && headerSet.has(header) && !(result as Record<string, string>)[field] && !usedHeaders.has(header)) {
                 (result as Record<string, string>)[field] = header;
+                usedHeaders.add(header);
             }
         }
     }

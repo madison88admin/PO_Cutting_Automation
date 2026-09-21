@@ -62,6 +62,7 @@ const HEADER_PATTERNS: { field: string; patterns: string[] }[] = [
     { field: 'start_date', patterns: ['udf-start_date', 'start date', 'order start date', 'valid from'] },
     { field: 'cancel_date', patterns: ['udf-canel_date', 'udf-cancel_date', 'cancel date', 'canel date', 'order cancel date', 'valid until'] },
     { field: 'season', patterns: ['season code', 'season', 'buy season', 'season year', 'year', 'saison'] },
+    { field: 'transport_location', patterns: ['transport location', 'transportlocation', 'ult. destination', 'destination name', 'destination', 'dest country', 'ship to country', 'ship to', 'ship-to party name', 'country/region', 'final destination', 'country'] },
     { field: 'customer', patterns: ['sold-to party', 'sold to party', 'sold to', 'customer name', 'customer/market', 'customer', 'buyer', 'brand', 'sales market', 'sales org', 'company', 'kunde'] },
     { field: 'factory', patterns: ['final factory name', 'final factory', 'final vendor name', 'final vendor', 'factory name', 'erp factory code', 'factory code', 'vendor code', 'factory', 'vendor plnt (conf plnt)', 'confirmed vendor plnt', 'vendor name', 'vendor', 'supplier', 'manufacturer', 'production supplier name', 'fabrik', 'lieferant'] },
     { field: 'currency', patterns: ['final currency', 'currency', 'curr', 'waehrung', 'währung'] },
@@ -195,8 +196,11 @@ Canonical fields and what they look like:
 - quantity: numeric quantities like "120", "340" (positive integers)
 - delivery_date: dates like "2027-03-15", "Mon Jul 06 2026"
 - season, customer, factory, currency, unit_cost, transport_method, status, transport_location, etc.
+- transport_location: destination codes/names like "CA", "US", "Germany", "South Ontario DC" (headers: Destination, Dest Country, Ship To, Country)
+- customer: ONLY the brand/buyer name (headers: Customer, Buyer, Brand, Sold-To). NEVER map Destination/Ship-To/Country columns to customer.
 
 Rules:
+- Destination/Ship-To/Country columns are ALWAYS transport_location, NEVER customer or factory — even if their values look like country codes.
 - Headers may be in German: Bestellung=po_number, Stilnummer=buyer_style_number, Farbe=color, Größe=size, Menge=quantity, Lieferdatum=delivery_date
 - Headers may be meaningless gibberish like "Col A", "Field 2" — then INFER from sample data values!
 - Use sample data row values to verify/disambiguate. A column containing "PO-9001" is po_number even if header is "Col A".
