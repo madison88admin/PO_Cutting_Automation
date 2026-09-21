@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { NextGenClient } from "@/lib/nextgen";
+import { getNextGenClient } from "@/lib/nextgen";
 
 const SEARCH_BASE_URL = process.env.NEXTGEN_SEARCH_BASE_URL || process.env.NEXTGEN_BASE_URL || 'https://nextgen.madison88.com';
 
@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
         const style = url.searchParams.get('style') || 'NF0A8KYV';
         const path = url.searchParams.get('path') || process.env.NEXTGEN_SEARCH_PATH || '/api/v1/nextgen/search';
 
-        const client = new NextGenClient();
+        const client = getNextGenClient();
         await client.login();
 
         const searchUrl = `${SEARCH_BASE_URL}${path.replace(/\{style\}/g, encodeURIComponent(style))}`;

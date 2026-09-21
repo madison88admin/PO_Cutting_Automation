@@ -1,4 +1,4 @@
-import { NextGenClient as BaseNextGenClient } from '@/lib/nextgen';
+import { NextGenClient as BaseNextGenClient, getNextGenClient } from '@/lib/nextgen';
 import { NextGenCache } from './cache';
 import { NextGenStyleInfo } from '@/lib/types/buy-file';
 import { NextGenSearchClient } from './search-client';
@@ -46,8 +46,10 @@ export class NextGenCachedClient {
     private cache: NextGenCache;
     private records: any[] | null = null;
 
-    constructor() {
-        this.base = new BaseNextGenClient();
+    constructor(sharedBase?: BaseNextGenClient) {
+        // Reuse the shared singleton session by default so every
+        // NextGenCachedClient in this process shares one login.
+        this.base = sharedBase || getNextGenClient();
         this.search = new NextGenSearchClient(this.base);
         this.cache = new NextGenCache();
     }

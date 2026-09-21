@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { NextGenClient } from "@/lib/nextgen";
+import { getNextGenClient } from "@/lib/nextgen";
 
 export async function POST(req: NextRequest) {
     try {
@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
             );
         }
 
-        const client = new NextGenClient();
+        const client = getNextGenClient();
         const result = await client.validatePO(poNumber, lines);
 
         return NextResponse.json(result);

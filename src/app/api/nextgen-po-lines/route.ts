@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { NextGenClient } from "@/lib/nextgen";
+import { getNextGenClient } from "@/lib/nextgen";
 
 /**
  * GET /api/nextgen-po-lines
@@ -48,7 +48,7 @@ async function handle(req: NextRequest) {
             pageSize = Number(req.nextUrl.searchParams.get("pageSize")) || 200;
         }
 
-        const client = new NextGenClient();
+        const client = getNextGenClient();
         const result = await client.fetchPOLines({ poNumber, style, page, pageSize });
 
         return NextResponse.json({

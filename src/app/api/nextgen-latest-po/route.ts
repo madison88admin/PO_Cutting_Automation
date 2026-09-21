@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { NextGenClient } from "@/lib/nextgen";
+import { getNextGenClient } from "@/lib/nextgen";
 
 export async function GET() {
     try {
-        const client = new NextGenClient();
+        const client = getNextGenClient();
         const latest = await client.getLatestPO();
 
         if (!latest) {

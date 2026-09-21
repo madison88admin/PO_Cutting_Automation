@@ -1,4 +1,4 @@
-import { NextGenClient } from '@/lib/nextgen';
+import { NextGenClient, getNextGenClient } from '@/lib/nextgen';
 import { NextGenStyleInfo } from '@/lib/types/buy-file';
 import { findClosestStyleMatch, sizesEquivalent, colorsEquivalent } from '@/lib/fuzzy';
 import { getCachedNextGenMatch, saveNextGenMatch, getUserCorrection, getCachedColorMapping } from '@/lib/learning/cache';
@@ -65,7 +65,8 @@ export class NextGenSearchClient {
     private variantCatalogs = new Map<string, Promise<Array<{ product: SearchResult; options: any[] }>>>();
 
     constructor(sharedBase?: NextGenClient) {
-        this.base = sharedBase || new NextGenClient();
+        // Reuse the shared singleton session by default.
+        this.base = sharedBase || getNextGenClient();
     }
 
     async searchStyle(style: string): Promise<NextGenStyleInfo | null> {

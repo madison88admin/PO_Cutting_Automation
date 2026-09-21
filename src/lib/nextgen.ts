@@ -74,9 +74,20 @@ export interface UploadValidationLine {
 }
 
 const PO_NUMBER_FIELD = 'PrimaryUserDefinedFieldValuesTextUdf3';
+const PURCHASE_ORDER_READ_RETRIES = 3;
+
+const g = globalThis as typeof globalThis & {
+    __nextGenClient?: NextGenClient;
+    __nextGenReadQueue?: Promise<unknown>;
+    __nextGenReadInflight?: Map<string, Promise<any[]>>;
+};
 
 function normalizeCompare(s: string): string {
     return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '').trim();
+}
+
+function delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export class NextGenClient {
@@ -298,6 +309,78 @@ export class NextGenClient {
     }
 
     private async readPurchaseOrder(params: URLSearchParams): Promise<any[]> {
+        const key = params.toString();
+        const inflight = g.__nextGenReadInflight || (g.__nextGenReadInflight = new Map());
+        const existing = inflight.get(key);
+        if (existing) {
+            console.log('[nextgen] Reusing in-flight PurchaseOrder/Read request:', key);
+            return existing;
+        }
+
+        const promise = this.enqueuePurchaseOrderRead(params)
+            .finally(() => {
+                inflight.delete(key);
+            });
+        inflight.set(key, promise);
+        return promise;
+    }
+
+    private async enqueuePurchaseOrderRead(params: URLSearchParams): Promise<any[]> {
+        // Serialize PurchaseOrder/Read: A finishes before B starts, so
+        // VisionPLM never sees concurrent bulk reads from this process.
+        const previous = g.__nextGenReadQueue || Promise.resolve();
+        let release!: () => void;
+        const current = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const tail = previous.then(() => current, () => current);
+        g.__nextGenReadQueue = tail;
+
+        await previous.catch(() => undefined);
+        try {
+            return await this.readPurchaseOrderWithRetry(params);
+        } finally {
+            release();
+            if (g.__nextGenReadQueue === tail) {
+                g.__nextGenReadQueue = undefined;
+            }
+        }
+    }
+
+    private isTransientVisionPlmError(response: Response, text: string): boolean {
+        const contentType = response.headers.get('content-type') || '';
+        return response.status >= 500 &&
+            contentType.toLowerCase().includes('text/html') &&
+            /Application Error - VisionPLM/i.test(text);
+    }
+
+    private async readPurchaseOrderWithRetry(params: URLSearchParams): Promise<any[]> {
+        let lastError: Error | null = null;
+
+        for (let attempt = 1; attempt <= PURCHASE_ORDER_READ_RETRIES; attempt++) {
+            const result = await this.readPurchaseOrderOnce(params);
+            if (result.ok) return result.rows;
+
+            lastError = result.error;
+            if (!result.retryable || attempt >= PURCHASE_ORDER_READ_RETRIES) {
+                throw result.error;
+            }
+
+            const waitMs = attempt * 1000;
+            console.warn(`[nextgen] transient VisionPLM 500 on PurchaseOrder/Read attempt ${attempt}; retrying in ${waitMs}ms`);
+            // Keep the existing session: a VisionPLM 500 is a transient app
+            // error, not an auth failure. Clearing auth here would force a
+            // re-login on every retry and add load during an outage.
+            await delay(waitMs);
+        }
+
+        throw lastError || new Error('NextGen PurchaseOrder/Read failed');
+    }
+
+    private async readPurchaseOrderOnce(params: URLSearchParams): Promise<
+        | { ok: true; rows: any[] }
+        | { ok: false; error: Error; retryable: boolean }
+    > {
         await this.login();
         const url = `${this.config.baseUrl}/PurchaseOrder/Read`;
         const body = params.toString();
@@ -324,14 +407,22 @@ export class NextGenClient {
         console.log('================================================');
 
         if (!response.ok) {
-            throw new Error(`NextGen PurchaseOrder/Read failed: ${response.status} ${text.substring(0, 500)}`);
+            return {
+                ok: false,
+                error: new Error(`NextGen PurchaseOrder/Read failed: ${response.status} ${text.substring(0, 500)}`),
+                retryable: this.isTransientVisionPlmError(response, text),
+            };
         }
 
         try {
             const data = text ? JSON.parse(text) : {};
-            return data?.Data || data?.data || [];
+            return { ok: true, rows: data?.Data || data?.data || [] };
         } catch (err) {
-            throw new Error(`NextGen PurchaseOrder/Read returned invalid JSON: ${text.substring(0, 500)}`);
+            return {
+                ok: false,
+                error: new Error(`NextGen PurchaseOrder/Read returned invalid JSON: ${text.substring(0, 500)}`),
+                retryable: false,
+            };
         }
     }
 
@@ -595,4 +686,12 @@ export class NextGenClient {
             costMismatches,
         };
     }
+}
+
+export function getNextGenClient(): NextGenClient {
+    if (!g.__nextGenClient) {
+        g.__nextGenClient = new NextGenClient();
+    }
+
+    return g.__nextGenClient;
 }

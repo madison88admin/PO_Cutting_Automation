@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { NextGenClient } from "@/lib/nextgen";
+import { getNextGenClient } from "@/lib/nextgen";
 
 const BASE_URL = process.env.NEXTGEN_BASE_URL || 'https://nextgen.madison88.com';
 
@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
         const productId = url.searchParams.get('id') || '45809';
         const path = url.searchParams.get('path') || `/Product/Edit/${productId}`;
 
-        const client = new NextGenClient();
+        const client = getNextGenClient();
         await client.login();
 
         const targetUrl = `${BASE_URL}${path}`;

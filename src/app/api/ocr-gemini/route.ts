@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GeminiOCRClient, GeminiOCRResult } from "@/lib/gemini";
-import { NextGenClient } from "@/lib/nextgen";
+import { getNextGenClient } from "@/lib/nextgen";
 
 export async function POST(req: NextRequest) {
     try {
@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
             const poNumber = ocrResults[0].poNumber || ocrResults.find(r => r.poNumber)?.poNumber || '';
             if (poNumber) {
                 try {
-                    const nextgen = new NextGenClient();
+                    const nextgen = getNextGenClient();
                     const validation = await nextgen.validatePO(poNumber, ocrResults.map(r => ({
                         style: r.style,
                         color: r.color,
