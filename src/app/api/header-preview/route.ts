@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
 import { detectHeaderRow } from "@/lib/ai/header-detector";
 import { mapHeaders } from "@/lib/ai/header-mapper";
-import { findMatchingTemplateSupabase } from "@/lib/templates/supabase-store";
+import { findMatchingTemplateSupabase, templateHasCoreFields } from "@/lib/templates/supabase-store";
 import { validateHeaderSemantics } from "@/lib/ai/header-semantic-validator";
 
 export async function POST(req: NextRequest) {
@@ -42,7 +42,10 @@ export async function POST(req: NextRequest) {
                     .filter(Boolean);
                 if (!headers.length) continue;
 
-                const learned = await findMatchingTemplateSupabase(headers);
+                const learnedRaw = await findMatchingTemplateSupabase(headers);
+                // Ignore learned templates without core fields (saved from
+                // sloppy confirmations) so the header remaps fresh.
+                const learned = learnedRaw && templateHasCoreFields(learnedRaw.mapping) ? learnedRaw : null;
                 // Collect sample data rows for AI-assisted mapping
                 const sampleRows: unknown[][] = [];
                 for (let r = detected.headerRow + 1; r <= Math.min(detected.headerRow + 5, worksheet.rowCount); r++) {

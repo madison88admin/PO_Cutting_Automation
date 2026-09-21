@@ -13,6 +13,22 @@ function normalizeHeaders(headers: string[]): string[] {
     return headers.map(normalizeHeader);
 }
 
+/**
+ * A learned template is only trustworthy if it binds the core trio:
+ * a quantity source, a style/sku reference, and some colour/size signal.
+ * Templates saved from sloppy confirmations (e.g. 6 fields, no colour or
+ * size) are ignored so the header is remapped fresh by the AI pipeline.
+ */
+export function templateHasCoreFields(mapping: ColumnMapping | null | undefined): boolean {
+    if (!mapping) return false;
+    const m = mapping as Record<string, string>;
+    return Boolean(
+        m.quantity
+        && (m.buyer_style_number || m.sku)
+        && (m.color || m.color_code || m.size)
+    );
+}
+
 export async function findMatchingTemplateSupabase(
     headers: string[]
 ): Promise<ExtractedTemplate | null> {

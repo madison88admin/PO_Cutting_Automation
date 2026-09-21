@@ -57,7 +57,7 @@ const HEADER_PATTERNS: { field: string; patterns: string[] }[] = [
     { field: 'color_code', patterns: ['style color', 'color code', 'colour code', 'colorway code', 'color no', 'color #', 'primary color peak pdm code', 'colorway', 'farbcode'] },
     { field: 'color', patterns: ['colorway name', 'color name', 'colour name', 'colorway', 'colour way', 'color description', 'color', 'colour', 'merch - color', 'farbe', 'data x'] },
     { field: 'size', patterns: ['grid value', 'size 1', 'size 2', 'size name', 'size scale', 'product size', 'size#', 'size', 'dimension', 'merch - size', 'groesse', 'größe', 'val zz'] },
-    { field: 'quantity', patterns: ['total quantity', 'scheduled quantity', 'tot qty', 'order qty', 'ordered qty', 'po qty', 'buy qty', '1st qty', '2nd qty', 'quantity|n', 'qty (lum)', 'consensus quantity', 'quantity', 'qty', 'units', 'bulk qty', 'sb = eb qty', 'final po qty', 'buy 1 agreed qty', 'buy 2 agreed qty', 'menge', 'anzahl', 'stueckzahl', 'stückzahl', 'num 7'] },
+    { field: 'quantity', patterns: ['total quantity', 'scheduled quantity', 'tot qty', 'order qty', 'ordered qty', 'po qty', 'buy qty', '1st qty', '2nd qty', 'quantity|n', 'qty (lum)', 'consensus quantity', 'quantity', 'new qty', 'qty', 'units', 'bulk qty', 'sb = eb qty', 'final po qty', 'buy 1 agreed qty', 'buy 2 agreed qty', 'menge', 'anzahl', 'stueckzahl', 'stückzahl', 'num 7'] },
     { field: 'delivery_date', patterns: ['confirmed fty ex fac', 'vendor confirmed crd', 'brand requested ped', 'planned ped', 'delivery date', 'crdd date', 'ex factory', 'confirmed ex-factory date|n', 'requested etd|n', 'final delivery date', 'final xf date', 'best crd', 'brand requested crd', 'material arrival date', 'shipping date', 'handover date ordered', 'vendor confirmed etd', 'orig ex fac', 'ex-factory', 'ex-fty', 'ship date', 'etd', 'delivery', 'crd', 'ped', 'target date', 'date', 'exf date', 'cfm crd', 'lieferdatum', 'liefertermin', 'info 3'] },
     { field: 'start_date', patterns: ['udf-start_date', 'start date', 'order start date', 'valid from'] },
     { field: 'cancel_date', patterns: ['udf-canel_date', 'udf-cancel_date', 'cancel date', 'canel date', 'order cancel date', 'valid until'] },
@@ -74,6 +74,34 @@ const HEADER_PATTERNS: { field: string; patterns: string[] }[] = [
 
 function normalizeHeaderKey(s: string): string {
     return s.toLowerCase().replace(/[^a-z0-9|]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * NEW-vs-OLD quantity resolution (e.g. Haglofs "NEW QTY" vs "OLD QTY"):
+ * the NEW quantity is the buy quantity; OLD/previous is history and must
+ * never back the quantity field. Fixes mappings regardless of source
+ * (heuristic, AI, template, or cache). Idempotent.
+ */
+export function isOldQtyHeader(header: string): boolean {
+    const h = String(header || '').trim();
+    return /^(old|previous|prior)\b/i.test(h) && /\b(qty|quantity)\b/i.test(h);
+}
+
+export function isNewQtyHeader(header: string): boolean {
+    const h = String(header || '').trim();
+    return /\bnew\b/i.test(h) && /\b(qty|quantity)\b/i.test(h);
+}
+
+export function resolveNewVsOldQuantity(headers: string[], mapping: ColumnMapping): void {
+    const m = mapping as Record<string, string>;
+    if (!m.quantity || !isOldQtyHeader(m.quantity)) return;
+    const used = new Set(Object.values(m));
+    const target = headers.find((h) => isNewQtyHeader(h) && !used.has(h))
+        || headers.find((h) => isNewQtyHeader(h) && h !== m.quantity);
+    if (target) {
+        console.log(`[header-mapper] quantity "${m.quantity}" -> "${target}" (NEW wins over OLD)`);
+        m.quantity = target;
+    }
 }
 
 function patternToRegex(pattern: string): RegExp {
@@ -328,6 +356,9 @@ export async function mapHeaders(headers: string[], brandHint?: string, sampleRo
             if (aiFailed) confidence = Math.max(60, fuzzyConfidence || 60);
         }
     }
+
+    // NEW wins over OLD for quantity (covers AI answers too)
+    resolveNewVsOldQuantity(headers, mapping);
 
     // Determine unmapped columns from headers not referenced in mapping
     const mappedHeaders = new Set(Object.values(mapping as Record<string, string>));

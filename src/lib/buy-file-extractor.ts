@@ -1,7 +1,7 @@
 import { readExcelFile } from '@/lib/excel/excel-reader';
 import { detectHeaderRow } from '@/lib/ai/header-detector';
-import { mapHeaders } from '@/lib/ai/header-mapper';
-import { findMatchingTemplateSupabase } from '@/lib/templates/supabase-store';
+import { mapHeaders, resolveNewVsOldQuantity, isOldQtyHeader } from '@/lib/ai/header-mapper';
+import { findMatchingTemplateSupabase, templateHasCoreFields } from '@/lib/templates/supabase-store';
 import { getColumnMapping } from '@/lib/data-loader';
 import { NextGenCachedClient } from '@/lib/nextgen/client';
 import { ExcelEngine } from '@/lib/excel-engine';
@@ -704,11 +704,11 @@ function inferHeadersFromContent(
             });
         }
 
-        // Color name: short alpha names like Navy, Red, Heather Grey — veto location/admin columns
+        // Color name: short alpha names like Navy, Red, Heather Grey — veto location/admin/size columns
         if (
             ratio(stats, stats.colorNameCount) >= 0.6
             && !isDateishHeader && !isAdminHeader
-            && !/\b(po\b|number|code|qty|quantity|season|city|address|state|zip|country|destination|warehouse|plant|vendor|supplier|customer|brand|season|year)\b/i.test(nh)
+            && !/\b(po\b|number|code|qty|quantity|season|city|address|state|zip|country|destination|warehouse|plant|vendor|supplier|customer|brand|season|year|size|dimension|grid)\b/i.test(nh)
         ) {
             fieldCandidates.color.push({
                 colIndex: c,
@@ -717,11 +717,12 @@ function inferHeadersFromContent(
             });
         }
 
-        // Size: known size tokens — veto MOQ/qty/code columns that look numeric
+        // Size: known size tokens — veto MOQ/qty/code/color/line-id columns
+        // that look numeric (e.g. "Line ID" values 1,2,3 are not sizes)
         if (
             ratio(stats, stats.sizeCount) >= 0.6
             && !isDateishHeader && !isAdminHeader
-            && !/\b(moq|qty|quantity|supplier|vendor|code|number|sap)\b/i.test(nh)
+            && !/\b(moq|qty|quantity|supplier|vendor|code|number|sap|color|colour|line|item|no)\b/i.test(nh)
         ) {
             fieldCandidates.size.push({
                 colIndex: c,
@@ -742,10 +743,12 @@ function inferHeadersFromContent(
             });
         }
 
-        // Quantity: most values are positive integers — veto supplier/code/price columns
+        // Quantity: most values are positive integers — veto supplier/code/price
+        // columns and OLD/history quantities (NEW wins; see resolveNewVsOldQuantity)
         if (
             ratio(stats, stats.quantityCount) >= 0.7
             && !isDateishHeader
+            && !isOldQtyHeader(header)
             && !/\b(price|cost|fob|year|surcharge|uc|supplier|vendor|factory|plant|code|account|number|id|sap|moq)\b/i.test(nh)
         ) {
             fieldCandidates.quantity.push({
@@ -987,11 +990,14 @@ async function extractFromSheet(
     console.log('[buy-file-extractor] sheet headers:', JSON.stringify(headers));
 
     const existingTemplate = await findMatchingTemplateSupabase(headers);
-    if (existingTemplate) {
+    if (existingTemplate && templateHasCoreFields(existingTemplate.mapping)) {
         console.log('[buy-file-extractor] using existing template', existingTemplate.id);
         mapping = existingTemplate.mapping;
         templateUsed = true;
     } else {
+        if (existingTemplate) {
+            console.log('[buy-file-extractor] ignoring template without core fields, remapping fresh');
+        }
         // 3. Build mapping from legacy DB + AI + heuristic fallback
         const legacyMapping = await loadLegacyMapping(customerHint);
         // Pass sample data rows to the AI for smarter mapping
@@ -1003,6 +1009,8 @@ async function extractFromSheet(
         templateUsed = false;
     }
 
+    // NEW wins over OLD for quantity on every path (template included)
+    if (mapping) resolveNewVsOldQuantity(headers, mapping);
     console.log('[buy-file-extractor] mapping:', JSON.stringify(mapping));
     console.log('[buy-file-extractor] unmappedColumns:', JSON.stringify(unmappedColumns));
 
