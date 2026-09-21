@@ -124,9 +124,17 @@ export class NextGenCachedClient {
     async searchVariant(style: string, colorHint: string, brand?: string): Promise<NextGenStyleInfo | null> {
         const cacheKey = `${style}|${colorHint}|${brand || ''}`;
         if (this.cache.hasStyle(cacheKey)) return this.cache.getStyle(cacheKey) || null;
-        const info = await this.search.searchVariant(style, colorHint, brand);
-        this.cache.setStyle(cacheKey, info || { style });
-        return info;
+        try {
+            const info = await this.search.searchVariant(style, colorHint, brand);
+            this.cache.setStyle(cacheKey, info || { style });
+            return info;
+        } catch (err) {
+            // A single variant's search failure (e.g. NextGen timeout) must
+            // never abort the whole extraction. Degrade to unmatched.
+            console.warn(`[nextgen-client] searchVariant failed for "${style}"/"${colorHint}", treating as unmatched:`, err instanceof Error ? err.message : err);
+            this.cache.setStyle(cacheKey, { style });
+            return null;
+        }
     }
 
     async searchStyleFallback(style: string): Promise<NextGenStyleInfo | null> {

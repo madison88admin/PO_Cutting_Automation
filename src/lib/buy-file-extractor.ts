@@ -1117,7 +1117,13 @@ async function extractFromSheet(
             return [`${style.toLowerCase()}|${color.toLowerCase()}`, { style, color, brand }];
         })).entries()];
         for (const [key, variant] of variants) {
-            nextgenInfo[key] = await nextgenClient.searchVariant(variant.style, variant.color, variant.brand);
+            try {
+                nextgenInfo[key] = await nextgenClient.searchVariant(variant.style, variant.color, variant.brand);
+            } catch (err) {
+                // Belt-and-braces: one bad variant must never abort the file.
+                console.warn(`[buy-file-extractor] NextGen lookup failed for "${variant.style}"/"${variant.color}", treating as unmatched:`, err instanceof Error ? err.message : err);
+                nextgenInfo[key] = null;
+            }
         }
         // Enrich items with NextGen data (primary source)
         items = items.map((item) => {

@@ -353,10 +353,26 @@ export class NextGenSearchClient {
         const entityTypes = SEARCH_ENTITY_TYPES.split(',').map((s) => s.trim()).filter(Boolean);
         const queries = entityTypes.map((et) => `searchEntityTypes=${et}`).join('&');
         const url = `${SEARCH_BASE_URL}/Search/GetSearchResults?criteria=${encodeURIComponent(term)}&${queries}`;
-        const response = await this.base.fetchWithCookie(url, { method: 'GET' }, true);
-        if (!response.ok) return [];
-        const data = await response.json();
-        return this.collectResults(data);
+        // Search is best-effort enrichment (a miss just means unmatched), so
+        // retry a transient network/timeout failure once, then degrade to [].
+        // Unlike PurchaseOrder/Read, a search failure must never throw.
+        for (let attempt = 1; attempt <= 2; attempt++) {
+            try {
+                const response = await this.base.fetchWithCookie(url, { method: 'GET' }, true);
+                if (!response.ok) return [];
+                const data = await response.json();
+                return this.collectResults(data);
+            } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                if (attempt >= 2) {
+                    console.warn(`[nextgen-search] GetSearchResults failed for "${term}" after 2 attempts, treating as no results:`, message);
+                    return [];
+                }
+                console.warn(`[nextgen-search] GetSearchResults attempt ${attempt} failed for "${term}", retrying in 1s:`, message);
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+            }
+        }
+        return [];
     }
 
     private pickExpandedBuyerStyle(style: string, products: SearchResult[]): string | null {
