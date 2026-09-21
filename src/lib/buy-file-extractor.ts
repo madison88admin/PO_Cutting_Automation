@@ -274,6 +274,24 @@ const SUMMARY_KEYWORDS = [
     'sum of', 'row labels', 'total', 'grand total', 'decision', 'count of', 'average of', 'min of', 'max of',
 ];
 
+/**
+ * Core-trio signals for sheet selection: a real buy sheet covers style,
+ * quantity, AND colour/size. Summary tabs usually have style + totals but
+ * no colour/size — the bonus makes them lose to the real buy sheet.
+ */
+const CORE_SIGNALS: string[][] = [
+    ['style', 'article', 'model', 'item', 'sku', 'material', 'product code'],
+    ['qty', 'quantity', 'units', 'total', 'bulk'],
+    ['color', 'colour', 'size', 'dimension', 'option', 'grid'],
+];
+
+export function coreTrioCoverage(headers: string[]): number {
+    const normalized = headers.map((h) => String(h).toLowerCase());
+    return CORE_SIGNALS.filter((group) =>
+        group.some((kw) => normalized.some((h) => h.includes(kw)))
+    ).length;
+}
+
 function scoreHeaders(headers: string[]): number {
     const normalized = headers.map((h) => String(h).toLowerCase());
     let score = 0;
@@ -287,6 +305,8 @@ function scoreHeaders(headers: string[]): number {
             score -= 5;
         }
     }
+    // Core trio dominates: +8 per covered group (style / qty / colour-size).
+    score += coreTrioCoverage(headers) * 8;
     return score;
 }
 

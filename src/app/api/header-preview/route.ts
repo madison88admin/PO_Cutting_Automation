@@ -62,7 +62,13 @@ export async function POST(req: NextRequest) {
                 for (const [field, score] of Object.entries(semantic.fieldConfidence)) {
                     fieldConfidence[field] = Math.min(fieldConfidence[field] ?? score, score);
                 }
-                const score = Object.keys(mapped.mapping).length;
+                // Core trio dominates sheet choice: a sheet covering style +
+                // quantity + colour/size beats a summary tab with more junk fields.
+                const mm = mapped.mapping as Record<string, string>;
+                const coreCount = (mm.quantity ? 1 : 0)
+                    + (mm.buyer_style_number || mm.sku ? 1 : 0)
+                    + (mm.color || mm.color_code || mm.size ? 1 : 0);
+                const score = coreCount * 100 + Object.keys(mapped.mapping).length;
                 if (!best || score > best.score) {
                     best = {
                         filename: file.name,
